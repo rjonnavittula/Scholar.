@@ -127,6 +127,17 @@
       `<span class="n">${st.current}d</span>`;
   }
 
+  function navBy(dir) {
+    if (S.view === 'month') {
+      const d = new Date(S.weekStart);
+      S.weekStart = new Date(d.getFullYear(), d.getMonth() + dir, 1);
+    } else {
+      const n = S.view === 'nextN' ? (S.viewN || 7) : 7;
+      S.weekStart = addDays(S.weekStart, dir * n);
+    }
+    loadAll();
+  }
+
   function setCalView(view) {
     S.view = view;
     for (const b of document.querySelectorAll('#viewtabs [data-view]'))
@@ -148,14 +159,25 @@
     const vn = document.getElementById('view-n');
     if (vn) vn.onchange = () => { if (vn.value) { S.viewN = +vn.value; setCalView('nextN'); } };
     $('nav-today').onclick = () => { S.weekStart = mondayOf(new Date()); loadAll(); };
-    $('nav-prev').onclick = () => { S.weekStart = addDays(S.weekStart, -7); loadAll(); };
-    $('nav-next').onclick = () => { S.weekStart = addDays(S.weekStart, 7); loadAll(); };
+    $('nav-prev').onclick = () => { navBy(-1); };
+    $('nav-next').onclick = () => { navBy(1); };
     $('btn-add-task').onclick = () => taskModal();
     $('btn-add-course').onclick = () => courseModal();
     $('btn-add-activity').onclick = () => activityModal();
     $('btn-canvas-cfg').onclick = () => canvasModal();
     $('btn-canvas-sync').onclick = syncCanvas;
     $('btn-settings').onclick = () => settingsModal();
+    const themeBtn = $('btn-theme');
+    if (themeBtn) {
+      const paintThemeIcon = () => { themeBtn.textContent = (S.settings.theme === 'light') ? '☀' : '☽'; };
+      paintThemeIcon();
+      themeBtn.onclick = async () => {
+        const next = (S.settings.theme === 'light') ? 'dark' : 'light';
+        S.settings.theme = next;
+        applyTheme(); paintThemeIcon();
+        try { await Api.put('/config/settings', { theme: next }); } catch (e) {}
+      };
+    }
     document.querySelector('[data-view="insights"]').onclick =
       () => toast('cushion charts, timeline & analytics land in phase 5');
     wireTabs();
@@ -906,7 +928,7 @@
             <div class="rctl"><select id="m-defview">${['week', 'day', 'month'].map((v) => `<option value="${v}" ${(S.settings.default_view || 'week') === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div></div>
         </div>
         <div class="set-grouphdr">awake time — study can only be scheduled inside</div>
-        <div class="set-group awake-group single">
+        <div class="set-group awake-group">
           <div class="awake-wrap" id="awake-wrap">
             <div class="awake-default">
               <span class="muted small">usually awake</span>
@@ -959,7 +981,7 @@
       <section class="set-sec hidden" data-pane="notif">
         <h3>Notifications</h3>
         <p class="set-sub">Browser notifications aren't wired yet — these are placeholders for the next phase. <span class="soon-badge">coming soon</span></p>
-        <div class="set-group single">
+        <div class="set-group">
           <div class="row"><div><div class="rlabel">should be working on</div>
             <div class="rhint">nudge me about what's next</div></div>
             <div class="rctl"><input type="checkbox" disabled /></div></div>

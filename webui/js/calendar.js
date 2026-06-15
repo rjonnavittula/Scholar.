@@ -74,6 +74,24 @@ const Cal = (() => {
         extendedProps: { kind: 'due', taskId: t.id },
       });
     }
+    // passed-time shading: background events from midnight to now/end-of-day
+    const now = new Date();
+    const todayStr = isoDate(now);
+    // shade a generous window around the current view; FC clips to visible range
+    for (let off = -40; off <= 5; off++) {
+      const d = new Date(now); d.setDate(d.getDate() + off);
+      const ds = isoDate(d);
+      if (ds > todayStr) continue;
+      const endStr = (ds === todayStr)
+        ? `${ds}T${pad(now.getHours())}:${pad(now.getMinutes())}:00`
+        : `${ds}T23:59:59`;
+      evs.push({
+        start: `${ds}T00:00:00`, end: endStr,
+        display: 'background', classNames: ['passed-bg'],
+        backgroundColor: 'rgba(20,18,16,.45)',
+        extendedProps: { kind: 'passed' },
+      });
+    }
     return evs;
   }
 
@@ -122,11 +140,13 @@ const Cal = (() => {
           H.onTaskEdit(x.taskId);
         }
       },
-      drop: (info) => {
-        const tid = +(window._dragTaskId || 0);
-        if (!tid) return;
-        const s = info.date;
-        H.onPlan(tid, isoDate(s), mins(s), planDuration(tid));
+      eventReceive: (info) => {
+        const tid = info.event.extendedProps.dropTaskId;
+        const s = info.event.start;
+        const e = info.event.end || new Date(s.getTime() + planDuration(tid) * 60000);
+        const dur = Math.round((e - s) / 60000) || planDuration(tid);
+        info.event.remove();           // remove FC's temp event; reload shows the real one
+        if (tid) H.onPlan(tid, isoDate(s), mins(s), dur);
       },
       eventDidMount: (info) => {
         if (info.event.extendedProps.kind === 'planned' && info.event.end && info.event.end < new Date())
