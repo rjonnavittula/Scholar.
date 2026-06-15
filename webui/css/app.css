@@ -707,8 +707,10 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 .cv-seg { display:flex; background:var(--input); border:1px solid var(--line); border-radius:var(--pill);
   padding:3px; margin:4px 0 16px; }
 .cv-seg span { flex:1; text-align:center; padding:7px 8px; border-radius:var(--pill);
-  color:var(--muted); font-size:12px; cursor:pointer; }
+  color:var(--muted); font-size:12px; cursor:pointer; transition:background .18s ease, color .18s ease; }
 .cv-seg span.on { background:var(--accent-soft); color:var(--fg); }
+/* match the settings card: each panel rises + fades in on switch */
+.cv-panel { animation:spaneIn .24s cubic-bezier(.4,0,.2,1); }
 .cv-panel .btns { display:flex; gap:8px; margin-top:4px; }
 .cv-code { width:100%; box-sizing:border-box; resize:vertical; background:var(--input);
   border:1px solid var(--line); border-radius:10px; padding:10px 12px; color:var(--fg);
