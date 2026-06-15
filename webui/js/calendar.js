@@ -161,7 +161,18 @@ const Cal = (() => {
       root.innerHTML = '<div class="cal-fallback">calendar library failed to load \u2014 check your connection.</div>';
       return;
     }
-    if (!fc) { fc = new FullCalendar.Calendar(root, buildOptions()); fc.render(); }
+    if (!fc) {
+      fc = new FullCalendar.Calendar(root, buildOptions());
+      fc.render();
+      if (typeof ResizeObserver !== 'undefined') {
+        let raf = null;
+        const ro = new ResizeObserver(() => {
+          if (raf) cancelAnimationFrame(raf);
+          raf = requestAnimationFrame(() => fc && fc.updateSize());
+        });
+        ro.observe(root);
+      }
+    }
   }
 
   function render() {
@@ -174,11 +185,13 @@ const Cal = (() => {
     for (const e of events()) fc.addEvent(e);
   }
 
+  function resize() { if (fc) fc.updateSize(); }
+
   function setView(v, n) {
     view = v;
     if (n) nDays = n;
     render();
   }
 
-  return { mount, render, setView };
+  return { mount, render, setView, resize };
 })();

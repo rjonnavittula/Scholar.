@@ -150,10 +150,11 @@
   function wireChrome() {
     const cl = document.getElementById('collapse-left');
     const cr = document.getElementById('collapse-right');
+    const afterCollapse = () => { setTimeout(() => Cal.resize && Cal.resize(), 320); };
     if (cl) cl.onclick = () => { document.body.classList.toggle('no-left');
-      cl.textContent = document.body.classList.contains('no-left') ? '›' : '‹'; };
+      cl.textContent = document.body.classList.contains('no-left') ? '›' : '‹'; afterCollapse(); };
     if (cr) cr.onclick = () => { document.body.classList.toggle('no-right');
-      cr.textContent = document.body.classList.contains('no-right') ? '‹' : '›'; };
+      cr.textContent = document.body.classList.contains('no-right') ? '‹' : '›'; afterCollapse(); };
     for (const b of document.querySelectorAll('#viewtabs [data-view]'))
       b.onclick = () => setCalView(b.dataset.view);
     const vn = document.getElementById('view-n');
@@ -871,220 +872,163 @@
       });
   }
 
+  // ============================================================
+  //  SETTINGS  (full rebuild — left rail + single-scroll sections)
+  // ============================================================
   async function settingsModal() {
     const awake = await Api.get('/awake');
     const termCfg = await Api.get('/config/term');
     const t = termCfg.term || {};
     const aw = Object.fromEntries(awake.map((a) => [a.weekday, a]));
-    const accent = S.settings.accent || '#8A7F73';
+    const st = S.settings;
+    const accent = st.accent || '#8A7F73';
     const ACC = ['#8A7F73', '#B59B5B', '#6F7F66', '#7A6A8A', '#5F6B7A', '#9A6A5A'];
+    const sel = (v, x) => (v === x ? 'selected' : '');
 
-    const paneTerm = `
-      <section class="set-sec" data-pane="term">
-        <h3>Term</h3>
-        <p class="set-sub">where you study and when the term runs.</p>
-        <div class="set-grouphdr">location & timezone</div>
-        <div class="set-group">
-          <div class="row"><div><div class="rlabel">country</div></div>
-            <div class="rctl"><select id="m-country"></select></div></div>
-          <div class="row"><div><div class="rlabel">school timezone</div>
-            <div class="rhint">where due dates are anchored</div></div>
-            <div class="rctl"><select id="m-school-tz"></select></div></div>
-          <div class="row"><div><div class="rlabel">your current timezone</div>
-            <div class="rhint">awake hours follow this</div></div>
-            <div class="rctl"><select id="m-home-tz"></select></div></div>
-        </div>
-        <div class="set-grouphdr">term dates</div>
-        <div class="set-group">
-          <div class="row"><div class="rlabel">classes start</div>
-            <div class="rctl"><input id="m-ts" type="date" value="${t.classes_start || ''}" /></div></div>
-          <div class="row"><div class="rlabel">classes end</div>
-            <div class="rctl"><input id="m-te" type="date" value="${t.classes_end || ''}" /></div></div>
-          <div class="row"><div class="rlabel">exams end</div>
-            <div class="rctl"><input id="m-tx" type="date" value="${t.exam_end || ''}" /></div></div>
-        </div>
-      </section>`;
+    // ---- field helpers (consistent rows) -------------------------------
+    const row = (label, hint, control) => `
+      <div class="srow">
+        <div class="srow-l"><div class="srow-label">${label}</div>${hint ? `<div class="srow-hint">${hint}</div>` : ''}</div>
+        <div class="srow-c">${control}</div>
+      </div>`;
+    const group = (title, rows) => `${title ? `<div class="sgroup-title">${title}</div>` : ''}<div class="sgroup">${rows}</div>`;
 
-    const panePers = `
-      <section class="set-sec hidden" data-pane="pers">
-        <h3>Personalization</h3>
-        <p class="set-sub">how the planner schedules your time.</p>
-        <div class="set-grouphdr">study planning</div>
-        <div class="set-group">
-          <div class="row"><div class="rlabel">minimum study block</div>
-            <div class="rctl"><input id="m-min" type="number" value="${S.settings.min_block_min}" /><span class="muted small">min</span></div></div>
-          <div class="row"><div><div class="rlabel">start ahead</div>
-            <div class="rhint">begin tasks this many days early</div></div>
-            <div class="rctl"><input id="m-ahead" type="number" value="${S.settings.start_ahead_days}" /><span class="muted small">days</span></div></div>
-          <div class="row"><div><div class="rlabel">cushion turns yellow at</div>
-            <div class="rhint">% of needed time remaining</div></div>
-            <div class="rctl"><input id="m-yel" type="number" value="${S.settings.yellow_threshold_pct}" /><span class="muted small">%</span></div></div>
-          <div class="row"><div class="rlabel">week starts on</div>
-            <div class="rctl"><select id="m-wkstart">
-              <option value="6" ${S.settings.week_start === 6 ? 'selected' : ''}>Sunday</option>
-              <option value="0" ${S.settings.week_start === 0 ? 'selected' : ''}>Monday</option>
-            </select></div></div>
-          <div class="row"><div class="rlabel">default view</div>
-            <div class="rctl"><select id="m-defview">${['week', 'day', 'month'].map((v) => `<option value="${v}" ${(S.settings.default_view || 'week') === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div></div>
-        </div>
-        <div class="set-grouphdr">awake time — study can only be scheduled inside</div>
-        <div class="set-group awake-group">
-          <div class="awake-wrap" id="awake-wrap">
-            <div class="awake-default">
-              <span class="muted small">usually awake</span>
-              <input type="time" id="awk-def-s" value="08:00" />
-              <span class="muted">→</span>
-              <input type="time" id="awk-def-e" value="23:30" />
-              <button type="button" class="ghost xs" id="awk-apply-all">apply to all</button>
-            </div>
-            <div class="awake-presets">
-              <button type="button" class="ghost xs" data-preset="weekday">set weekdays</button>
-              <button type="button" class="ghost xs" data-preset="weekend">set weekend</button>
-            </div>
-            <div class="awake-days" id="awake-days"></div>
+    // ---- panes ---------------------------------------------------------
+    const paneTerm = group('location & timezone',
+        row('Country', '', `<select id="m-country"></select>`) +
+        row('School timezone', 'where deadlines are anchored', `<select id="m-school-tz"></select>`) +
+        row('Your timezone', 'awake hours follow this', `<select id="m-home-tz"></select>`)
+      ) + group('term dates',
+        row('Classes start', '', `<input id="m-ts" type="date" value="${t.classes_start || ''}" />`) +
+        row('Classes end', '', `<input id="m-te" type="date" value="${t.classes_end || ''}" />`) +
+        row('Exams end', '', `<input id="m-tx" type="date" value="${t.exam_end || ''}" />`)
+      );
+
+    const panePers = group('study planning',
+        row('Minimum study block', '', `<input id="m-min" type="number" value="${st.min_block_min}" /> <span class="unit">min</span>`) +
+        row('Start ahead', 'begin tasks this many days early', `<input id="m-ahead" type="number" value="${st.start_ahead_days}" /> <span class="unit">days</span>`) +
+        row('Cushion turns yellow at', '% of needed time left', `<input id="m-yel" type="number" value="${st.yellow_threshold_pct}" /> <span class="unit">%</span>`) +
+        row('Week starts on', '', `<select id="m-wkstart"><option value="6" ${sel(st.week_start, 6)}>Sunday</option><option value="0" ${sel(st.week_start, 0)}>Monday</option></select>`) +
+        row('Default view', '', `<select id="m-defview">${['week', 'day', 'month'].map((v) => `<option ${sel(st.default_view || 'week', v)}>${v}</option>`).join('')}</select>`)
+      ) + `<div class="sgroup-title">awake time</div>
+        <div class="sgroup awake-block">
+          <div class="awake-default">
+            <span class="muted small">usually awake</span>
+            <input type="time" id="awk-def-s" value="08:00" />
+            <span class="muted">→</span>
+            <input type="time" id="awk-def-e" value="23:30" />
+            <button type="button" class="ghost xs" id="awk-apply-all">apply to all</button>
           </div>
-          ${DAYS.map((d, i) => `<input type="hidden" data-aws="${i}" value="${aw[i]?.start_min ?? 480}" />
-            <input type="hidden" data-awe="${i}" value="${aw[i]?.end_min ?? 1410}" />`).join('')}
-        </div>
-      </section>`;
+          <div class="awake-presets">
+            <button type="button" class="ghost xs" data-preset="weekday">set weekdays</button>
+            <button type="button" class="ghost xs" data-preset="weekend">set weekend</button>
+          </div>
+          <div class="awake-days" id="awake-days"></div>
+          ${DAYS.map((d, i) => `<input type="hidden" data-aws="${i}" value="${aw[i]?.start_min ?? 480}" /><input type="hidden" data-awe="${i}" value="${aw[i]?.end_min ?? 1410}" />`).join('')}
+        </div>`;
 
-    const paneAppear = `
-      <section class="set-sec hidden" data-pane="appear">
-        <h3>Appearance</h3>
-        <p class="set-sub">make it yours.</p>
-        <div class="set-group">
-          <div class="row"><div class="rlabel">theme</div>
-            <div class="rctl"><select id="m-theme">
-              <option value="dark" ${(S.settings.theme || 'dark') === 'dark' ? 'selected' : ''}>dark</option>
-              <option value="light" ${S.settings.theme === 'light' ? 'selected' : ''}>light</option>
-            </select></div></div>
-          <div class="row"><div class="rlabel">density</div>
-            <div class="rctl"><select id="m-density">
-              <option value="1" ${(+S.settings.density || 1) === 1 ? 'selected' : ''}>comfortable</option>
-              <option value="0.85" ${(+S.settings.density) === 0.85 ? 'selected' : ''}>compact</option>
-            </select></div></div>
-          <div class="row"><div class="rlabel">font size</div>
-            <div class="rctl"><select id="m-font">
-              <option value="0.92" ${(+S.settings.fontscale) === 0.92 ? 'selected' : ''}>small</option>
-              <option value="1" ${(+S.settings.fontscale || 1) === 1 ? 'selected' : ''}>normal</option>
-              <option value="1.12" ${(+S.settings.fontscale) === 1.12 ? 'selected' : ''}>large</option>
-            </select></div></div>
-        </div>
-        <div class="set-grouphdr">accent</div>
-        <div class="set-group">
-          <div class="row"><div class="rlabel">color</div>
-            <div class="rctl"><div class="swatches" id="m-accent">${ACC.map((c) => `<span class="swatch ${accent === c ? 'sel' : ''}" data-c="${c}" style="background:${c}"></span>`).join('')}</div></div></div>
-        </div>
-      </section>`;
+    const paneAppear = group('',
+        row('Theme', '', `<select id="m-theme"><option value="dark" ${sel(st.theme || 'dark', 'dark')}>dark</option><option value="light" ${sel(st.theme, 'light')}>light</option></select>`) +
+        row('Density', '', `<select id="m-density"><option value="1" ${sel(+st.density || 1, 1)}>comfortable</option><option value="0.85" ${sel(+st.density, 0.85)}>compact</option></select>`) +
+        row('Font size', '', `<select id="m-font"><option value="0.92" ${sel(+st.fontscale, 0.92)}>small</option><option value="1" ${sel(+st.fontscale || 1, 1)}>normal</option><option value="1.12" ${sel(+st.fontscale, 1.12)}>large</option></select>`)
+      ) + group('accent',
+        row('Color', '', `<div class="swatches" id="m-accent">${ACC.map((c) => `<span class="swatch ${accent === c ? 'sel' : ''}" data-c="${c}" style="background:${c}"></span>`).join('')}</div>`)
+      );
 
-    const paneNotif = `
-      <section class="set-sec hidden" data-pane="notif">
-        <h3>Notifications</h3>
-        <p class="set-sub">Browser notifications aren't wired yet — these are placeholders for the next phase. <span class="soon-badge">coming soon</span></p>
-        <div class="set-group">
-          <div class="row"><div><div class="rlabel">should be working on</div>
-            <div class="rhint">nudge me about what's next</div></div>
-            <div class="rctl"><input type="checkbox" disabled /></div></div>
-          <div class="row"><div><div class="rlabel">overdue</div>
-            <div class="rhint">notify when a task slips</div></div>
-            <div class="rctl"><input type="checkbox" disabled /></div></div>
-          <div class="row"><div><div class="rlabel">planned task starts</div>
-            <div class="rhint">remind me before a block</div></div>
-            <div class="rctl"><input type="checkbox" disabled /></div></div>
-        </div>
-      </section>`;
+    const paneNotif = `<p class="set-sub">Browser notifications aren't wired yet — placeholders for the next phase. <span class="soon-badge">coming soon</span></p>` +
+      group('',
+        row('Should be working on', 'nudge me about what\'s next', `<input type="checkbox" disabled />`) +
+        row('Overdue', 'notify when a task slips', `<input type="checkbox" disabled />`) +
+        row('Planned task starts', 'remind me before a block', `<input type="checkbox" disabled />`)
+      );
 
-    const paneAcct = `
-      <section class="set-sec hidden" data-pane="acct">
-        <h3>Account</h3>
-        <p class="set-sub">Single-user, self-hosted — auth is your API key.</p>
-        <div class="set-group">
-          <div class="row"><div class="rlabel">display name</div>
-            <div class="rctl"><input id="m-name" type="text" value="${esc(S.settings.display_name || '')}" placeholder="your name" /></div></div>
-        </div>
-        <div class="set-grouphdr">API key</div>
-        <div class="set-group">
-          <div class="row"><div><div class="rlabel">mint a new key</div>
-            <div class="rhint">keys are shown once</div></div>
-            <div class="rctl"><button class="ghost" id="m-newkey">mint</button></div></div>
-          <div class="row" id="m-newkey-row" style="display:none"><div class="rlabel">your key</div>
-            <div class="rctl"><code id="m-newkey-out" style="word-break:break-all;font-size:0.75rem"></code></div></div>
-        </div>
-      </section>`;
+    const paneAcct = `<p class="set-sub">Single-user, self-hosted — auth is your API key.</p>` +
+      group('',
+        row('Display name', '', `<input id="m-name" type="text" value="${esc(st.display_name || '')}" placeholder="your name" />`)
+      ) + group('api key',
+        row('Mint a new key', 'keys are shown once', `<button class="ghost" id="m-newkey">mint</button>`) +
+        `<div class="srow" id="m-newkey-row" style="display:none"><div class="srow-l"><div class="srow-label">Your key</div></div><div class="srow-c"><code id="m-newkey-out"></code></div></div>`
+      );
 
-    const { ov: sov } = settingsShell([
-      ['term', 'Term', paneTerm],
-      ['pers', 'Personalization', panePers],
-      ['appear', 'Appearance', paneAppear],
-      ['notif', 'Notifications', paneNotif],
-      ['acct', 'Account', paneAcct],
-    ], async (ov) => {
-      await Api.put('/config/settings', {
-        min_block_min: +ov.querySelector('#m-min').value || 30,
-        start_ahead_days: +ov.querySelector('#m-ahead').value || 3,
-        yellow_threshold_pct: +ov.querySelector('#m-yel').value || 40,
-        week_start: +ov.querySelector('#m-wkstart').value,
-        default_view: ov.querySelector('#m-defview').value,
-        theme: ov.querySelector('#m-theme').value,
-        accent: ov.querySelector('#m-accent .swatch.sel')?.dataset.c || '#8A7F73',
-        density: +ov.querySelector('#m-density').value,
-        fontscale: +ov.querySelector('#m-font').value,
-        home_tz: ov.querySelector('#m-home-tz').value,
-        school_tz: ov.querySelector('#m-school-tz').value,
-        country: ov.querySelector('#m-country').value,
-        display_name: ov.querySelector('#m-name')?.value || '',
-      });
-      await Api.put('/config/term', {
-        classes_start: ov.querySelector('#m-ts').value || null,
-        classes_end: ov.querySelector('#m-te').value || null,
-        exam_end: ov.querySelector('#m-tx').value || null,
-      });
-      await Api.put('/awake', DAYS.map((_, i) => ({
-        weekday: i,
-        start_min: +ov.querySelector(`[data-aws="${i}"]`).value,
-        end_min: +ov.querySelector(`[data-awe="${i}"]`).value,
-      })));
-      await loadAll();
-    });
+    const SECTIONS = [
+      ['term', 'Term', 'where you study and when the term runs', paneTerm],
+      ['pers', 'Personalization', 'how the planner schedules your time', panePers],
+      ['appear', 'Appearance', 'make it yours', paneAppear],
+      ['notif', 'Notifications', '', paneNotif],
+      ['acct', 'Account', '', paneAcct],
+    ];
 
-    wireSwatches(sov);
-    wireAwake(sov);
-    await initSettingsTz(sov);
+    const nav = SECTIONS.map(([id, label], i) =>
+      `<button class="snav-item ${i === 0 ? 'active' : ''}" data-go="${id}">${label}</button>`).join('');
+    const panes = SECTIONS.map(([id, label, sub, body], i) =>
+      `<section class="spane ${i === 0 ? '' : 'hidden'}" data-pane="${id}">
+        <h2 class="spane-title">${label}</h2>${sub ? `<p class="set-sub">${sub}</p>` : ''}${body}
+      </section>`).join('');
 
-    const mk = sov.querySelector('#m-newkey');
-    if (mk) mk.onclick = async () => {
-      const row = sov.querySelector('#m-newkey-row');
-      const out = sov.querySelector('#m-newkey-out');
-      try {
-        const r = await Api.post('/auth/keys?label=ui');
-        out.textContent = r.api_key || '(minted — check server)';
-      } catch (e) { out.textContent = 'mint failed: ' + e.message; }
-      if (row) row.style.display = 'flex';
-    };
-  }
-
-  function settingsShell(sections, onSave) {
-    const nav = sections.map(([id, label], i) =>
-      `<button class="set-navitem ${i === 0 ? 'active' : ''}" data-go="${id}">${label}</button>`).join('');
-    const panes = sections.map(([, , html]) => html).join('');
     const { ov, close } = modal(`
-      <div class="set-wrap">
-        <aside class="set-nav"><h2>settings</h2>${nav}</aside>
-        <div class="set-body">${panes}
-          <div class="actions"><span class="spacer"></span>
+      <div class="settings2">
+        <aside class="snav"><div class="snav-head">settings</div>${nav}</aside>
+        <div class="sscroll">
+          <div class="spanes">${panes}</div>
+          <div class="sactions">
             <button class="ghost" data-m="cancel">cancel</button>
             <button class="primary" data-m="save">save</button>
           </div>
         </div>
-      </div>`, async (act, ovEl) => { if (act === 'save') await onSave(ovEl); });
-    ov.classList.add('wide');
+      </div>`, async (act, ovEl) => { if (act === 'save') await saveSettings(ovEl); });
+
+    ov.querySelector('.modal').classList.add('settings2-modal');
+
+    // nav switching (animated crossfade handled by CSS on .spane)
     for (const b of ov.querySelectorAll('[data-go]')) {
       b.onclick = () => {
-        for (const n of ov.querySelectorAll('.set-navitem')) n.classList.toggle('active', n === b);
-        for (const p of ov.querySelectorAll('.set-sec')) p.classList.toggle('hidden', p.dataset.pane !== b.dataset.go);
+        for (const n of ov.querySelectorAll('.snav-item')) n.classList.toggle('active', n === b);
+        for (const p of ov.querySelectorAll('.spane')) p.classList.toggle('hidden', p.dataset.pane !== b.dataset.go);
+        ov.querySelector('.sscroll').scrollTop = 0;
       };
     }
-    return { ov, close };
+
+    wireSwatches(ov);
+    wireAwake(ov);
+    await initSettingsTz(ov);
+
+    const mk = ov.querySelector('#m-newkey');
+    if (mk) mk.onclick = async () => {
+      const r = ov.querySelector('#m-newkey-row'), out = ov.querySelector('#m-newkey-out');
+      try { const k = await Api.post('/auth/keys?label=ui'); out.textContent = k.api_key || '(minted)'; }
+      catch (e) { out.textContent = 'mint failed: ' + e.message; }
+      if (r) r.style.display = 'flex';
+    };
+  }
+
+  async function saveSettings(ov) {
+    await Api.put('/config/settings', {
+      min_block_min: +ov.querySelector('#m-min').value || 30,
+      start_ahead_days: +ov.querySelector('#m-ahead').value || 3,
+      yellow_threshold_pct: +ov.querySelector('#m-yel').value || 40,
+      week_start: +ov.querySelector('#m-wkstart').value,
+      default_view: ov.querySelector('#m-defview').value,
+      theme: ov.querySelector('#m-theme').value,
+      accent: ov.querySelector('#m-accent .swatch.sel')?.dataset.c || '#8A7F73',
+      density: +ov.querySelector('#m-density').value,
+      fontscale: +ov.querySelector('#m-font').value,
+      home_tz: ov.querySelector('#m-home-tz').value,
+      school_tz: ov.querySelector('#m-school-tz').value,
+      country: ov.querySelector('#m-country').value,
+      display_name: ov.querySelector('#m-name')?.value || '',
+    });
+    await Api.put('/config/term', {
+      classes_start: ov.querySelector('#m-ts').value || null,
+      classes_end: ov.querySelector('#m-te').value || null,
+      exam_end: ov.querySelector('#m-tx').value || null,
+    });
+    await Api.put('/awake', DAYS.map((_, i) => ({
+      weekday: i,
+      start_min: +ov.querySelector(`[data-aws="${i}"]`).value,
+      end_min: +ov.querySelector(`[data-awe="${i}"]`).value,
+    })));
+    await loadAll();
+    toast('settings saved');
   }
 
   async function initSettingsTz(ov) {
@@ -1097,9 +1041,9 @@
     try { data = await Api.get('/config/timezones?country=' + country); }
     catch { data = { countries: ['US'], zones: [], all: [] }; }
     cSel.innerHTML = data.countries.map((c) => `<option value="${c}" ${c === country ? 'selected' : ''}>${c}</option>`).join('');
-    const fillTz = (sel, selected, zones, all) => {
+    const fillTz = (s, selected, zones, all) => {
       const opts = (zones && zones.length ? zones.map((z) => [z.id, z.label]) : (all || []).map((z) => [z, z]));
-      sel.innerHTML = opts.map(([id, lbl]) => `<option value="${id}" ${id === selected ? 'selected' : ''}>${lbl}</option>`).join('');
+      s.innerHTML = opts.map(([id, lbl]) => `<option value="${id}" ${id === selected ? 'selected' : ''}>${lbl}</option>`).join('');
     };
     fillTz(schoolSel, S.settings.school_tz || 'America/New_York', data.zones, data.all);
     fillTz(homeSel, S.settings.home_tz || 'America/New_York', data.zones, data.all);
@@ -1110,18 +1054,11 @@
     };
   }
 
-  // Awake-time hybrid: 7 visual day-bars (always shown), a default pair that
-  // fills unset days, tap-a-day to edit via pills, drag band edges as a bonus,
-  // and weekday/weekend presets. Reads/writes the hidden data-aws/data-awe
-  // inputs so the existing save handler is unchanged.
   function wireAwake(ov) {
-    const wrap = ov.querySelector('#awake-wrap'); if (!wrap) return;
+    const wrap = ov.querySelector('.awake-block'); if (!wrap) return;
     const daysEl = ov.querySelector('#awake-days');
     const DAY_MIN = 1440;
-    const get = (i) => ({
-      s: +ov.querySelector(`[data-aws="${i}"]`).value,
-      e: +ov.querySelector(`[data-awe="${i}"]`).value,
-    });
+    const get = (i) => ({ s: +ov.querySelector(`[data-aws="${i}"]`).value, e: +ov.querySelector(`[data-awe="${i}"]`).value });
     const set = (i, s, e) => {
       s = Math.max(0, Math.min(DAY_MIN, Math.round(s / 15) * 15));
       e = Math.max(s + 15, Math.min(DAY_MIN, Math.round(e / 15) * 15));
@@ -1136,43 +1073,27 @@
       daysEl.innerHTML = DAYS.map((d, i) => {
         const { s, e } = get(i);
         const left = (s / DAY_MIN) * 100, width = ((e - s) / DAY_MIN) * 100;
-        const open = editing === i ? 'open' : '';
-        return `<div class="awk-day ${open}" data-day="${i}">
+        return `<div class="awk-day ${editing === i ? 'open' : ''}" data-day="${i}">
           <span class="awk-lbl">${d}</span>
-          <div class="awk-track" data-track="${i}">
-            <div class="awk-band" style="left:${left}%; width:${width}%;">
-              <span class="awk-h awk-h-s" data-h="s"></span>
-              <span class="awk-h awk-h-e" data-h="e"></span>
-            </div>
-          </div>
+          <div class="awk-track" data-track="${i}"><div class="awk-band" style="left:${left}%;width:${width}%;">
+            <span class="awk-h awk-h-s" data-h="s"></span><span class="awk-h awk-h-e" data-h="e"></span>
+          </div></div>
           <span class="awk-time muted small">${hm(s)}–${hm(e)}</span>
-          <div class="awk-edit">
-            <input type="time" class="awk-edit-s" value="${hm(s)}" />
-            <span class="muted">→</span>
-            <input type="time" class="awk-edit-e" value="${hm(e)}" />
-          </div>
+          <div class="awk-edit"><input type="time" class="awk-edit-s" value="${hm(s)}" /><span class="muted">→</span><input type="time" class="awk-edit-e" value="${hm(e)}" /></div>
         </div>`;
       }).join('');
-      wireRows();
-    };
-
-    const wireRows = () => {
-      for (const row of daysEl.querySelectorAll('.awk-day')) {
-        const i = +row.dataset.day;
-        // tap label/time to toggle inline edit
-        row.querySelector('.awk-lbl').onclick = () => { editing = editing === i ? -1 : i; render(); };
-        row.querySelector('.awk-time').onclick = () => { editing = editing === i ? -1 : i; render(); };
-        // pill edits
-        const es = row.querySelector('.awk-edit-s'), ee = row.querySelector('.awk-edit-e');
+      for (const r of daysEl.querySelectorAll('.awk-day')) {
+        const i = +r.dataset.day;
+        r.querySelector('.awk-lbl').onclick = () => { editing = editing === i ? -1 : i; render(); };
+        r.querySelector('.awk-time').onclick = () => { editing = editing === i ? -1 : i; render(); };
+        const es = r.querySelector('.awk-edit-s'), ee = r.querySelector('.awk-edit-e');
         if (es) es.onchange = () => { const { e } = get(i); set(i, hmToM(es.value), e); render(); };
         if (ee) ee.onchange = () => { const { s } = get(i); set(i, s, hmToM(ee.value)); render(); };
-        // drag band edges (bonus)
-        const track = row.querySelector('.awk-track');
-        for (const h of row.querySelectorAll('.awk-h')) {
+        const track = r.querySelector('.awk-track');
+        for (const h of r.querySelectorAll('.awk-h')) {
           h.onmousedown = (ev) => {
             ev.preventDefault();
-            const which = h.dataset.h;
-            const rect = track.getBoundingClientRect();
+            const which = h.dataset.h, rect = track.getBoundingClientRect();
             const move = (e2) => {
               const pct = Math.max(0, Math.min(1, (e2.clientX - rect.left) / rect.width));
               const m = Math.round((pct * DAY_MIN) / 15) * 15;
@@ -1181,25 +1102,21 @@
               render();
             };
             const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
-            document.addEventListener('mousemove', move);
-            document.addEventListener('mouseup', up);
+            document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
           };
         }
       }
     };
-
     const applyRange = (idxs) => {
-      const s = hmToM(ov.querySelector('#awk-def-s').value);
-      const e = hmToM(ov.querySelector('#awk-def-e').value);
-      idxs.forEach((i) => set(i, s, e));
-      render();
+      const s = hmToM(ov.querySelector('#awk-def-s').value), e = hmToM(ov.querySelector('#awk-def-e').value);
+      idxs.forEach((i) => set(i, s, e)); render();
     };
     ov.querySelector('#awk-apply-all').onclick = () => applyRange([0, 1, 2, 3, 4, 5, 6]);
     for (const b of wrap.querySelectorAll('[data-preset]'))
       b.onclick = () => applyRange(b.dataset.preset === 'weekday' ? [0, 1, 2, 3, 4] : [5, 6]);
-
     render();
   }
+
   // ---------- toast ----------
   function toast(msg, bad) {
     let el = $('toast');
