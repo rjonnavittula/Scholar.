@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api import (
-    activities_router, auth_router, awake_router, config_router,
+    activities_router, analytics_router, auth_router, awake_router, config_router,
     courses_router, cushion_router, integrations_router, planned_router,
     streak_router, tasks_router, timer_router,
 )
@@ -20,11 +20,11 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="HIVE Scholar API", version="0.4.21", lifespan=lifespan)
+app = FastAPI(title="HIVE Scholar API", version="0.4.22", lifespan=lifespan)
 
 for r in (auth_router, courses_router, tasks_router, activities_router,
           planned_router, awake_router, config_router, cushion_router,
-          streak_router, timer_router, integrations_router):
+          streak_router, timer_router, integrations_router, analytics_router):
     app.include_router(r)
 
 

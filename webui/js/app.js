@@ -207,8 +207,8 @@
         try { await Api.put('/config/settings', { theme: next }); } catch (e) {}
       };
     }
-    document.querySelector('[data-view="insights"]').onclick =
-      () => toast('cushion charts, timeline & analytics land in phase 5');
+    document.querySelector('[data-view="insights"]').onclick = (e) => showView('insights', e.currentTarget);
+    document.querySelector('[data-view="home"]').onclick = (e) => showView('home', e.currentTarget);
     wireTabs();
   }
 
@@ -1285,6 +1285,112 @@
     };
 
     updatePreview();
+  }
+
+  // ============================================================
+  //  ANALYTICS  (insights page — Past view; Future is next pass)
+  // ============================================================
+  let anRange = 'this_week';
+  const AN_RANGES = [
+    ['today', 'Today'], ['yesterday', 'Yesterday'], ['this_week', 'This week'],
+    ['last_week', 'Last week'], ['last_7', 'Last 7 days'], ['last_30', 'Last 30 days'],
+    ['this_month', 'This month'], ['last_month', 'Last month'], ['all', 'All time'],
+  ];
+
+  function showView(name, btn) {
+    for (const b of document.querySelectorAll('.rail-btn[data-view]')) b.classList.toggle('active', b === btn);
+    const insights = name === 'insights';
+    $('analytics').classList.toggle('hidden', !insights);
+    $('calendar').classList.toggle('hidden', insights);
+    const tb = $('tb-toolbar'); if (tb) tb.classList.toggle('hidden', insights);
+    const panel = $('panel'); if (panel) panel.classList.toggle('hidden', insights);
+    if (insights) renderAnalytics();
+  }
+
+  function renderAnalytics() {
+    const el = $('analytics');
+    el.innerHTML = `
+      <div class="an-tabs">
+        <span class="an-tab on">Analytics</span>
+        <span class="an-tab soon" title="coming next">Cushion</span>
+        <span class="an-tab soon" title="coming next">Timeline</span>
+      </div>
+      <div class="an-controls">
+        <div class="seg an-pf"><span class="on" data-pf="past">Past</span><span data-pf="future">Future</span></div>
+        <select class="an-range">${AN_RANGES.map(([k, l]) => `<option value="${k}" ${k === anRange ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      </div>
+      <div class="an-body" id="an-body"><p class="muted small">loading\u2026</p></div>`;
+    el.querySelector('.an-range').onchange = (e) => { anRange = e.target.value; loadPast(); };
+    for (const sp of el.querySelectorAll('.an-pf span')) sp.onclick = () => {
+      el.querySelectorAll('.an-pf span').forEach((x) => x.classList.toggle('on', x === sp));
+      if (sp.dataset.pf === 'future')
+        $('an-body').innerHTML = '<div class="an-soon">The <strong>Future</strong> view \u2014 available study time, tasks due, workload-due breakdown and the course pie \u2014 lands in the next update.</div>';
+      else loadPast();
+    };
+    loadPast();
+  }
+
+  async function loadPast() {
+    const body = $('an-body'); if (!body) return;
+    body.innerHTML = '<p class="muted small">loading\u2026</p>';
+    let d;
+    try { d = await Api.get('/analytics/past?range=' + encodeURIComponent(anRange)); }
+    catch (e) { body.innerHTML = '<p class="muted small">couldn\u2019t load analytics</p>'; return; }
+    body.innerHTML = anPastHtml(d);
+  }
+
+  const _anStack = (parts) => {
+    const total = parts.reduce((a, p) => a + p.min, 0) || 1;
+    return `<div class="an-stack">${parts.map((p) => `<div class="an-seg" style="width:${(p.min / total * 100).toFixed(1)}%;background:${p.color}" title="${p.label}"></div>`).join('')}</div>
+      <div class="an-legend">${parts.map((p) => `<span><i style="background:${p.color}"></i>${p.label} \u00b7 ${fmtDur(p.min)}</span>`).join('')}</div>`;
+  };
+  const _anDayBars = (rows) => {
+    const max = Math.max(1, ...rows.map((r) => Math.max(r.planned_min, r.used_min)));
+    return `<div class="an-daybars">${rows.map((r) => `
+      <div class="an-dcol"><div class="an-dpair">
+        <span class="an-db plan" style="height:${(r.planned_min / max * 100).toFixed(1)}%" title="planned ${fmtDur(r.planned_min)}"></span>
+        <span class="an-db used" style="height:${(r.used_min / max * 100).toFixed(1)}%" title="used ${fmtDur(r.used_min)}"></span>
+      </div><span class="an-dlabel">${r.label}</span></div>`).join('')}</div>
+      <div class="an-legend"><span><i class="plan"></i>planned</span><span><i class="used"></i>used</span></div>`;
+  };
+  const _anTaskBars = (rows) => {
+    if (!rows.length) return '<p class="muted small">no time logged in this range yet.</p>';
+    const max = Math.max(1, ...rows.map((r) => r.minutes));
+    return rows.map((r) => `<div class="an-trow"><span class="an-tlabel">${esc(r.title)}</span>
+      <span class="an-tbar"><span style="width:${(r.minutes / max * 100).toFixed(1)}%;background:${r.color}"></span></span>
+      <span class="an-tval">${fmtDur(r.minutes)}</span></div>`).join('');
+  };
+  const _anWeekBars = (rows) => {
+    const max = Math.max(1, ...rows.map((r) => r.minutes));
+    return `<div class="an-weekbars">${rows.map((r) => `
+      <div class="an-wcol"><span class="an-wb" style="height:${(r.minutes / max * 100).toFixed(1)}%" title="${fmtDur(r.minutes)}"></span>
+      <span class="an-wlabel">${r.label}</span></div>`).join('')}</div>`;
+  };
+
+  function anPastHtml(d) {
+    const s = d.study;
+    const parts = [
+      { label: 'used', min: s.used_min, color: 'var(--accent)' },
+      { label: 'planned, not used', min: s.planned_not_used_min, color: '#6B7A86' },
+      { label: 'free', min: s.free_min, color: 'var(--input)' },
+    ];
+    const most = d.most_consuming;
+    return `
+      <section class="an-sec"><h3>How I spent my time</h3>
+        <div class="an-card">${_anStack(parts)}
+          <p class="muted small" style="margin-top:10px">activity events in range \u00b7 ${fmtDur(s.activity_min)}</p></div></section>
+      <section class="an-sec"><h3>Time I spent on tasks</h3>
+        <div class="an-grid3">
+          <div class="an-card an-big"><div class="an-bignum">${fmtDur(d.tasks_total_min)}</div><div class="muted small">total on tasks</div></div>
+          <div class="an-card">${most
+            ? `<div class="muted small">most time-consuming</div><div class="an-mc">${esc(most.title)}</div><div class="an-mcval" style="color:${most.color}">${fmtDur(most.minutes)}</div>`
+            : '<p class="muted small">nothing logged yet</p>'}</div>
+          <div class="an-card an-tasklist">${_anTaskBars(d.by_task)}</div>
+        </div></section>
+      <section class="an-sec"><h3>Am I following my plan?</h3>
+        <div class="an-card">${d.plan_adherence.length ? _anDayBars(d.plan_adherence) : '<p class="muted small">no planned blocks in range.</p>'}</div></section>
+      <section class="an-sec"><h3>Time I spent on tasks each week</h3>
+        <div class="an-card">${_anWeekBars(d.by_week)}</div></section>`;
   }
 
   function canvasModal() {

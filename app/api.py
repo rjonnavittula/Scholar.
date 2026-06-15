@@ -612,6 +612,17 @@ def get_streak(days: int = 9, session: Session = Depends(get_session)):
     }
 
 
+# ---- analytics -------------------------------------------------------------#
+analytics_router = APIRouter(prefix="/analytics", tags=["analytics"], dependencies=AUTH)
+
+
+@analytics_router.get("/past", summary="Past analytics aggregates for the insights page")
+def analytics_past(range: str = "this_week", session: Session = Depends(get_session)):
+    from app.analytics import past_analytics
+    st, cfg, activities, planned, term, holidays = engine_ctx(session)
+    return past_analytics(session, cfg, activities, planned, term, holidays, range)
+
+
 # ---- canvas integration ------------------------------------------------------------#
 integrations_router = APIRouter(prefix="/integrations", tags=["integrations"], dependencies=AUTH)
 
