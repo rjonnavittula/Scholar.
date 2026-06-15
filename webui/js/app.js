@@ -1291,6 +1291,7 @@
   //  ANALYTICS  (insights page — Past view; Future is next pass)
   // ============================================================
   let anRange = 'this_week';
+  let anMode = 'past';
   const AN_RANGES = [
     ['today', 'Today'], ['yesterday', 'Yesterday'], ['this_week', 'This week'],
     ['last_week', 'Last week'], ['last_7', 'Last 7 days'], ['last_30', 'Last 30 days'],
@@ -1320,14 +1321,13 @@
         <select class="an-range">${AN_RANGES.map(([k, l]) => `<option value="${k}" ${k === anRange ? 'selected' : ''}>${l}</option>`).join('')}</select>
       </div>
       <div class="an-body" id="an-body"><p class="muted small">loading\u2026</p></div>`;
-    el.querySelector('.an-range').onchange = (e) => { anRange = e.target.value; loadPast(); };
+    const reload = () => (anMode === 'future' ? loadFuture() : loadPast());
+    el.querySelector('.an-range').onchange = (e) => { anRange = e.target.value; reload(); };
     for (const sp of el.querySelectorAll('.an-pf span')) sp.onclick = () => {
       el.querySelectorAll('.an-pf span').forEach((x) => x.classList.toggle('on', x === sp));
-      if (sp.dataset.pf === 'future')
-        $('an-body').innerHTML = '<div class="an-soon">The <strong>Future</strong> view \u2014 available study time, tasks due, workload-due breakdown and the course pie \u2014 lands in the next update.</div>';
-      else loadPast();
+      anMode = sp.dataset.pf; reload();
     };
-    loadPast();
+    reload();
   }
 
   async function loadPast() {
@@ -1393,8 +1393,60 @@
         <div class="an-card">${_anWeekBars(d.by_week)}</div></section>`;
   }
 
+  async function loadFuture() {
+    const body = $('an-body'); if (!body) return;
+    body.innerHTML = '<p class="muted small">loading\u2026</p>';
+    let d;
+    try { d = await Api.get('/analytics/future?range=' + encodeURIComponent(anRange)); }
+    catch (e) { body.innerHTML = '<p class="muted small">couldn\u2019t load analytics</p>'; return; }
+    body.innerHTML = anFutureHtml(d);
+  }
+
+  const _anCards = (c) => `<div class="an-cards">
+    <div class="an-statcard"><div class="an-statlabel" style="color:#6B7A86">available study time</div><div class="an-statnum">${fmtDur(c.available_min)}</div></div>
+    <div class="an-statcard"><div class="an-statlabel">tasks due</div><div class="an-statnum">${c.tasks_due}</div></div>
+    <div class="an-statcard"><div class="an-statlabel">task workload due</div><div class="an-statnum">${fmtDur(c.workload_due_min)}</div></div>
+    <div class="an-statcard"><div class="an-statlabel" style="color:var(--accent)">time planned</div><div class="an-statnum">${fmtDur(c.planned_min)}</div></div>
+    <div class="an-statcard"><div class="an-statlabel" style="color:#C58A77">time left to plan</div><div class="an-statnum">${fmtDur(c.left_to_plan_min)}</div></div>
+  </div>`;
+
+  const _anDonut = (parts) => {
+    const total = parts.reduce((a, p) => a + p.minutes, 0);
+    if (!total) return '<p class="muted small">nothing due in this range.</p>';
+    let acc = 0;
+    const segs = parts.map((p) => { const a0 = acc / total * 100; acc += p.minutes; const a1 = acc / total * 100; return `${p.color} ${a0.toFixed(1)}% ${a1.toFixed(1)}%`; }).join(', ');
+    return `<div class="an-donutwrap"><div class="an-donut" style="background:conic-gradient(${segs})"></div>
+      <div class="an-legend col">${parts.map((p) => `<span><i style="background:${p.color}"></i>${esc(p.course)} \u00b7 ${fmtDur(p.minutes)} (${p.pct}%)</span>`).join('')}</div></div>`;
+  };
+
+  const _anWeekStack = (rows) => {
+    const max = Math.max(1, ...rows.map((r) => r.workload_min + r.planned_min));
+    return `<div class="an-weekbars">${rows.map((r) => `
+      <div class="an-wcol"><span class="an-wstack" style="height:${((r.workload_min + r.planned_min) / max * 100).toFixed(1)}%">
+        <span class="an-wseg plan" style="flex:${r.planned_min}" title="planned ${fmtDur(r.planned_min)}"></span>
+        <span class="an-wseg work" style="flex:${r.workload_min}" title="workload ${fmtDur(r.workload_min)}"></span>
+      </span><span class="an-wlabel">${r.label}</span></div>`).join('')}</div>
+      <div class="an-legend"><span><i class="plan"></i>planned</span><span><i class="work"></i>workload due</span></div>`;
+  };
+
+  function anFutureHtml(d) {
+    const b = d.breakdown;
+    const parts = [
+      { label: 'activity', min: b.activity_min, color: '#B59B5B' },
+      { label: 'planned', min: b.planned_min, color: 'var(--accent)' },
+      { label: 'free', min: b.free_min, color: 'var(--input)' },
+    ];
+    return `
+      ${_anCards(d.cards)}
+      <section class="an-sec"><h3>Task workload due breakdown</h3>
+        <div class="an-card">${_anDonut(d.by_course)}</div></section>
+      <section class="an-sec"><h3>Time breakdown</h3>
+        <div class="an-card">${_anStack(parts)}</div></section>
+      <section class="an-sec"><h3>Task workload due each week</h3>
+        <div class="an-card">${_anWeekStack(d.by_week)}</div></section>`;
+  }
+
   function canvasModal() {
-    const ics = S.canvas.ics_configured ? '' : '';
     const BM = "javascript:(async()=>{try{var b=location.origin;var J=async u=>{var r=await fetch(b+u,{headers:{Accept:'application/json'}});return r.json()};var cs=[],p=1;while(p<6){var x=await J('/api/v1/courses?enrollment_state=active&per_page=100&page='+p);if(!x.length)break;cs=cs.concat(x);if(x.length<100)break;p++}var A=[];for(var c of cs){try{var as=await J('/api/v1/courses/'+c.id+'/assignments?per_page=100&bucket=upcoming');for(var a of as)A.push({id:a.id,name:a.name,due_at:a.due_at,course_id:c.id,html_url:a.html_url})}catch(e){}}await navigator.clipboard.writeText(JSON.stringify({courses:cs.map(c=>({id:c.id,name:c.name})),assignments:A}));alert('scholar: copied '+A.length+' assignments from '+cs.length+' courses. Paste into scholar.')}catch(e){alert('scholar failed: '+e)}})();";
     const { ov, close } = modal(`
       <h2>canvas</h2>

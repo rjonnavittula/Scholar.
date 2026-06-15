@@ -60,3 +60,9 @@ def recent_weeks(today: date, n: int = 6):
         m = mon - timedelta(days=7 * i)
         out.append((m, week_label(m)))
     return out
+
+
+def forward_weeks(today: date, n: int = 10):
+    """List of (monday, label) for this week + the next n-1 weeks, soonest first."""
+    mon = today - timedelta(days=today.weekday())
+    return [(mon + timedelta(days=7 * i), week_label(mon + timedelta(days=7 * i))) for i in range(n)]

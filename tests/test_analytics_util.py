@@ -1,6 +1,6 @@
 import unittest
 from datetime import date
-from app.analytics_util import range_bounds, week_label, recent_weeks
+from app.analytics_util import range_bounds, week_label, recent_weeks, forward_weeks
 
 
 class AnalyticsUtilTests(unittest.TestCase):
@@ -39,6 +39,12 @@ class AnalyticsUtilTests(unittest.TestCase):
         self.assertEqual(len(wk), 6)
         self.assertEqual(wk[-1][1], "Jun 8 \u2013 14")          # newest last
         self.assertTrue(wk[0][0] < wk[-1][0])                    # oldest first
+
+    def test_forward_weeks(self):
+        wk = forward_weeks(self.DAY, 10)
+        self.assertEqual(len(wk), 10)
+        self.assertEqual(wk[0][1], "Jun 8 \u2013 14")            # this week first
+        self.assertTrue(wk[0][0] < wk[1][0])                     # ascending
 
 
 if __name__ == "__main__":

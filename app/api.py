@@ -623,6 +623,13 @@ def analytics_past(range: str = "this_week", session: Session = Depends(get_sess
     return past_analytics(session, cfg, activities, planned, term, holidays, range)
 
 
+@analytics_router.get("/future", summary="Forward-looking analytics for the insights page")
+def analytics_future(range: str = "this_week", session: Session = Depends(get_session)):
+    from app.analytics import future_analytics
+    st, cfg, activities, planned, term, holidays = engine_ctx(session)
+    return future_analytics(session, cfg, activities, planned, term, holidays, range)
+
+
 # ---- canvas integration ------------------------------------------------------------#
 integrations_router = APIRouter(prefix="/integrations", tags=["integrations"], dependencies=AUTH)
 

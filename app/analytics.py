@@ -120,3 +120,70 @@ def past_analytics(session: Session, cfg, activities, planned, term, holidays,
         "plan_adherence": adherence,
         "by_week": by_week,
     }
+
+
+def future_analytics(session: Session, cfg, activities, planned, term, holidays,
+                     range_key: str, today: date | None = None) -> dict:
+    from app.analytics_util import RANGE_LABELS, forward_weeks, range_bounds
+    from app.rollup import roll_up
+
+    today = today or date.today()
+    s, e = range_bounds(range_key, today)
+    win_s = max(today, s) if s else today
+    win_e = e if e else today + timedelta(days=13)
+    if win_e < win_s:
+        win_e = win_s
+
+    courses = {c.id: c for c in session.exec(select(Course)).all()}
+    tasks = [t for t in roll_up(session.exec(select(Task)).all()) if t.parent_id is None]
+
+    # available study time + activity + free over the window
+    avail_min = activity_min = 0
+    d, guard = win_s, 0
+    while d <= win_e and guard < 120:
+        avail_min += day_free_minutes(d, cfg, activities, planned, term, holidays)
+        activity_min += sum(max(0, a.end_min - a.start_min)
+                            for a in activities if a.weekday == d.weekday())
+        d += timedelta(days=1); guard += 1
+
+    planned_min = sum(max(0, int((b.end_at - b.start_at).total_seconds() // 60))
+                      for b in planned if win_s <= _d(b.start_at) <= win_e)
+
+    def due_in(t, a, b):
+        return t.due_at and a <= _d(t.due_at) <= b and t.status != "done"
+
+    due_tasks = [t for t in tasks if due_in(t, win_s, win_e)]
+    workload_due = sum(t.remaining_min for t in due_tasks)
+    by_course_min: dict = {}
+    for t in due_tasks:
+        by_course_min[t.course_id] = by_course_min.get(t.course_id, 0) + t.remaining_min
+    wtot = sum(by_course_min.values()) or 1
+    by_course = [{"course": (courses[cid].name if courses.get(cid) else "unassigned"),
+                  "color": (courses[cid].color if courses.get(cid) else "#8A7F73"),
+                  "minutes": m, "pct": round(m / wtot * 100)}
+                 for cid, m in sorted(by_course_min.items(), key=lambda kv: -kv[1])]
+
+    # workload + planned per upcoming week
+    by_week = []
+    for mon, label in forward_weeks(today, 10):
+        wk_e = mon + timedelta(days=6)
+        wl = sum(t.remaining_min for t in tasks if due_in(t, mon, wk_e))
+        pl = sum(max(0, int((b.end_at - b.start_at).total_seconds() // 60))
+                 for b in planned if mon <= _d(b.start_at) <= wk_e)
+        by_week.append({"label": label, "workload_min": wl, "planned_min": pl})
+
+    return {
+        "mode": "future",
+        "range": {"key": range_key, "label": RANGE_LABELS.get(range_key, range_key),
+                  "start": win_s.isoformat(), "end": win_e.isoformat()},
+        "cards": {
+            "available_min": avail_min,
+            "tasks_due": len(due_tasks),
+            "workload_due_min": workload_due,
+            "planned_min": planned_min,
+            "left_to_plan_min": max(0, workload_due - planned_min),
+        },
+        "by_course": by_course,
+        "breakdown": {"activity_min": activity_min, "planned_min": planned_min, "free_min": avail_min},
+        "by_week": by_week,
+    }
