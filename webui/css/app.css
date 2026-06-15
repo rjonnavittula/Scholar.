@@ -299,3 +299,26 @@ input:focus, select:focus { outline:none; border-color:var(--accent); }
 .dur .dstep { background:none; border:none; color:var(--faint); cursor:pointer;
   font-size:9px; line-height:1; padding:1px; }
 .dur .dstep:hover { color:var(--accent); }
+
+/* timer modal */
+.timer { text-align:center; margin:14px 0; }
+.t-read { font-family:var(--serif); font-size:42px; letter-spacing:1px; }
+.t-ctrls { display:flex; gap:8px; justify-content:center; margin-top:10px; }
+.t-manual { display:flex; gap:6px; align-items:center; justify-content:center; margin-top:12px; }
+.t-manual input { width:70px; text-align:center; }
+
+/* plan button on task hover */
+.tcard { position:relative; }
+.plan-btn { position:absolute; top:8px; right:8px; opacity:0; transition:opacity .12s;
+  font-size:11px; padding:3px 10px; border-radius:var(--pill);
+  background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent); }
+.tcard:hover .plan-btn { opacity:1; }
+
+/* collapsible panels */
+.collapse-tab { position:fixed; top:50%; z-index:30; width:18px; height:46px;
+  background:var(--elev); border:1px solid var(--line); color:var(--muted);
+  border-radius:0 8px 8px 0; cursor:pointer; }
+.collapse-tab.right { right:0; border-radius:8px 0 0 8px; }
+#collapse-left { left:0; }
+body.no-left .sidebar { display:none; }
+body.no-right .panel { display:none; }

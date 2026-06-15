@@ -44,7 +44,7 @@
     $('gate').classList.add('hidden');
     $('app').classList.remove('hidden');
     Cal.mount($('calendar'), S, { onPlan, onMovePlanned, onBlockMenu });
-    Panel.mount($('task-groups'), S, { onTaskAction });
+    Panel.mount($('task-groups'), S, { onTaskAction, onPlanQuick });
     wireChrome();
     await loadAll();
   }
@@ -107,6 +107,12 @@
   }
 
   function wireChrome() {
+    const cl = document.getElementById('collapse-left');
+    const cr = document.getElementById('collapse-right');
+    if (cl) cl.onclick = () => { document.body.classList.toggle('no-left');
+      cl.textContent = document.body.classList.contains('no-left') ? '\u203A' : '\u2039'; };
+    if (cr) cr.onclick = () => { document.body.classList.toggle('no-right');
+      cr.textContent = document.body.classList.contains('no-right') ? '\u2039' : '\u203A'; };
     for (const b of document.querySelectorAll('#viewtabs [data-view]'))
       b.onclick = () => setCalView(b.dataset.view);
     const vn = document.getElementById('view-n');
@@ -252,6 +258,34 @@
   // ---------- calendar handlers ----------
   function localIso(dateIso, min) { return `${dateIso}T${minToHM(min)}:00`; }
 
+  async function onPlanQuick(taskId) {
+    const t = S.tasks.find((x) => x.id === taskId); if (!t) return;
+    // default: today, next half-hour, full remaining time (cap 2h for first block)
+    const now = new Date();
+    const start = Math.min(1410, (now.getHours() * 60 + now.getMinutes() + 30) - ((now.getMinutes() + 30) % 30) + 30);
+    const rem = Math.max(30, (t.time_needed_min || 60) - (t.time_spent_min || 0));
+    planExactDialog(t, isoOf(now), start, Math.min(rem, 120));
+  }
+
+  // Type exact day / time / duration to place a block precisely.
+  function planExactDialog(t, dateIso, startMin, durMin) {
+    modal(`
+      <h2>plan \u00b7 ${esc(t.title)}</h2>
+      <div class="frow">
+        <div><label>day</label><input id="p-d" type="date" value="${dateIso}" /></div>
+        <div><label>start</label><input id="p-t" type="time" value="${minToHM(startMin)}" /></div>
+        <div><label>minutes</label><input id="p-dur" type="text" inputmode="numeric" value="${durMin}" /></div>
+      </div>
+      <p class="muted small">tip: after placing, drag the block on the calendar to move or resize it.</p>
+      ${ACTIONS('place')}`, async (act, ov) => {
+      if (act !== 'save') return;
+      const d = ov.querySelector('#p-d').value;
+      const start = hmToMin(ov.querySelector('#p-t').value);
+      const dur = Math.max(15, parseInt(ov.querySelector('#p-dur').value || '60', 10) || 60);
+      if (d) { await onPlan(t.id, d, start, dur); }
+    });
+  }
+
   async function onPlan(taskId, dateIso, startMin, durMin) {
     try {
       await Api.post('/planned', {
@@ -274,18 +308,65 @@
 
   function onBlockMenu(block) {
     const t = S.tasks.find((x) => x.id === block.task_id) || {};
-    const dur = Math.round((new Date(block.end_at) - new Date(block.start_at)) / 60000);
-    modal(`
-      <h2>${esc(t.title || 'planned block')}</h2>
-      <p class="muted small">${block.start_at.slice(0, 16).replace('T', ' · ')} — ${dur} min</p>
+    timerModal(t, block);
+  }
+
+  // Stopwatch modal — used from a calendar block (with block context) or from
+  // a sidebar task (block = null). Timer LOGS time to the task; completing is
+  // a separate explicit button.
+  function timerModal(t, block) {
+    if (!t || !t.id) return;
+    const dur = block ? Math.round((new Date(block.end_at) - new Date(block.start_at)) / 60000) : 0;
+    const ctx = block
+      ? `<p class="muted small">${block.start_at.slice(0, 16).replace('T', ' · ')} \u00b7 ${dur} min planned</p>`
+      : `<p class="muted small">${t.time_spent_min}/${t.time_needed_min} min logged</p>`;
+    const { ov, close } = modal(`
+      <h2>${esc(t.title || 'task')}</h2>
+      ${ctx}
+      <div class="timer">
+        <div class="t-read" id="t-read">00:00:00</div>
+        <div class="t-ctrls">
+          <button class="ghost" id="t-toggle">start</button>
+          <button class="ghost" id="t-log">log &amp; close</button>
+        </div>
+        <div class="t-manual">
+          <span class="muted small">or log</span>
+          <input id="t-mins" type="text" inputmode="numeric" placeholder="min" />
+          <button class="ghost" id="t-logman">add</button>
+        </div>
+      </div>
       <div class="actions">
-        <button class="ghost" data-m="del">remove block</button>
-        ${block.completed ? '' : '<button class="primary" data-m="done">✓ studied it — log time</button>'}
+        ${block && !block.completed ? '<button class="ghost" data-m="bdone">mark block studied</button>' : ''}
+        ${block ? '<button class="ghost danger-btn" data-m="bdel">remove block</button>' : ''}
+        <span class="spacer"></span>
+        ${t.status !== 'done' ? '<button class="primary" data-m="done">\u2713 mark task complete</button>' : '<span class="muted small">completed</span>'}
       </div>`, async (act) => {
-      if (act === 'del') await Api.del('/planned/' + block.id);
-      if (act === 'done') await Api.patch('/planned/' + block.id, { completed: true });
-      await loadAll();
+      if (act === 'bdel') { await Api.del('/planned/' + block.id); await loadAll(); }
+      if (act === 'bdone') { await Api.patch('/planned/' + block.id, { completed: true }); await loadAll(); }
+      if (act === 'done') { await Api.patch('/tasks/' + t.id, { status: 'done' }); await loadAll(); }
     });
+
+    // stopwatch
+    let secs = 0, tick = null;
+    const read = ov.querySelector('#t-read');
+    const fmt = (s) => [s / 3600, (s % 3600) / 60, s % 60].map((n) => String(Math.floor(n)).padStart(2, '0')).join(':');
+    const toggle = ov.querySelector('#t-toggle');
+    toggle.onclick = () => {
+      if (tick) { clearInterval(tick); tick = null; toggle.textContent = 'resume'; }
+      else { tick = setInterval(() => { secs++; read.textContent = fmt(secs); }, 1000); toggle.textContent = 'pause'; }
+    };
+    const logAndClose = async () => {
+      if (tick) clearInterval(tick);
+      const mins = Math.round(secs / 60);
+      if (mins > 0) await Api.post(`/tasks/${t.id}/log?minutes=${mins}`);
+      await loadAll(); close();
+      if (mins > 0) toast(`logged ${mins} min \u00b7 ${t.title}`);
+    };
+    ov.querySelector('#t-log').onclick = logAndClose;
+    ov.querySelector('#t-logman').onclick = async () => {
+      const m = parseInt(ov.querySelector('#t-mins').value || '0', 10) || 0;
+      if (m > 0) { await Api.post(`/tasks/${t.id}/log?minutes=${m}`); await loadAll(); close(); toast(`logged ${m} min \u00b7 ${t.title}`); }
+    };
   }
 
   // ---------- panel handlers ----------

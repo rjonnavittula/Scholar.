@@ -60,7 +60,12 @@ const Panel = (() => {
     const c = S.courses.find((x) => x.id === t.course_id);
     const cu = S.cushionByTask[t.id];
     const rem = Math.max(0, t.time_needed_min - t.time_spent_min);
+    const plannedMin = (S.planned || []).filter((b) => b.task_id === t.id)
+      .reduce((a, b) => a + Math.round((new Date(b.end_at) - new Date(b.start_at)) / 60000), 0);
+    const need = t.time_needed_min || 0;
+    const planLbl = plannedMin > 0 ? `${Math.round(plannedMin/60*10)/10}h of ${Math.round(need/60*10)/10}h planned` : '';
     return `<div class="tcard" draggable="true" data-tid="${t.id}">
+        <button class="plan-btn" data-plan="${t.id}" title="plan into next free slot">plan</button>
       <div class="row-actions">
         <button data-act="flag" title="priority">${t.priority_flag ? '⚑' : '⚐'}</button>
         <button data-act="edit" title="edit">✎</button>
@@ -94,6 +99,11 @@ const Panel = (() => {
           H.onTaskAction(btn.dataset.act, tid);
         });
       }
+      const pb = el.querySelector('[data-plan]');
+      if (pb) pb.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (H.onPlanQuick) H.onPlanQuick(+pb.dataset.plan);
+      });
     }
   }
 
