@@ -28,6 +28,7 @@ services:
         condition: service_healthy
     environment:
       HIVE_DATABASE_URL: postgresql+psycopg://${HIVE_DB_USER}:${HIVE_DB_PASSWORD}@hive-db:5432/hive
+      TZ: America/New_York
     ports:
       - "8077:8077"   # reach via Tailscale / your reverse proxy; keep off the open WAN
 

@@ -1,12 +1,16 @@
-"""Data models for the HIVE Tasks API (the 'Scholar' planning service).
+"""HIVE Scholar v2 models.
 
-Kept intentionally flat (FK ints, no lazy relationships) to keep the v0
-surface small and the Cushion engine easy to reason about.
+Shovel-style anatomy: awake windows define where study time can exist,
+activities and planned blocks consume it, the engine computes what's left,
+and the cushion answers whether what's left covers what's due.
+
+Times-of-day are stored as minutes since midnight (0..1440) to keep the
+engine integer-pure. Datetimes are naive local (single-user, self-hosted).
 """
 from __future__ import annotations
 
 import enum
-from datetime import datetime, time
+from datetime import date, datetime
 from typing import Optional
 
 from sqlmodel import Field, SQLModel
@@ -14,28 +18,22 @@ from sqlmodel import Field, SQLModel
 
 class TaskStatus(str, enum.Enum):
     todo = "todo"
-    in_progress = "in_progress"
     done = "done"
 
 
-class TaskSource(str, enum.Enum):
+class Source(str, enum.Enum):
     manual = "manual"
     canvas = "canvas"
-    syllabus = "syllabus"
     api = "api"
 
 
-# --------------------------------------------------------------------------- #
-# Core entities
-# --------------------------------------------------------------------------- #
 class Course(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
-    code: Optional[str] = None
-    color: Optional[str] = None  # hex, defaults to H.I.V.E. amber in UI
-    # External mapping so re-imports update instead of duplicate.
+    color: str = "#8A7F73"
+    source: Source = Source.manual
     external_id: Optional[str] = Field(default=None, index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class Task(SQLModel, table=True):
@@ -43,19 +41,17 @@ class Task(SQLModel, table=True):
     title: str
     notes: str = ""
     course_id: Optional[int] = Field(default=None, foreign_key="course.id", index=True)
-
+    category: str = ""                      # Homework / Quiz / Reading / ...
     due_at: Optional[datetime] = Field(default=None, index=True)
-    # The two numbers Shovel cares about: how long it NEEDS vs how long you've SPENT.
-    time_needed_min: int = 0
+    start_date: Optional[date] = None       # "start ahead" anchor
+    time_needed_min: int = 60
     time_spent_min: int = 0
-
+    priority_flag: bool = False
     status: TaskStatus = TaskStatus.todo
-    priority: int = 0  # 0 = none, higher = more urgent (for tie-breaks)
-    source: TaskSource = TaskSource.manual
+    source: Source = Source.manual
     external_id: Optional[str] = Field(default=None, index=True)
-
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
 
     @property
     def remaining_min(self) -> int:
@@ -64,30 +60,62 @@ class Task(SQLModel, table=True):
         return max(0, self.time_needed_min - self.time_spent_min)
 
 
-class Commitment(SQLModel, table=True):
-    """Recurring weekly busy block — classes, work, standing meetings.
+class AwakeTime(SQLModel, table=True):
+    """One row per weekday (0=Mon..6=Sun). Study time only exists inside."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    weekday: int = Field(index=True)
+    start_min: int = 480     # 08:00
+    end_min: int = 1410      # 23:30
 
-    These subtract from your available study time, every week.
-    """
+
+class Activity(SQLModel, table=True):
+    """Recurring weekly block (lecture, lunch, workout...). Consumes time."""
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str
-    weekday: int  # 0 = Monday ... 6 = Sunday (matches Python date.weekday())
-    start: time
-    end: time
+    color: str = "#5A5348"
+    weekday: int = Field(index=True)
+    start_min: int
+    end_min: int
+    course_id: Optional[int] = Field(default=None, foreign_key="course.id")
 
 
-class Event(SQLModel, table=True):
-    """One-off calendar event that blocks study time on a specific day."""
+class PlannedBlock(SQLModel, table=True):
+    """A DO date: this task, planned into this slot on the calendar."""
     id: Optional[int] = Field(default=None, primary_key=True)
-    title: str
-    start_at: datetime
+    task_id: int = Field(foreign_key="task.id", index=True)
+    start_at: datetime = Field(index=True)
     end_at: datetime
+    completed: bool = False
+
+
+class Term(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = "Term"
+    classes_start: Optional[date] = None
+    classes_end: Optional[date] = None
+    exam_end: Optional[date] = None
+
+
+class Holiday(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    day: date = Field(index=True)
+    name: str = ""
+
+
+class Settings(SQLModel, table=True):
+    """Single row (id=1)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    min_block_min: int = 30
+    start_ahead_days: int = 3
+    yellow_threshold_pct: int = 40
+    day_start_min: int = 480          # calendar scroll-to
+    canvas_base_url: str = ""
+    canvas_token: str = ""
 
 
 class ApiKey(SQLModel, table=True):
-    """Hashed API keys. The plaintext is shown once at creation, never stored."""
     id: Optional[int] = Field(default=None, primary_key=True)
     label: str
     hashed_key: str = Field(index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.now)
     revoked: bool = False

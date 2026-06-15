@@ -1,142 +1,157 @@
-"""Unit tests for the Cushion engine — pure stdlib, no DB needed.
-
-Run:  python3 -m tests.test_cushion   (from repo root)
-  or: python3 -m unittest tests.test_cushion -v
-"""
+"""Engine tests — pure stdlib. python3 -m unittest tests.test_cushion -v"""
 from __future__ import annotations
 
 import unittest
-from dataclasses import dataclass, field
-from datetime import datetime, time
+from dataclasses import dataclass
+from datetime import date, datetime
 
-from app.cushion import busy_minutes_by_day, compute_cushion, free_minutes_between
-
-
-# ---- duck-typed stand-ins for the SQLModel classes ------------------------- #
-@dataclass
-class FakeTask:
-    id: int
-    title: str
-    due_at: datetime | None
-    time_needed_min: int = 0
-    time_spent_min: int = 0
-    priority: int = 0
-    status: str = "todo"
-
-    @property
-    def remaining_min(self) -> int:
-        if self.status == "done":
-            return 0
-        return max(0, self.time_needed_min - self.time_spent_min)
+from app.cushion import (
+    EngineConfig, availability_days, compute_cushion, day_free_gaps,
+    day_free_minutes, free_minutes_until, merge, subtract,
+)
 
 
 @dataclass
-class FakeCommitment:
-    title: str
+class A:  # activity
     weekday: int
-    start: time
-    end: time
+    start_min: int
+    end_min: int
 
 
 @dataclass
-class FakeEvent:
-    title: str
+class P:  # planned block
     start_at: datetime
     end_at: datetime
 
 
-# Fixed clock: Monday 2026-06-08 09:00 UTC. Flat 240 min/day capacity.
+@dataclass
+class T:  # task
+    id: int
+    title: str
+    due_at: datetime | None
+    time_needed_min: int = 60
+    time_spent_min: int = 0
+    priority_flag: bool = False
+    status: str = "todo"
+
+    @property
+    def remaining_min(self):
+        return 0 if self.status == "done" else max(0, self.time_needed_min - self.time_spent_min)
+
+
+@dataclass
+class Trm:
+    classes_start: date | None = None
+    classes_end: date | None = None
+    exam_end: date | None = None
+
+
+@dataclass
+class H:
+    day: date
+    name: str = ""
+
+
+# Monday 2026-06-08, 09:00. Awake 08:00–22:00 daily (840 min).
 NOW = datetime(2026, 6, 8, 9, 0)
-CAP = {d: 240 for d in range(7)}
+CFG = EngineConfig(min_block_min=30, awake={d: (480, 1320) for d in range(7)})
+MON, TUE = date(2026, 6, 8), date(2026, 6, 9)
 
 
-class CushionTests(unittest.TestCase):
-    def test_feasible_simple(self):
-        # 180 min due Friday; Mon..Fri = 5 days * 240 = 1200 free.
-        t = FakeTask(1, "HW3", datetime(2026, 6, 12, 23, 59), time_needed_min=180)
-        r = compute_cushion([t], [], [], now=NOW, capacity=CAP)
+class Intervals(unittest.TestCase):
+    def test_merge_and_subtract(self):
+        self.assertEqual(merge([(600, 660), (650, 700), (60, 70)]), [(60, 70), (600, 700)])
+        self.assertEqual(subtract((480, 1320), [(600, 700)]), [(480, 600), (700, 1320)])
+        self.assertEqual(subtract((480, 1320), [(400, 1400)]), [])
+
+
+class Availability(unittest.TestCase):
+    def test_plain_day_from_now(self):
+        # today: awake clipped to 09:00 → 540..1320 = 780
+        self.assertEqual(day_free_minutes(MON, CFG, [], [], now=NOW), 780)
+        # tomorrow: full window 840
+        self.assertEqual(day_free_minutes(TUE, CFG, [], [], now=NOW), 840)
+
+    def test_activity_consumes(self):
+        lec = [A(1, 600, 720)]  # Tue 10:00–12:00
+        self.assertEqual(day_free_minutes(TUE, CFG, lec, [], now=NOW), 840 - 120)
+
+    def test_min_block_drops_slivers(self):
+        # two activities leaving a 20-min gap between them: gap discarded
+        acts = [A(1, 480, 700), A(1, 720, 1320)]
+        self.assertEqual(day_free_minutes(TUE, CFG, acts, [], now=NOW), 0)
+        gaps = day_free_gaps(TUE, CFG, [A(1, 480, 700), A(1, 740, 1320)], [], now=NOW)
+        self.assertEqual(gaps, [(700, 740)])  # 40 min survives
+
+    def test_planned_block_consumes(self):
+        pb = [P(datetime(2026, 6, 9, 18, 0), datetime(2026, 6, 9, 20, 0))]
+        self.assertEqual(day_free_minutes(TUE, CFG, [], pb, now=NOW), 840 - 120)
+
+    def test_term_and_holiday(self):
+        term = Trm(classes_start=date(2026, 6, 10))
+        self.assertEqual(day_free_minutes(TUE, CFG, [], [], term=term, now=NOW), 0)
+        hol = [H(TUE)]
+        self.assertEqual(day_free_minutes(TUE, CFG, [], [], holidays=hol, now=NOW), 0)
+
+    def test_past_day_zero(self):
+        self.assertEqual(day_free_minutes(date(2026, 6, 7), CFG, [], [], now=NOW), 0)
+
+    def test_due_time_clips(self):
+        due = datetime(2026, 6, 9, 12, 0)
+        # Mon 09:00→22:00 = 780, Tue 08:00→12:00 = 240
+        self.assertEqual(free_minutes_until(due, CFG, [], [], now=NOW), 1020)
+
+    def test_availability_shape(self):
+        days = availability_days(MON, 7, CFG, [], [], now=NOW)
+        self.assertEqual(len(days), 7)
+        self.assertEqual(days[0]["free_min"], 780)
+        self.assertEqual(days[1]["awake"], (480, 1320))
+        self.assertTrue(all(d["in_term"] for d in days))
+
+
+class Cushion(unittest.TestCase):
+    def test_edf_cumulative(self):
+        t1 = T(1, "A", datetime(2026, 6, 8, 22, 0), 200)   # free till then: 780
+        t2 = T(2, "B", datetime(2026, 6, 9, 22, 0), 200)   # free: 780+840=1620
+        r = compute_cushion([t2, t1], CFG, [], [], now=NOW)
+        self.assertEqual([c.task_id for c in r.per_task], [1, 2])
+        self.assertEqual(r.per_task[0].cushion_min, 780 - 200)
+        self.assertEqual(r.per_task[1].cushion_min, 1620 - 400)
+        self.assertEqual(r.total_cushion_min, 580)
         self.assertTrue(r.feasible)
-        self.assertEqual(r.total_cushion_min, 1200 - 180)
-        self.assertEqual(r.per_task[0].slack_min, 1020)
 
-    def test_infeasible_flags_at_risk(self):
-        # 600 min due tomorrow; only Mon+Tue = 480 free → slack -120.
-        t = FakeTask(1, "Cram", datetime(2026, 6, 9, 23, 59), time_needed_min=600)
-        r = compute_cushion([t], [], [], now=NOW, capacity=CAP)
+    def test_infeasible(self):
+        t = T(1, "Cram", datetime(2026, 6, 8, 12, 0), 600)  # free 09→12 = 180
+        r = compute_cushion([t], CFG, [], [], now=NOW)
+        self.assertEqual(r.per_task[0].cushion_min, 180 - 600)
         self.assertFalse(r.feasible)
-        self.assertEqual(r.total_cushion_min, -120)
-        self.assertTrue(r.per_task[0].at_risk)
 
-    def test_cumulative_edf_ordering(self):
-        # Task A due Tue (200), Task B due Wed (200).
-        # By Tue: free 480, need 200 → slack 280.
-        # By Wed: free 720, need 400 → slack 320. Tightest = 280.
-        a = FakeTask(1, "A", datetime(2026, 6, 9, 23, 59), time_needed_min=200)
-        b = FakeTask(2, "B", datetime(2026, 6, 10, 23, 59), time_needed_min=200)
-        r = compute_cushion([b, a], [], [], now=NOW, capacity=CAP)  # unsorted input
-        self.assertEqual([t.task_id for t in r.per_task], [1, 2])    # EDF sorted
-        self.assertEqual(r.per_task[0].slack_min, 280)
-        self.assertEqual(r.per_task[1].slack_min, 320)
-        self.assertEqual(r.total_cushion_min, 280)
+    def test_levels(self):
+        t = T(1, "x", datetime(2026, 6, 8, 22, 0), 700)  # cushion 80, 40% of 700=280
+        r = compute_cushion([t], CFG, [], [], now=NOW)
+        self.assertEqual(r.per_task[0].level(40), "yellow")
+        self.assertEqual(r.per_task[0].level(5), "green")
 
-    def test_commitments_reduce_free_time(self):
-        # 2h lecture every weekday → capacity effectively 120/day.
-        lec = [FakeCommitment("Lecture", wd, time(10, 0), time(12, 0)) for wd in range(5)]
-        t = FakeTask(1, "HW", datetime(2026, 6, 12, 23, 59), time_needed_min=180)
-        r = compute_cushion([t], lec, [], now=NOW, capacity=CAP)
-        self.assertEqual(r.total_cushion_min, 5 * 120 - 180)  # 420
+    def test_done_and_progress(self):
+        done = T(1, "d", datetime(2026, 6, 9, 22, 0), 300, status="done")
+        half = T(2, "h", datetime(2026, 6, 9, 22, 0), 200, time_spent_min=150)
+        r = compute_cushion([done, half], CFG, [], [], now=NOW)
+        self.assertEqual(len(r.per_task), 1)
+        self.assertEqual(r.per_task[0].remaining_min, 50)
 
-    def test_event_blocks_one_day(self):
-        # A 4h event Tuesday wipes out that whole day's 240-min capacity
-        # (free is clamped at 0, never negative).
-        ev = FakeEvent("Trip", datetime(2026, 6, 9, 8, 0), datetime(2026, 6, 9, 12, 0))
-        t = FakeTask(1, "HW", datetime(2026, 6, 10, 23, 59), time_needed_min=100)
-        r = compute_cushion([t], [], [ev], now=NOW, capacity=CAP)
-        self.assertEqual(r.per_task[0].free_until_due_min, 240 + 0 + 240)
-        self.assertEqual(r.total_cushion_min, 380)
-
-    def test_done_and_progress_excluded(self):
-        done = FakeTask(1, "Done", datetime(2026, 6, 9, 23, 59), 300, status="done")
-        partial = FakeTask(2, "Half", datetime(2026, 6, 9, 23, 59), 200, time_spent_min=150)
-        r = compute_cushion([done, partial], [], [], now=NOW, capacity=CAP)
-        self.assertEqual(len(r.per_task), 1)            # done task dropped
-        self.assertEqual(r.per_task[0].remaining_min, 50)  # progress counted
-
-    def test_no_due_date_reported_unscheduled(self):
-        t = FakeTask(7, "Someday", None, time_needed_min=60)
-        r = compute_cushion([t], [], [], now=NOW, capacity=CAP)
-        self.assertEqual(r.per_task, [])
-        self.assertEqual(r.unscheduled_task_ids, [7])
+    def test_unscheduled(self):
+        r = compute_cushion([T(9, "someday", None, 60)], CFG, [], [], now=NOW)
+        self.assertEqual(r.unscheduled_task_ids, [9])
         self.assertTrue(r.feasible)
 
-    def test_helpers_directly(self):
-        busy = busy_minutes_by_day(
-            [FakeCommitment("x", 0, time(9, 0), time(10, 30))], [],
-            NOW.date(), NOW.date(),
-        )
-        self.assertEqual(busy[NOW.date()], 90)
-        free = free_minutes_between(NOW, datetime(2026, 6, 8, 23, 0), busy, CAP)
-        self.assertEqual(free, 150)
+    def test_planned_blocks_reduce_cushion(self):
+        # planning 2h tomorrow doesn't change total free-vs-needed for tasks
+        # due AFTER the block... but blocks consume availability:
+        pb = [P(datetime(2026, 6, 9, 8, 0), datetime(2026, 6, 9, 10, 0))]
+        t = T(1, "A", datetime(2026, 6, 9, 22, 0), 200)
+        r = compute_cushion([t], CFG, [], pb, now=NOW)
+        self.assertEqual(r.per_task[0].free_until_due_min, 780 + 840 - 120)
 
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-
-
-class AvailabilityTests(unittest.TestCase):
-    def test_seven_day_window(self):
-        from app.cushion import availability_days
-        lec = [FakeCommitment("L", 0, time(10, 0), time(12, 0))]  # Mondays −120
-        days = availability_days(lec, [], now=NOW, days=7, capacity=CAP)
-        self.assertEqual(len(days), 7)
-        self.assertEqual(days[0]["date"], "2026-06-08")        # Monday
-        self.assertEqual(days[0]["free_min"], 120)             # 240 − 120
-        self.assertEqual(days[1]["free_min"], 240)             # Tuesday untouched
-        self.assertEqual(sum(d["capacity_min"] for d in days), 7 * 240)
-
-    def test_busy_clamped_to_capacity(self):
-        from app.cushion import availability_days
-        ev = FakeEvent("AllDay", datetime(2026, 6, 9, 0, 0), datetime(2026, 6, 9, 23, 0))
-        days = availability_days([], [ev], now=NOW, days=2, capacity=CAP)
-        self.assertEqual(days[1]["busy_min"], 240)   # clamped, not 1380
-        self.assertEqual(days[1]["free_min"], 0)
