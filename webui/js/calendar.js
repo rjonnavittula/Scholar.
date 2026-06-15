@@ -50,14 +50,20 @@ const Cal = (() => {
       });
     }
     for (const act of S.activities) {
+      const col = act.color || '#6F7F66';
       evs.push({
+        groupId: 'act' + act.id,
         daysOfWeek: [(act.weekday + 1) % 7],
         startTime: minToHM(act.start_min),
         endTime: minToHM(act.end_min),
-        display: 'background',
-        backgroundColor: hexA(act.color || '#6F7F66', 0.14),
+        display: 'block',
         title: act.title,
-        extendedProps: { kind: 'activity' },
+        backgroundColor: hexA(col, 0.2),
+        borderColor: hexA(col, 0.85),
+        textColor: col,
+        editable: false,
+        classNames: ['activity-ev'],
+        extendedProps: { kind: 'activity', actId: act.id },
       });
     }
     for (const t of S.tasks.filter((x) => x.status !== 'done' && x.due_at)) {

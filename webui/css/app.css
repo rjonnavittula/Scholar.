@@ -46,11 +46,14 @@ input, select { font:inherit; color:var(--fg); background:var(--input);
   border:1px solid var(--line); border-radius:var(--pill); padding:7px 12px; }
 input:focus, select:focus { outline:none; border-color:var(--accent); }
 ::selection { background:var(--accent-soft); }
-* { scrollbar-width: thin; scrollbar-color: var(--line-mid) transparent; }
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+*:hover { scrollbar-color: var(--line-mid) transparent; }
 ::-webkit-scrollbar { width:12px; height:12px; }
 ::-webkit-scrollbar-track { background:transparent; }
-::-webkit-scrollbar-thumb { background:var(--line-mid); border-radius:999px;
-  border:3px solid transparent; background-clip:content-box; min-height:40px; }
+::-webkit-scrollbar-thumb { background:transparent; border-radius:999px;
+  border:3px solid transparent; background-clip:content-box; min-height:40px;
+  transition:background .2s ease; }
+:hover::-webkit-scrollbar-thumb { background:var(--line-mid); background-clip:content-box; }
 ::-webkit-scrollbar-thumb:hover { background:var(--accent); background-clip:content-box; }
 ::-webkit-scrollbar-corner { background:transparent; }
 
@@ -850,3 +853,9 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 .side-item.act .nm { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .side-item.act .meta { font-size:11px; color:var(--muted); white-space:nowrap;
   overflow:hidden; text-overflow:ellipsis; }
+
+/* === v5e: activities as proper colored blocks (was faint background) === */
+.fc .activity-ev { border-left-width:3px !important; border-radius:6px; }
+.fc .activity-ev .fc-event-main { padding:1px 4px; }
+.fc .activity-ev .fc-event-title { font-weight:500; }
+.fc .activity-ev .fc-event-time { opacity:.85; font-weight:500; }
