@@ -47,6 +47,7 @@
     $('gate-go').onclick = () => { Api.setKey($('gate-key').value.trim()); boot(); };
   }
 
+  window.__S = S;
   async function loadAll() {
     const weekIso = isoOf(S.weekStart);
     const [settings, courses, activities, tasks, planned, cushion, avail, canvas] =
@@ -136,7 +137,7 @@
           return `<div class="tl-row">
             <span class="cu ${lv}">${cuTxt}</span>
             <div class="grow"><div>${esc(t.title)}</div>
-              <div class="muted small">${t.due_at ? 'due ' + t.due_at.slice(0,10) : 'unscheduled'} \u00b7 ${t.time_spent_min}/${t.time_needed_min}m</div></div>
+              <div class="muted small">${t.due_at ? 'due ' + Api.dayInZone(t.due_at, (S.settings.school_tz || 'America/New_York')) : 'unscheduled'} \u00b7 ${t.time_spent_min}/${t.time_needed_min}m</div></div>
             <button class="ghost small-btn" data-tl-done="${t.id}">done</button>
             <button class="ghost small-btn" data-tl-edit="${t.id}">edit</button>
           </div>`;
@@ -323,8 +324,15 @@
           value="${t?.due_at ? t.due_at.slice(0, 10) : ''}" /></div>
         <div><label>due time</label><input id="m-due-t" type="time"
           value="${t?.due_at ? t.due_at.slice(11, 16) : '23:59'}" /></div>
-        <div><label>minutes needed</label><input id="m-need" type="number" min="0" step="15"
-          value="${t?.time_needed_min ?? 60}" /></div>
+        <div><label>time needed</label>
+          <div class="dur-field">
+            <input id="m-need" type="number" min="0" step="${(t?.time_needed_min ?? 60) % 60 === 0 ? 1 : 15}"
+              value="${(t?.time_needed_min ?? 60) % 60 === 0 ? (t?.time_needed_min ?? 60) / 60 : (t?.time_needed_min ?? 60)}" />
+            <select id="m-need-unit">
+              <option value="hrs" ${(t?.time_needed_min ?? 60) % 60 === 0 ? 'selected' : ''}>hrs</option>
+              <option value="min" ${(t?.time_needed_min ?? 60) % 60 !== 0 ? 'selected' : ''}>min</option>
+            </select>
+          </div></div>
       </div>
       ${ACTIONS('save')}`,
       async (act, ovEl) => {
@@ -335,7 +343,8 @@
           course_id: +ovEl.querySelector('#m-course').value || null,
           category: ovEl.querySelector('#m-cat').value,
           due_at: dd ? `${dd}T${ovEl.querySelector('#m-due-t').value || '23:59'}:00` : null,
-          time_needed_min: +ovEl.querySelector('#m-need').value || 60,
+          time_needed_min: (() => { const v = +ovEl.querySelector('#m-need').value || 0;
+            return ovEl.querySelector('#m-need-unit').value === 'hrs' ? Math.round(v * 60) : v; })() || 60,
         };
         t ? await Api.patch('/tasks/' + t.id, body) : await Api.post('/tasks', body);
         await loadAll();

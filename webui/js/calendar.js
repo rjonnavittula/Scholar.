@@ -2,16 +2,37 @@
    due flags, now line, drag-to-plan, move/resize. */
 const Cal = (() => {
   const HOUR = 46;                       // px per hour — matches --hourH
+  const PAD = 10;                        // top inset — matches --calPadTop
   let root, S, H;                        // root el, state, handlers
   let colRects = [];                     // for pointer drag targeting
 
   const pad = (n) => String(n).padStart(2, '0');
   const minToHM = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
   const fmtDur = (m) => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? pad(m % 60) : ''}` : `${m}m`;
-  const y = (min) => (min / 60) * HOUR;
+  const y = (min) => (min / 60) * HOUR + PAD;   // uniform top inset for all placement
   const snap = (min, step = 15) => Math.round(min / step) * step;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
     (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  function tz() {
+    const st = (S && S.settings) || {};
+    return { home: st.home_tz || 'America/New_York', school: st.school_tz || 'America/New_York' };
+  }
+  function asUtc(iso) { return new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z'); }
+  function zoneMin(iso, zoneName) {
+    // minutes-of-day for a UTC instant as seen in zoneName
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: zoneName, hour: '2-digit',
+      minute: '2-digit', hour12: false }).formatToParts(asUtc(iso));
+    const h = +parts.find((p) => p.type === 'hour').value % 24;
+    const m = +parts.find((p) => p.type === 'minute').value;
+    return h * 60 + m;
+  }
+  function zoneDay(iso, zoneName) {
+    const p = new Intl.DateTimeFormat('en-US', { timeZone: zoneName, year: 'numeric',
+      month: '2-digit', day: '2-digit' }).format(asUtc(iso));
+    const [mm, dd, yy] = p.split('/');
+    return `${yy}-${mm}-${dd}`;
+  }
 
   function mount(el, state, handlers) { root = el; S = state; H = handlers; }
 
@@ -25,7 +46,7 @@ const Cal = (() => {
     const avail = Object.fromEntries((S.availability || []).map((a) => [a.date, a]));
 
     let html = '<div class="cal-grid">';
-    html += '<div class="cal-head gutter-cell"></div>';
+    html += '<div class="cal-corner"></div>';
     for (const d of days) {
       const iso = isoOf(d);
       const a = avail[iso] || {};
@@ -38,8 +59,8 @@ const Cal = (() => {
     }
 
     // gutter
-    html += '<div class="gutter-cell">';
-    for (let h = 0; h < 24; h++) html += `<div class="hour-label">${pad(h)}:00</div>`;
+    html += '<div class="gutter-cell" style="position:sticky;">';
+    for (let h = 0; h < 24; h++) html += `<div class="hour-label" style="top:${y(h * 60)}px">${pad(h)}:00</div>`;
     html += '</div>';
 
     // day columns
@@ -48,8 +69,8 @@ const Cal = (() => {
       const a = avail[iso] || { awake: [480, 1410] };
       const past = iso < todayIso;
       html += `<div class="day-col ${past ? 'past' : ''}" data-date="${iso}"
-                    style="height:${24 * HOUR}px">`;
-      for (let h = 1; h < 24; h++) html += `<div class="hour-line" style="top:${h * HOUR}px"></div>`;
+                    style="height:${24 * HOUR + PAD * 2}px">`;
+      for (let h = 1; h < 24; h++) html += `<div class="hour-line" style="top:${y(h * 60)}px"></div>`;
       const [as, ae] = a.awake || [480, 1410];
       html += `<div class="sleep" style="top:0;height:${y(as)}px"></div>`;
       html += `<div class="sleep" style="top:${y(ae)}px;height:${y(1440 - ae)}px"></div>`;
@@ -66,11 +87,11 @@ const Cal = (() => {
       }
 
       // planned blocks on this date
-      for (const p of S.planned.filter((x) => x.start_at.slice(0, 10) === iso)) {
+      for (const p of S.planned.filter((x) => zoneDay(x.start_at, tz().home) === iso)) {
         const t = taskOf(p.task_id) || {};
         const c = courseOf(t);
-        const sMin = hmToMin(p.start_at.slice(11, 16));
-        const eMin = hmToMin(p.end_at.slice(11, 16)) || 1440;
+        const sMin = zoneMin(p.start_at, tz().home);
+        const eMin = zoneMin(p.end_at, tz().home) || 1440;
         html += evHtml({
           cls: 'planned' + (p.completed ? ' done' : ''), id: p.id,
           top: y(sMin), h: y(eMin - sMin), color: c?.color || '#8A7F73',
@@ -81,8 +102,8 @@ const Cal = (() => {
 
       // due flags
       for (const t of S.tasks.filter((x) => x.status !== 'done'
-          && x.due_at && x.due_at.slice(0, 10) === iso)) {
-        const m = hmToMin(t.due_at.slice(11, 16));
+          && x.due_at && zoneDay(x.due_at, tz().school) === iso)) {
+        const m = zoneMin(t.due_at, tz().school);
         const lv = (S.cushionByTask[t.id] || {}).level;
         html += `<div class="due-flag ${lv === 'red' ? 'red' : ''}"
                       style="top:${y(m) - 7}px">⚑ ${esc(t.title)}</div>`;

@@ -10,7 +10,36 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from zoneinfo import ZoneInfo
+
 from app.cushion import EngineConfig, availability_days, compute_cushion
+
+
+def _due_to_utc(due, school_tz: str):
+    """A due datetime from the UI is wall-clock in the SCHOOL zone.
+    Store it as an aware UTC instant. Already-aware inputs are respected."""
+    if due is None:
+        return None
+    if due.tzinfo is not None:
+        return due.astimezone(ZoneInfo("UTC"))
+    try:
+        tz = ZoneInfo(school_tz)
+    except Exception:
+        tz = ZoneInfo("America/New_York")
+    return due.replace(tzinfo=tz).astimezone(ZoneInfo("UTC"))
+
+
+def _home_to_utc(dt, home_tz: str):
+    """A planned-block wall time from the UI is in the user's HOME zone."""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(ZoneInfo("UTC"))
+    try:
+        tz = ZoneInfo(home_tz)
+    except Exception:
+        tz = ZoneInfo("America/New_York")
+    return dt.replace(tzinfo=tz).astimezone(ZoneInfo("UTC"))
 from app.db import get_session
 from app.models import (
     Activity, ApiKey, AwakeTime, Course, Holiday, PlannedBlock,
@@ -56,7 +85,8 @@ def engine_ctx(session: Session):
     st = session.get(Settings, 1) or Settings(id=1)
     awake = {a.weekday: (a.start_min, a.end_min)
              for a in session.exec(select(AwakeTime)).all()}
-    cfg = EngineConfig(min_block_min=st.min_block_min, awake=awake or None)
+    cfg = EngineConfig(min_block_min=st.min_block_min, awake=awake or None,
+                       home_tz=st.home_tz, school_tz=st.school_tz)
     activities = session.exec(select(Activity)).all()
     planned = session.exec(select(PlannedBlock)).all()
     term = session.exec(select(Term)).first()
@@ -139,7 +169,9 @@ def list_tasks(status: Optional[TaskStatus] = None,
 @tasks_router.post("", status_code=201)
 def create_task(payload: TaskIn, session: Session = Depends(get_session)):
     st = session.get(Settings, 1) or Settings(id=1)
-    t = Task(**payload.model_dump(), source=Source.api)
+    data = payload.model_dump()
+    data["due_at"] = _due_to_utc(data.get("due_at"), st.school_tz)
+    t = Task(**data, source=Source.api)
     if t.due_at and not t.start_date:
         t.start_date = t.due_at.date() - timedelta(days=st.start_ahead_days)
     session.add(t); session.commit(); session.refresh(t)
@@ -151,9 +183,13 @@ def update_task(tid: int, payload: TaskPatch, session: Session = Depends(get_ses
     t = session.get(Task, tid)
     if not t:
         raise HTTPException(404)
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    patch = payload.model_dump(exclude_unset=True)
+    if "due_at" in patch:
+        st = session.get(Settings, 1) or Settings(id=1)
+        patch["due_at"] = _due_to_utc(patch["due_at"], st.school_tz)
+    for k, v in patch.items():
         setattr(t, k, v)
-    t.updated_at = datetime.now()
+    t.updated_at = datetime.now(ZoneInfo("UTC"))
     session.add(t); session.commit(); session.refresh(t)
     return t
 
@@ -218,7 +254,11 @@ def create_planned(p: PlanIn, session: Session = Depends(get_session)):
         raise HTTPException(400, "end_before_start")
     if not session.get(Task, p.task_id):
         raise HTTPException(404, "task_not_found")
-    pb = PlannedBlock(**p.model_dump())
+    st = session.get(Settings, 1) or Settings(id=1)
+    data = p.model_dump()
+    data["start_at"] = _home_to_utc(data["start_at"], st.home_tz)
+    data["end_at"] = _home_to_utc(data["end_at"], st.home_tz)
+    pb = PlannedBlock(**data)
     session.add(pb); session.commit(); session.refresh(pb)
     return pb
 
@@ -229,6 +269,11 @@ def update_planned(pid: int, body: PlanPatch, session: Session = Depends(get_ses
     if not pb:
         raise HTTPException(404)
     data = body.model_dump(exclude_unset=True)
+    st = session.get(Settings, 1) or Settings(id=1)
+    if "start_at" in data:
+        data["start_at"] = _home_to_utc(data["start_at"], st.home_tz)
+    if "end_at" in data:
+        data["end_at"] = _home_to_utc(data["end_at"], st.home_tz)
     was_completed = pb.completed
     for k, v in data.items():
         setattr(pb, k, v)
@@ -289,11 +334,24 @@ def get_settings(session: Session = Depends(get_session)):
     return out
 
 
+@config_router.get("/timezones", summary="Common IANA zones for the picker")
+def list_timezones():
+    from zoneinfo import available_timezones
+    common = [
+        "America/Los_Angeles", "America/Denver", "America/Chicago",
+        "America/New_York", "America/Phoenix", "America/Anchorage",
+        "Pacific/Honolulu", "Europe/London", "Asia/Kolkata", "UTC",
+    ]
+    allz = sorted(available_timezones())
+    return {"common": common, "all": allz}
+
+
 @config_router.put("/settings")
 def put_settings(body: dict, session: Session = Depends(get_session)):
     st = session.get(Settings, 1) or Settings(id=1)
     for k in ("min_block_min", "start_ahead_days", "yellow_threshold_pct",
-              "day_start_min", "canvas_base_url", "canvas_token"):
+              "day_start_min", "canvas_base_url", "canvas_token",
+              "home_tz", "school_tz"):
         if k in body and body[k] is not None:
             setattr(st, k, body[k])
     session.add(st); session.commit()

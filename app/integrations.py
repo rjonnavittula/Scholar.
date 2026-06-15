@@ -57,8 +57,9 @@ def sync_canvas(session: Session, st: Settings) -> dict:
             due = None
             if getattr(a, "due_at", None):
                 # Canvas returns UTC ISO; store naive local-ish (good enough v1)
+                from zoneinfo import ZoneInfo
                 due = datetime.fromisoformat(a.due_at.replace("Z", "+00:00")) \
-                    .astimezone().replace(tzinfo=None)
+                    .astimezone(ZoneInfo("UTC"))
             cat = guess_category(a.name)
             task = session.exec(select(Task).where(Task.external_id == text)).first()
             if task:

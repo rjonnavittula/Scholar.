@@ -76,6 +76,7 @@ class Activity(SQLModel, table=True):
     weekday: int = Field(index=True)
     start_min: int
     end_min: int
+    tz: Optional[str] = None          # IANA zone; None = use home_tz
     course_id: Optional[int] = Field(default=None, foreign_key="course.id")
 
 
@@ -109,6 +110,8 @@ class Settings(SQLModel, table=True):
     start_ahead_days: int = 3
     yellow_threshold_pct: int = 40
     day_start_min: int = 480          # calendar scroll-to
+    home_tz: str = "America/New_York"     # your current physical zone
+    school_tz: str = "America/New_York"   # where due dates are anchored
     canvas_base_url: str = ""
     canvas_token: str = ""
 

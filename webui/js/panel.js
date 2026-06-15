@@ -1,4 +1,5 @@
 /* panel.js — the right rail: Overdue / Due buckets / No due date. */
+function SCHOOL_TZ() { return (window.__S && window.__S.settings && window.__S.settings.school_tz) || 'America/New_York'; }
 const Panel = (() => {
   let root, S, H, query = '';
 
@@ -39,7 +40,7 @@ const Panel = (() => {
       .sort((a, b) => a.due_at.localeCompare(b.due_at));
     const byLabel = {};
     for (const t of future) {
-      const lab = bucketLabel(t.due_at.slice(0, 10), todayIso);
+      const lab = bucketLabel(Api.dayInZone(t.due_at, SCHOOL_TZ()), todayIso);
       (byLabel[lab] ??= []).push(t);
     }
     for (const [lab, items] of Object.entries(byLabel)) groups.push({ name: lab, items });
@@ -71,7 +72,7 @@ const Panel = (() => {
       <div class="title">${t.priority_flag ? '<span class="flagged">⚑</span> ' : ''}${esc(t.title)}</div>
       <div class="meta">
         ${t.category ? `<span>${esc(t.category)}</span>` : ''}
-        ${t.due_at ? `<span>due ${t.due_at.slice(5, 10)} ${t.due_at.slice(11, 16)}</span>` : ''}
+        ${t.due_at ? `<span>due ${Api.fmtInZone(t.due_at, SCHOOL_TZ(), { month: '2-digit', day: '2-digit' })} ${Api.fmtInZone(t.due_at, SCHOOL_TZ(), { hour: '2-digit', minute: '2-digit', hour12: false })}</span>` : ''}
         <span>need ${fmtDur(rem)}</span>
         ${cu ? `<span class="cushion ${cu.level}">cushion ${cu.cushion_min < 0 ? '−' : ''}${fmtDur(cu.cushion_min)}</span>` : ''}
       </div>
