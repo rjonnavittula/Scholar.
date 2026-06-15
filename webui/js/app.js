@@ -1210,8 +1210,16 @@
 
   function activityModal(existing) {
     const initDays = new Set(existing?.days || []);
+    const PRESETS = [
+      { key: 'class',   label: 'Class',   title: 'Class',   color: '#56646E', s: '10:00', e: '10:50', days: [] },
+      { key: 'lunch',   label: 'Lunch',   title: 'Lunch',   color: '#B59B5B', s: '12:00', e: '13:00', days: [0, 1, 2, 3, 4] },
+      { key: 'workout', label: 'Workout', title: 'Workout', color: '#5F6B5A', s: '17:00', e: '18:00', days: [0, 2, 4] },
+      { key: 'dinner',  label: 'Dinner',  title: 'Dinner',  color: '#7A5A4A', s: '18:30', e: '19:30', days: [0, 1, 2, 3, 4, 5, 6] },
+    ];
     const { ov } = modal(`
       <h2>${existing ? 'edit activity' : 'new activity'}</h2>
+      ${existing ? '' : `<div class="frow"><label>start from a preset</label>
+        <div class="apresets">${PRESETS.map((p) => `<button type="button" class="apz" data-p="${p.key}">${p.label}</button>`).join('')}<button type="button" class="apz" data-p="custom">Custom</button></div></div>`}
       <div class="frow"><label>title</label><input id="m-name" value="${esc(existing?.title || '')}" placeholder="CMPEN 331 lecture / lunch / workout" /></div>
       <div class="frow"><label>days</label>
         <div class="daypick">${DAYS.map((d, i) => `<button data-d="${i}" class="${initDays.has(i) ? 'sel' : ''}">${d}</button>`).join('')}</div></div>
@@ -1220,6 +1228,7 @@
         <div><label>end</label><input id="m-e" type="time" value="${existing ? minToHM(existing.end_min) : plusHM(50)}" /></div>
       </div>
       <div class="frow"><label>color</label>${swatchHtml(existing?.color || '#5F6B5A')}</div>
+      <div class="apreview"><div class="apl">PREVIEW · how it lands on your week</div><div class="achip" id="achip"></div></div>
       ${existing ? '<div class="actions left"><button class="ghost danger-btn" data-m="del">delete</button></div>' : ''}
       ${ACTIONS(existing ? 'save' : 'block it')}`,
       async (act, ovEl) => {
@@ -1240,9 +1249,42 @@
         await loadAll();
         toast(`${existing ? 'updated' : 'blocked'} \u00b7 ${title}`);
       });
+
+    const ABBR = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const fmt12 = (hm) => {
+      if (!hm) return '—';
+      const [h, m] = hm.split(':').map(Number);
+      return `${((h + 11) % 12) + 1}:${pad(m)} ${h < 12 ? 'AM' : 'PM'}`;
+    };
+    const chip = ov.querySelector('#achip');
+    const updatePreview = () => {
+      const title = ov.querySelector('#m-name').value.trim() || 'activity';
+      const sel = [...ov.querySelectorAll('.daypick button.sel')].map((b) => +b.dataset.d).sort((a, b) => a - b);
+      const dtxt = sel.length ? sel.map((d) => ABBR[d]).join(' · ') : 'pick days';
+      const color = ov.querySelector('.swatch.sel')?.dataset.c || '#5F6B5A';
+      chip.style.borderLeftColor = color;
+      chip.style.background = color + '22';
+      chip.innerHTML = `<b>${esc(title)}</b><span>${dtxt} \u00b7 ${fmt12(ov.querySelector('#m-s').value)}\u2013${fmt12(ov.querySelector('#m-e').value)}</span>`;
+    };
+
     wireSwatches(ov);
+    for (const sw of ov.querySelectorAll('.swatch')) sw.addEventListener('click', updatePreview);
     for (const b of ov.querySelectorAll('.daypick button'))
-      b.onclick = () => b.classList.toggle('sel');
+      b.onclick = () => { b.classList.toggle('sel'); updatePreview(); };
+    for (const id of ['m-name', 'm-s', 'm-e']) ov.querySelector('#' + id).addEventListener('input', updatePreview);
+
+    for (const z of ov.querySelectorAll('.apz')) z.onclick = () => {
+      ov.querySelectorAll('.apz').forEach((x) => x.classList.toggle('on', x === z));
+      const p = PRESETS.find((x) => x.key === z.dataset.p);
+      if (!p) { ov.querySelector('#m-name').value = ''; ov.querySelector('#m-name').focus(); updatePreview(); return; }
+      ov.querySelector('#m-name').value = p.title;
+      ov.querySelector('#m-s').value = p.s; ov.querySelector('#m-e').value = p.e;
+      ov.querySelectorAll('.daypick button').forEach((b) => b.classList.toggle('sel', p.days.includes(+b.dataset.d)));
+      ov.querySelectorAll('.swatch').forEach((sw) => sw.classList.toggle('sel', sw.dataset.c === p.color));
+      updatePreview();
+    };
+
+    updatePreview();
   }
 
   function canvasModal() {
