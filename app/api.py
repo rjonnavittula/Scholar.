@@ -399,7 +399,8 @@ def put_settings(body: dict, session: Session = Depends(get_session)):
     st = session.get(Settings, 1) or Settings(id=1)
     for k in ("min_block_min", "start_ahead_days", "yellow_threshold_pct",
               "day_start_min", "canvas_base_url", "canvas_token",
-              "home_tz", "school_tz", "week_start", "country", "onboarded"):
+              "home_tz", "school_tz", "week_start", "country", "onboarded",
+              "theme", "accent", "density", "fontscale", "default_view"):
         if k in body and body[k] is not None:
             setattr(st, k, body[k])
     session.add(st); session.commit()

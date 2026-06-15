@@ -41,9 +41,9 @@ def init_db() -> None:
         from alembic import command
         cfg = _alembic_cfg()
         if fresh and not insp.has_table("alembic_version"):
-            command.stamp(cfg, "0001_baseline")
+            command.stamp(cfg, "head")   # create_all built latest schema
         else:
-            command.upgrade(cfg, "head")
+            command.upgrade(cfg, "head")  # apply pending migrations
     except Exception as e:  # never block boot on migration tooling
         print(f"[alembic] skipped ({e})")
 

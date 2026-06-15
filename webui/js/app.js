@@ -71,7 +71,26 @@
     renderAll();
   }
 
+  function applyTheme() {
+    const st = S.settings || {};
+    document.body.classList.toggle('theme-light', st.theme === 'light');
+    document.body.classList.toggle('theme-dark', st.theme !== 'light');
+    const root = document.documentElement.style;
+    if (st.accent) {
+      root.setProperty('--accent', st.accent);
+      // soft = accent at ~18% alpha
+      root.setProperty('--accent-soft', hexA(st.accent, 0.18));
+    }
+    root.setProperty('--fontscale', st.fontscale || 1);
+    root.setProperty('--density', st.density || 1);
+  }
+  function hexA(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+  }
+
   function renderAll() {
+    applyTheme();
     renderSidebar(); renderTop(); renderStreak(); Cal.render(); Panel.render();
     const list = document.getElementById('tasklist');
     if (list && !list.classList.contains('hidden')) renderTaskList(list);
@@ -630,7 +649,7 @@
     const termCfg = await Api.get('/config/term');
     const t = termCfg.term || {};
     const aw = Object.fromEntries(awake.map((a) => [a.weekday, a]));
-    modal(`
+    const { ov: sov } = modal(`
       <h2>settings</h2>
       <div class="frow">
         <div><label>min study block (min)</label>
@@ -643,6 +662,28 @@
           <select id="m-wkstart">
             <option value="6" ${S.settings.week_start === 6 ? 'selected' : ''}>Sunday</option>
             <option value="0" ${S.settings.week_start === 0 ? 'selected' : ''}>Monday</option>
+          </select></div>
+        <div><label>theme</label>
+          <select id="m-theme">
+            <option value="dark" ${(S.settings.theme||'dark')==='dark'?'selected':''}>dark</option>
+            <option value="light" ${(S.settings.theme)==='light'?'selected':''}>light</option>
+          </select></div>
+        <div><label>accent</label>
+          <div class="swatches" id="m-accent">${['#8A7F73','#B59B5B','#6F7F66','#7A6A8A','#5F6B7A','#9A6A5A'].map((c)=>`<span class="swatch ${ (S.settings.accent||'#8A7F73')===c?'sel':''}" data-c="${c}" style="background:${c}"></span>`).join('')}</div></div>
+        <div><label>density</label>
+          <select id="m-density">
+            <option value="1" ${(+S.settings.density||1)===1?'selected':''}>comfortable</option>
+            <option value="0.85" ${(+S.settings.density)===0.85?'selected':''}>compact</option>
+          </select></div>
+        <div><label>font size</label>
+          <select id="m-font">
+            <option value="0.92" ${(+S.settings.fontscale)===0.92?'selected':''}>small</option>
+            <option value="1" ${(+S.settings.fontscale||1)===1?'selected':''}>normal</option>
+            <option value="1.12" ${(+S.settings.fontscale)===1.12?'selected':''}>large</option>
+          </select></div>
+        <div><label>default view</label>
+          <select id="m-defview">
+            ${['week','day','month'].map((v)=>`<option value="${v}" ${(S.settings.default_view||'week')===v?'selected':''}>${v}</option>`).join('')}
           </select></div>
       </div>
       <div class="frow"><label>term — classes start / end / exams end</label>
@@ -663,6 +704,11 @@
           start_ahead_days: +ov.querySelector('#m-ahead').value || 3,
           yellow_threshold_pct: +ov.querySelector('#m-yel').value || 40,
           week_start: +ov.querySelector('#m-wkstart').value,
+          theme: ov.querySelector('#m-theme').value,
+          accent: ov.querySelector('#m-accent .swatch.sel')?.dataset.c || '#8A7F73',
+          density: +ov.querySelector('#m-density').value,
+          fontscale: +ov.querySelector('#m-font').value,
+          default_view: ov.querySelector('#m-defview').value,
         });
         await Api.put('/config/term', {
           classes_start: ov.querySelector('#m-ts').value || null,
@@ -676,6 +722,7 @@
         })));
         await loadAll();
       });
+    wireSwatches(sov);
   }
 
   // ---------- toast ----------

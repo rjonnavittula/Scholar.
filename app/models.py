@@ -117,6 +117,11 @@ class Settings(SQLModel, table=True):
     week_start: int = 6                   # 0=Mon .. 6=Sun (calendar week start)
     country: str = "US"                   # ISO-3166 for the location->tz picker
     onboarded: bool = False
+    theme: str = "dark"
+    accent: str = "#8A7F73"
+    density: float = 1.0
+    fontscale: float = 1.0
+    default_view: str = "week"
     canvas_base_url: str = ""
     canvas_token: str = ""
 
