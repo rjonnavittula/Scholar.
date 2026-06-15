@@ -106,6 +106,11 @@ const Panel = (() => {
         e.stopPropagation();
         if (H.onPlanQuick) H.onPlanQuick(+pb.dataset.plan);
       });
+      // click the card body -> open edit (ignore clicks on buttons/controls)
+      el.addEventListener('click', (e) => {
+        if (e.target.closest('button, [data-act], [data-plan], input, a')) return;
+        if (H.onTaskEdit) H.onTaskEdit(tid);
+      });
     }
   }
 

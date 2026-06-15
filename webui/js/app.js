@@ -46,7 +46,7 @@
     $('gate').classList.add('hidden');
     $('app').classList.remove('hidden');
     Cal.mount($('calendar'), S, { onPlan, onMovePlanned, onBlockMenu });
-    Panel.mount($('task-groups'), S, { onTaskAction, onPlanQuick });
+    Panel.mount($('task-groups'), S, { onTaskAction, onPlanQuick, onTaskEdit });
     wireChrome();
     await loadAll();
   }
@@ -94,7 +94,7 @@
 
   function renderAll() {
     applyTheme();
-    renderSidebar(); renderTop(); renderStreak(); Cal.render(); Panel.render();
+    renderSidebar(); renderTop(); renderStreak(); renderGreeting(); Cal.render(); Panel.render();
     const list = document.getElementById('tasklist');
     if (list && !list.classList.contains('hidden')) renderTaskList(list);
   }
@@ -109,6 +109,14 @@
     const c = S.cushion || {};
     chip.textContent = `cushion ${c.total_cushion_human || '…'}`;
     chip.className = 'cushion-chip ' + (c.feasible ? 'ok' : 'bad');
+  }
+
+  function renderGreeting() {
+    const el = document.getElementById('greeting'); if (!el) return;
+    const name = (S.settings && S.settings.display_name) || '';
+    const h = new Date().getHours();
+    const part = h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening';
+    el.textContent = name ? `good ${part}, ${name}` : '';
   }
 
   function renderStreak() {
@@ -280,6 +288,11 @@
   // ---------- calendar handlers ----------
   function localIso(dateIso, min) { return `${dateIso}T${minToHM(min)}:00`; }
 
+  function onTaskEdit(taskId) {
+    const t = S.tasks.find((x) => x.id === taskId);
+    if (t) taskModal(t);
+  }
+
   async function onPlanQuick(taskId) {
     const t = S.tasks.find((x) => x.id === taskId); if (!t) return;
     // default: today, next half-hour, full remaining time (cap 2h for first block)
@@ -349,7 +362,10 @@
         if (!confirm(`You're timing "${cur}". Stop it and start timing "${title}"?`)) return false;
         await Api.post('/timer/stop'); await loadAll();
       }
-      const r = await Api.post('/timer/start?task_id=' + taskId);
+      let r;
+      try { r = await Api.post('/timer/start?task_id=' + taskId); }
+      catch (e) { toast('timer failed: ' + e.message, true); return false; }
+      if (!r || !r.task_id) { toast('timer failed to start', true); return false; }
       this.paused = false;
       this.state = { ...r, running: true };
       this.render();
@@ -461,9 +477,10 @@
     });
 
     const read = ov.querySelector('#t-read');
-    const paint = () => { read.textContent = Timer.fmt(running ? Timer.elapsedSec() : 0); };
+    const isThis = () => Timer.state.running && Timer.state.task_id === t.id;
+    const paint = () => { read.textContent = Timer.fmt(isThis() ? Timer.elapsedSec() : 0); };
     paint();
-    let localTick = (running && !Timer.paused) ? setInterval(paint, 1000) : null;
+    let localTick = (isThis() && !Timer.paused) ? setInterval(paint, 1000) : null;
     const stopLocal = () => { if (localTick) { clearInterval(localTick); localTick = null; } };
 
     const toggle = ov.querySelector('#t-toggle');
@@ -856,10 +873,22 @@
             <select id="m-defview">${['week', 'day', 'month'].map((v) => `<option value="${v}" ${(S.settings.default_view || 'week') === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
         </div>
         <p class="set-grouplabel">awake time — study time can only exist inside</p>
-        ${DAYS.map((d, i) => `<div class="awake-row"><span class="muted">${d}</span>
-          <input type="time" data-aws="${i}" value="${minToHM(aw[i]?.start_min ?? 480)}" />
-          <input type="time" data-awe="${i}" value="${minToHM(aw[i]?.end_min ?? 1410)}" />
-        </div>`).join('')}
+        <div class="awake-wrap" id="awake-wrap">
+          <div class="awake-default">
+            <span class="muted small">usually awake</span>
+            <input type="time" id="awk-def-s" value="08:00" />
+            <span class="muted">→</span>
+            <input type="time" id="awk-def-e" value="23:30" />
+            <button type="button" class="ghost xs" id="awk-apply-all">apply to all</button>
+          </div>
+          <div class="awake-presets">
+            <button type="button" class="ghost xs" data-preset="weekday">set weekdays</button>
+            <button type="button" class="ghost xs" data-preset="weekend">set weekend</button>
+          </div>
+          <div class="awake-days" id="awake-days"></div>
+        </div>
+        ${DAYS.map((d, i) => `<input type="hidden" data-aws="${i}" value="${aw[i]?.start_min ?? 480}" />
+          <input type="hidden" data-awe="${i}" value="${aw[i]?.end_min ?? 1410}" />`).join('')}
       </section>`;
 
     const paneAppear = `
@@ -936,13 +965,14 @@
       });
       await Api.put('/awake', DAYS.map((_, i) => ({
         weekday: i,
-        start_min: hmToMin(ov.querySelector(`[data-aws="${i}"]`).value),
-        end_min: hmToMin(ov.querySelector(`[data-awe="${i}"]`).value),
+        start_min: +ov.querySelector(`[data-aws="${i}"]`).value,
+        end_min: +ov.querySelector(`[data-awe="${i}"]`).value,
       })));
       await loadAll();
     });
 
     wireSwatches(sov);
+    wireAwake(sov);
     await initSettingsTz(sov);
 
     const mk = sov.querySelector('#m-newkey');
@@ -1001,6 +1031,96 @@
     };
   }
 
+  // Awake-time hybrid: 7 visual day-bars (always shown), a default pair that
+  // fills unset days, tap-a-day to edit via pills, drag band edges as a bonus,
+  // and weekday/weekend presets. Reads/writes the hidden data-aws/data-awe
+  // inputs so the existing save handler is unchanged.
+  function wireAwake(ov) {
+    const wrap = ov.querySelector('#awake-wrap'); if (!wrap) return;
+    const daysEl = ov.querySelector('#awake-days');
+    const DAY_MIN = 1440;
+    const get = (i) => ({
+      s: +ov.querySelector(`[data-aws="${i}"]`).value,
+      e: +ov.querySelector(`[data-awe="${i}"]`).value,
+    });
+    const set = (i, s, e) => {
+      s = Math.max(0, Math.min(DAY_MIN, Math.round(s / 15) * 15));
+      e = Math.max(s + 15, Math.min(DAY_MIN, Math.round(e / 15) * 15));
+      ov.querySelector(`[data-aws="${i}"]`).value = s;
+      ov.querySelector(`[data-awe="${i}"]`).value = e;
+    };
+    const hm = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+    const hmToM = (v) => { const [h, m] = v.split(':').map(Number); return h * 60 + m; };
+    let editing = -1;
+
+    const render = () => {
+      daysEl.innerHTML = DAYS.map((d, i) => {
+        const { s, e } = get(i);
+        const left = (s / DAY_MIN) * 100, width = ((e - s) / DAY_MIN) * 100;
+        const open = editing === i ? 'open' : '';
+        return `<div class="awk-day ${open}" data-day="${i}">
+          <span class="awk-lbl">${d}</span>
+          <div class="awk-track" data-track="${i}">
+            <div class="awk-band" style="left:${left}%; width:${width}%;">
+              <span class="awk-h awk-h-s" data-h="s"></span>
+              <span class="awk-h awk-h-e" data-h="e"></span>
+            </div>
+          </div>
+          <span class="awk-time muted small">${hm(s)}–${hm(e)}</span>
+          <div class="awk-edit">
+            <input type="time" class="awk-edit-s" value="${hm(s)}" />
+            <span class="muted">→</span>
+            <input type="time" class="awk-edit-e" value="${hm(e)}" />
+          </div>
+        </div>`;
+      }).join('');
+      wireRows();
+    };
+
+    const wireRows = () => {
+      for (const row of daysEl.querySelectorAll('.awk-day')) {
+        const i = +row.dataset.day;
+        // tap label/time to toggle inline edit
+        row.querySelector('.awk-lbl').onclick = () => { editing = editing === i ? -1 : i; render(); };
+        row.querySelector('.awk-time').onclick = () => { editing = editing === i ? -1 : i; render(); };
+        // pill edits
+        const es = row.querySelector('.awk-edit-s'), ee = row.querySelector('.awk-edit-e');
+        if (es) es.onchange = () => { const { e } = get(i); set(i, hmToM(es.value), e); render(); };
+        if (ee) ee.onchange = () => { const { s } = get(i); set(i, s, hmToM(ee.value)); render(); };
+        // drag band edges (bonus)
+        const track = row.querySelector('.awk-track');
+        for (const h of row.querySelectorAll('.awk-h')) {
+          h.onmousedown = (ev) => {
+            ev.preventDefault();
+            const which = h.dataset.h;
+            const rect = track.getBoundingClientRect();
+            const move = (e2) => {
+              const pct = Math.max(0, Math.min(1, (e2.clientX - rect.left) / rect.width));
+              const m = Math.round((pct * DAY_MIN) / 15) * 15;
+              const cur = get(i);
+              if (which === 's') set(i, m, cur.e); else set(i, cur.s, m);
+              render();
+            };
+            const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+          };
+        }
+      }
+    };
+
+    const applyRange = (idxs) => {
+      const s = hmToM(ov.querySelector('#awk-def-s').value);
+      const e = hmToM(ov.querySelector('#awk-def-e').value);
+      idxs.forEach((i) => set(i, s, e));
+      render();
+    };
+    ov.querySelector('#awk-apply-all').onclick = () => applyRange([0, 1, 2, 3, 4, 5, 6]);
+    for (const b of wrap.querySelectorAll('[data-preset]'))
+      b.onclick = () => applyRange(b.dataset.preset === 'weekday' ? [0, 1, 2, 3, 4] : [5, 6]);
+
+    render();
+  }
   // ---------- toast ----------
   function toast(msg, bad) {
     let el = $('toast');
