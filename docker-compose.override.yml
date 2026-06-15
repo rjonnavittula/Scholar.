@@ -1,0 +1,40 @@
+# docker-compose.override.yml
+# ----------------------------------------------------------------------------
+# Hot-reload / self-host deploy layer. Docker Compose AUTO-MERGES this file with
+# docker-compose.yml whenever you run `docker compose` from this folder.
+#
+# With it present:
+#   * your working tree is mounted into the api container (no baked-in copy), and
+#   * uvicorn runs with --reload.
+# So `git pull` or `git apply <patch>` updates the RUNNING app live:
+#   - backend (.py) changes  -> uvicorn restarts itself in ~1s
+#   - new Alembic migrations -> applied automatically on that restart (db.py)
+#   - frontend (webui) edits -> just refresh the browser (served as static files)
+# No image rebuild needed. Rebuild only when requirements.txt changes:
+#   docker compose up -d --build
+#
+# `name:` pins the Compose project so you reuse your EXISTING database volume
+# even though this repo lives in a new folder (volumes are project-scoped).
+# Rename this file to run the clean, baked production image instead.
+# ----------------------------------------------------------------------------
+name: hive-tasks
+
+services:
+  hive-api:
+    volumes:
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+      - ./webui:/app/webui
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8077"
+      - --reload
+      - --reload-dir
+      - /app/app
+      - --reload-dir
+      - /app/alembic
