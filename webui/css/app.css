@@ -95,16 +95,39 @@ input:focus, select:focus { outline:none; border-color:var(--accent); }
 .side-item:hover .x { visibility:visible; }
 
 .main { display:flex; flex-direction:column; min-width:0; min-height:0; height:100vh; }
-.topbar { display:flex; align-items:center; gap:14px;
-  padding:10px 16px; border-bottom:1px solid var(--line); }
+.topbar { display:flex; flex-direction:column; padding:0; border-bottom:1px solid var(--line); }
+.tb-global { display:flex; align-items:center; gap:14px; padding:9px 16px; white-space:nowrap; overflow:hidden; }
+.tb-toolbar { display:flex; align-items:center; gap:10px; padding:7px 16px; border-top:1px solid var(--line); white-space:nowrap; overflow:hidden; }
+.tb-spacer { flex:1; min-width:8px; }
+.brand { font-family:var(--serif); font-size:21px; line-height:1; flex:0 0 auto; color:var(--fg); }
+#btn-add-task { display:inline-flex; align-items:center; gap:6px; }
+#btn-add-task .ic { font-size:15px; line-height:1; }
+/* responsive collapse — driven by ResizeObserver on .main (see initTopbarResize) */
+.topbar[data-w="md"] .brand,
+.topbar[data-w="sm"] .brand,
+.topbar[data-w="xs"] .brand { display:none; }
+.topbar[data-w="sm"] .streak .dot,
+.topbar[data-w="xs"] .streak .dot { display:none; }
+.topbar[data-w="sm"] #nav-today,
+.topbar[data-w="xs"] #nav-today { display:none; }
+.topbar[data-w="xs"] #btn-add-task .lbl { display:none; }
+.topbar[data-w="xs"] #week-label { font-size:14px; }
 .tabs { display:flex; gap:4px; }
 .tab { background:none; border:none; padding:6px 10px; border-radius:0;
   border-bottom:2px solid transparent; }
 .tab.active { color:var(--accent); border-bottom-color:var(--accent); }
 .weeknav { display:flex; align-items:center; gap:6px; }
 #week-label { font-size:17px; margin-left:6px; }
-.cushion-chip { margin-left:auto; padding:5px 14px; border-radius:var(--pill);
+.cushion-chip { margin-left:0; padding:5px 14px; border-radius:var(--pill);
   border:1px solid var(--line-mid); font-size:12px; }
+
+/* first-open greeting screen */
+.greet-screen { position:fixed; inset:0; z-index:300; display:flex; align-items:center;
+  justify-content:center; background:var(--bg); opacity:0; transition:opacity .55s ease; pointer-events:none; }
+.greet-screen.in { opacity:1; pointer-events:auto; }
+.greet-text { font-family:var(--serif); font-size:clamp(30px, 6vw, 58px); color:var(--fg);
+  opacity:0; transform:translateY(10px); transition:opacity .8s ease .1s, transform .8s ease .1s; }
+.greet-screen.in .greet-text { opacity:1; transform:translateY(0); }
 .cushion-chip.ok { color:var(--green); border-color:var(--green); }
 .cushion-chip.bad { color:var(--red); border-color:var(--red); }
 

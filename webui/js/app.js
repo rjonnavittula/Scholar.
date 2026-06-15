@@ -49,6 +49,8 @@
     Panel.mount($('task-groups'), S, { onTaskAction, onPlanQuick, onTaskEdit });
     wireChrome();
     await loadAll();
+    initTopbarResize();
+    showGreeting();
   }
   function showGate() {
     $('gate').classList.remove('hidden');
@@ -94,7 +96,7 @@
 
   function renderAll() {
     applyTheme();
-    renderSidebar(); renderTop(); renderStreak(); renderGreeting(); Cal.render(); Panel.render();
+    renderSidebar(); renderTop(); renderStreak(); Cal.render(); Panel.render();
     const list = document.getElementById('tasklist');
     if (list && !list.classList.contains('hidden')) renderTaskList(list);
   }
@@ -111,12 +113,38 @@
     chip.className = 'cushion-chip ' + (c.feasible ? 'ok' : 'bad');
   }
 
-  function renderGreeting() {
-    const el = document.getElementById('greeting'); if (!el) return;
+  // First open of the day: a full-screen time-of-day greeting that fades in,
+  // holds, then fades away to reveal the app. Gated once per calendar day.
+  function showGreeting() {
     const name = (S.settings && S.settings.display_name) || '';
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      if (localStorage.getItem('scholar_greeted') === today) return;
+      localStorage.setItem('scholar_greeted', today);
+    } catch (e) { /* private mode — just show it */ }
     const h = new Date().getHours();
-    const part = h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening';
-    el.textContent = name ? `Good ${part}, ${name}` : '';
+    const part = h < 5 ? 'Hello' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+    const ov = document.createElement('div');
+    ov.className = 'greet-screen';
+    ov.innerHTML = `<div class="greet-text">${esc(name ? `${part}, ${name}` : part)}</div>`;
+    document.body.appendChild(ov);
+    requestAnimationFrame(() => ov.classList.add('in'));
+    const off = () => { ov.classList.remove('in'); setTimeout(() => ov.remove(), 600); };
+    const t = setTimeout(off, 2400);
+    ov.onclick = () => { clearTimeout(t); off(); };
+  }
+
+  // Collapse the two-tier top bar by its OWN width (not the window), so it
+  // stays correct when the task panel opens/closes. Sets data-w on .topbar.
+  function initTopbarResize() {
+    const bar = document.querySelector('.topbar');
+    const main = document.querySelector('.main');
+    if (!bar || !main || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((es) => {
+      const w = es[0].contentRect.width;
+      bar.dataset.w = w < 460 ? 'xs' : w < 560 ? 'sm' : w < 720 ? 'md' : 'full';
+    });
+    ro.observe(main);
   }
 
   function renderStreak() {
