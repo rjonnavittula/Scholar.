@@ -102,6 +102,7 @@ input:focus, select:focus { outline:none; border-color:var(--accent); }
 .brand { font-family:var(--serif); font-size:21px; line-height:1; flex:0 0 auto; color:var(--fg); }
 #btn-add-task { display:inline-flex; align-items:center; gap:6px; }
 #btn-add-task .ic { font-size:15px; line-height:1; }
+.topbar-actions { display:flex; align-items:center; gap:10px; flex:0 0 auto; }
 /* responsive collapse — driven by ResizeObserver on .main (see initTopbarResize) */
 .topbar[data-w="md"] .brand,
 .topbar[data-w="sm"] .brand,
