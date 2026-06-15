@@ -71,6 +71,7 @@
                        availability: avail, canvas, streak });
     S.cushionByTask = Object.fromEntries((cushion.per_task || []).map((c) => [c.task_id, c]));
     renderAll();
+    Timer.refresh();
   }
 
   function applyTheme() {
@@ -327,28 +328,117 @@
     } catch (e) { toast(e.message, true); }
   }
 
+  // ---------- global persistent timer ----------
+  // One timer at a time, server-backed so it survives reload. The pill in the
+  // top bar ticks from started_at; clicking it reopens the modal.
+  const Timer = {
+    state: { running: false },
+    paused: false,
+    _tick: null,
+
+    async refresh() {
+      try { this.state = await Api.get('/timer'); } catch { this.state = { running: false }; }
+      this.paused = !!this.state.paused;
+      this.render();
+    },
+
+    async start(taskId, title) {
+      // warn if another timer is running for a different task
+      if (this.state.running && this.state.task_id !== taskId) {
+        const cur = this.state.title || 'another task';
+        if (!confirm(`You're timing "${cur}". Stop it and start timing "${title}"?`)) return false;
+        await Api.post('/timer/stop'); await loadAll();
+      }
+      const r = await Api.post('/timer/start?task_id=' + taskId);
+      this.paused = false;
+      this.state = { ...r, running: true };
+      this.render();
+      return true;
+    },
+
+    async pause() {
+      await Api.post('/timer/pause');
+      this.paused = true;
+      await this.refresh();
+    },
+
+    async resume() {
+      await Api.post('/timer/resume');
+      this.paused = false;
+      await this.refresh();
+    },
+
+    async stop() {
+      const r = await Api.post('/timer/stop');
+      this.state = { running: false };
+      this.paused = false;
+      this.render();
+      await loadAll();
+      if (r.logged_min > 0) toast(`logged ${r.logged_min} min`);
+      return r;
+    },
+
+    elapsedSec() {
+      if (!this.state.running) return 0;
+      const base = this.state.accumulated_sec || 0;
+      if (this.paused || this.state.paused) return base;
+      const start = new Date(this.state.started_at).getTime();
+      return base + Math.max(0, Math.floor((Date.now() - start) / 1000));
+    },
+
+    fmt(s) {
+      return [s / 3600, (s % 3600) / 60, s % 60]
+        .map((n) => String(Math.floor(n)).padStart(2, '0')).join(':');
+    },
+
+    render() {
+      let pill = document.getElementById('timer-pill');
+      if (!this.state.running) {
+        if (pill) pill.remove();
+        if (this._tick) { clearInterval(this._tick); this._tick = null; }
+        return;
+      }
+      if (!pill) {
+        pill = document.createElement('button');
+        pill.id = 'timer-pill';
+        pill.className = 'timer-pill';
+        pill.onclick = () => timerModal(S.tasks.flatMap((t) => [t, ...(t.subtasks || [])])
+          .find((x) => x.id === this.state.task_id) || { id: this.state.task_id, title: this.state.title });
+        const anchor = document.getElementById('topbar-actions') || document.querySelector('.topbar');
+        anchor.insertBefore(pill, anchor.firstChild);
+      }
+      const paint = () => { pill.innerHTML = `<span class="tp-dot ${this.paused ? 'paused' : ''}"></span>⏱ ${this.fmt(this.elapsedSec())}`; };
+      paint();
+      if (this._tick) clearInterval(this._tick);
+      if (!this.paused) this._tick = setInterval(paint, 1000);
+    },
+  };
+
   function onBlockMenu(block) {
     const t = S.tasks.find((x) => x.id === block.task_id) || {};
     timerModal(t, block);
   }
 
-  // Stopwatch modal — used from a calendar block (with block context) or from
-  // a sidebar task (block = null). Timer LOGS time to the task; completing is
-  // a separate explicit button.
+  // The timer modal reflects the GLOBAL timer. It shows what you're timing
+  // (task or subtask, with its parent), logs on stop, and completing is separate.
   function timerModal(t, block) {
     if (!t || !t.id) return;
-    const dur = block ? Math.round((new Date(block.end_at) - new Date(block.start_at)) / 60000) : 0;
-    const ctx = block
-      ? `<p class="muted small">${block.start_at.slice(0, 16).replace('T', ' · ')} \u00b7 ${dur} min planned</p>`
-      : `<p class="muted small">${t.time_spent_min}/${t.time_needed_min} min logged</p>`;
+    const running = Timer.state.running && Timer.state.task_id === t.id;
+    const parent = t.parent_id ? S.tasks.find((x) => x.id === t.parent_id) : null;
+    const ctx = parent
+      ? `<p class="muted small">subtask of <strong>${esc(parent.title)}</strong></p>`
+      : (block
+        ? `<p class="muted small">${block.start_at.slice(0, 16).replace('T', ' · ')}</p>`
+        : `<p class="muted small">${t.time_spent_min || 0}/${t.time_needed_min || 0} min logged</p>`);
+
     const { ov, close } = modal(`
       <h2>${esc(t.title || 'task')}</h2>
       ${ctx}
       <div class="timer">
         <div class="t-read" id="t-read">00:00:00</div>
         <div class="t-ctrls">
-          <button class="ghost" id="t-toggle">start</button>
-          <button class="ghost" id="t-log">log &amp; close</button>
+          <button class="ghost" id="t-toggle">${running ? (Timer.paused ? 'resume' : 'pause') : 'start'}</button>
+          <button class="ghost" id="t-stop">stop & log</button>
         </div>
         <div class="t-manual">
           <span class="muted small">or log</span>
@@ -360,33 +450,39 @@
         ${block && !block.completed ? '<button class="ghost" data-m="bdone">mark block studied</button>' : ''}
         ${block ? '<button class="ghost danger-btn" data-m="bdel">remove block</button>' : ''}
         <span class="spacer"></span>
-        ${t.status !== 'done' ? '<button class="primary" data-m="done">\u2713 mark task complete</button>' : '<span class="muted small">completed</span>'}
+        ${t.status !== 'done' ? '<button class="primary" data-m="done">\u2713 mark complete</button>' : '<span class="muted small">completed</span>'}
       </div>`, async (act) => {
       if (act === 'bdel') { await Api.del('/planned/' + block.id); await loadAll(); }
       if (act === 'bdone') { await Api.patch('/planned/' + block.id, { completed: true }); await loadAll(); }
-      if (act === 'done') { await Api.patch('/tasks/' + t.id, { status: 'done' }); await loadAll(); }
+      if (act === 'done') {
+        if (Timer.state.running && Timer.state.task_id === t.id) await Timer.stop();
+        await Api.patch('/tasks/' + t.id, { status: 'done' }); await loadAll();
+      }
     });
 
-    // stopwatch
-    let secs = 0, tick = null;
     const read = ov.querySelector('#t-read');
-    const fmt = (s) => [s / 3600, (s % 3600) / 60, s % 60].map((n) => String(Math.floor(n)).padStart(2, '0')).join(':');
+    const paint = () => { read.textContent = Timer.fmt(running ? Timer.elapsedSec() : 0); };
+    paint();
+    let localTick = (running && !Timer.paused) ? setInterval(paint, 1000) : null;
+    const stopLocal = () => { if (localTick) { clearInterval(localTick); localTick = null; } };
+
     const toggle = ov.querySelector('#t-toggle');
-    toggle.onclick = () => {
-      if (tick) { clearInterval(tick); tick = null; toggle.textContent = 'resume'; }
-      else { tick = setInterval(() => { secs++; read.textContent = fmt(secs); }, 1000); toggle.textContent = 'pause'; }
+    toggle.onclick = async () => {
+      if (!Timer.state.running || Timer.state.task_id !== t.id) {
+        const ok = await Timer.start(t.id, t.title);
+        if (!ok) return;
+        toggle.textContent = 'pause'; paint(); stopLocal(); localTick = setInterval(paint, 1000);
+      } else if (Timer.paused) {
+        await Timer.resume(); toggle.textContent = 'pause';
+        stopLocal(); localTick = setInterval(paint, 1000);
+      } else {
+        await Timer.pause(); toggle.textContent = 'resume'; stopLocal(); paint();
+      }
     };
-    const logAndClose = async () => {
-      if (tick) clearInterval(tick);
-      const mins = Math.round(secs / 60);
-      if (mins > 0) await Api.post(`/tasks/${t.id}/log?minutes=${mins}`);
-      await loadAll(); close();
-      if (mins > 0) toast(`logged ${mins} min \u00b7 ${t.title}`);
-    };
-    ov.querySelector('#t-log').onclick = logAndClose;
+    ov.querySelector('#t-stop').onclick = async () => { stopLocal(); await Timer.stop(); close(); };
     ov.querySelector('#t-logman').onclick = async () => {
       const m = parseInt(ov.querySelector('#t-mins').value || '0', 10) || 0;
-      if (m > 0) { await Api.post(`/tasks/${t.id}/log?minutes=${m}`); await loadAll(); close(); toast(`logged ${m} min \u00b7 ${t.title}`); }
+      if (m > 0) { await Api.post(`/tasks/${t.id}/log?minutes=${m}`); await loadAll(); close(); toast(`logged ${m} min`); }
     };
   }
 

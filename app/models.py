@@ -137,6 +137,15 @@ class TimeLog(SQLModel, table=True):
     source: str = "manual"   # manual | block | timer
 
 
+class ActiveTimer(SQLModel, table=True):
+    """The single running timer (one row, id=1). Survives reloads."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    task_id: int = Field(foreign_key="task.id")
+    started_at: datetime = Field(default_factory=lambda: datetime.now(__import__("datetime").timezone.utc))
+    accumulated_sec: int = 0   # banked time from prior run segments
+    paused: bool = False
+
+
 class ApiKey(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     label: str

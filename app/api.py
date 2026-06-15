@@ -44,7 +44,7 @@ def _home_to_utc(dt, home_tz: str):
 from app.db import get_session
 from app.models import (
     Activity, ApiKey, AwakeTime, Course, Holiday, PlannedBlock,
-    Settings, Source, Task, TaskStatus, Term, TimeLog,
+    ActiveTimer, Settings, Source, Task, TaskStatus, Term, TimeLog,
 )
 
 
@@ -493,6 +493,93 @@ def get_availability(start: Optional[date] = None, days: int = 7,
     for d in out:
         d["due_count"] = sum(1 for t in tasks if t.due_at and t.due_at.date().isoformat() == d["date"])
     return out
+
+
+# ---- timer (single global active timer) -----------------------------------#
+timer_router = APIRouter(prefix="/timer", tags=["timer"], dependencies=AUTH)
+
+
+def _timer_payload(tm, session):
+    t = session.get(Task, tm.task_id)
+    return {
+        "task_id": tm.task_id,
+        "title": t.title if t else "task",
+        "parent_id": t.parent_id if t else None,
+        "started_at": tm.started_at.isoformat(),
+        "accumulated_sec": tm.accumulated_sec,
+        "paused": tm.paused,
+        "running": True,
+    }
+
+
+@timer_router.get("", summary="Current running timer (or null)")
+def get_timer(session: Session = Depends(get_session)):
+    tm = session.get(ActiveTimer, 1)
+    return _timer_payload(tm, session) if tm else {"running": False}
+
+
+@timer_router.post("/start", summary="Start timing a task/subtask")
+def start_timer(task_id: int = Query(...), session: Session = Depends(get_session)):
+    if not session.get(Task, task_id):
+        raise HTTPException(404, "task_not_found")
+    existing = session.get(ActiveTimer, 1)
+    replaced = None
+    if existing:
+        replaced = existing.task_id
+        session.delete(existing); session.commit()
+    tm = ActiveTimer(id=1, task_id=task_id,
+                     started_at=datetime.now(ZoneInfo("UTC")), accumulated_sec=0, paused=False)
+    session.add(tm); session.commit(); session.refresh(tm)
+    out = _timer_payload(tm, session); out["replaced_task_id"] = replaced
+    return out
+
+
+@timer_router.post("/pause", summary="Pause — bank elapsed into accumulated")
+def pause_timer(session: Session = Depends(get_session)):
+    tm = session.get(ActiveTimer, 1)
+    if not tm:
+        return {"running": False}
+    if not tm.paused:
+        elapsed = int((datetime.now(ZoneInfo("UTC")) - _aware(tm.started_at)).total_seconds())
+        tm.accumulated_sec += max(0, elapsed)
+        tm.paused = True
+        session.add(tm); session.commit()
+    return {"paused": True, "accumulated_sec": tm.accumulated_sec}
+
+
+@timer_router.post("/resume", summary="Resume a paused timer")
+def resume_timer(session: Session = Depends(get_session)):
+    tm = session.get(ActiveTimer, 1)
+    if not tm:
+        return {"running": False}
+    if tm.paused:
+        tm.started_at = datetime.now(ZoneInfo("UTC"))
+        tm.paused = False
+        session.add(tm); session.commit()
+    return _timer_payload(tm, session)
+
+
+@timer_router.post("/stop", summary="Stop, log the minutes, clear the timer")
+def stop_timer(session: Session = Depends(get_session)):
+    tm = session.get(ActiveTimer, 1)
+    if not tm:
+        return {"logged_min": 0}
+    live = 0 if tm.paused else int((datetime.now(ZoneInfo("UTC")) - _aware(tm.started_at)).total_seconds())
+    total_sec = tm.accumulated_sec + max(0, live)
+    mins = round(total_sec / 60)
+    task_id = tm.task_id
+    if mins > 0:
+        t = session.get(Task, task_id)
+        if t:
+            t.time_spent_min += mins
+            session.add(t)
+            session.add(TimeLog(task_id=task_id, minutes=mins, source="timer"))
+    session.delete(tm); session.commit()
+    return {"logged_min": mins, "task_id": task_id}
+
+
+def _aware(dt):
+    return dt if dt.tzinfo else dt.replace(tzinfo=ZoneInfo("UTC"))
 
 
 # ---- study streak ----------------------------------------------------------#

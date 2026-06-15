@@ -324,7 +324,7 @@ input:focus, select:focus { outline:none; border-color:var(--accent); }
 
 /* plan button on task hover */
 .tcard { position:relative; }
-.plan-btn { position:absolute; top:8px; right:8px; opacity:0; transition:opacity .12s;
+.plan-btn { position:absolute; bottom:8px; right:8px; opacity:0; transition:opacity .12s;
   font-size:11px; padding:3px 10px; border-radius:var(--pill);
   background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent); }
 .tcard:hover .plan-btn { opacity:1; }
@@ -404,3 +404,16 @@ textarea:focus { outline:none; border-color:var(--accent); }
 .dur.sm input { width:30px; text-align:center; background:var(--input);
   border:1px solid var(--line); border-radius:8px; font-size:13px; padding:3px; }
 .dur.sm i { color:var(--muted); font-size:10px; font-style:normal; margin-right:4px; }
+
+/* global timer pill */
+.topbar-actions { display:flex; align-items:center; gap:10px; }
+.timer-pill { display:flex; align-items:center; gap:7px; font-variant-numeric:tabular-nums;
+  background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent);
+  border-radius:var(--pill); padding:6px 14px; font-size:13px; cursor:pointer;
+  animation:fade .2s ease; }
+.timer-pill:hover { background:var(--accent); color:var(--bg); }
+.timer-pill .tp-dot { width:7px; height:7px; border-radius:50%; background:var(--accent);
+  animation:pulse 1.4s ease-in-out infinite; }
+.timer-pill:hover .tp-dot { background:var(--bg); }
+.timer-pill .tp-dot.paused { animation:none; opacity:.4; }
+@keyframes pulse { 0%,100%{ opacity:1; } 50%{ opacity:.35; } }
