@@ -612,6 +612,16 @@ def get_streak(days: int = 9, session: Session = Depends(get_session)):
     }
 
 
+@streak_router.get("/stats", summary="Plan-adherence streak + per-day heatmap data")
+def get_streak_stats(session: Session = Depends(get_session)):
+    from app.streak import streak_stats
+    st, cfg, activities, planned, term, holidays = engine_ctx(session)
+    tasks = roll_up(session.exec(select(Task)).all())
+    logs = session.exec(select(TimeLog)).all()
+    term_start = getattr(term, "start_date", None) if term else None
+    return streak_stats(tasks, logs, planned, term_start, home_tz=st.home_tz)
+
+
 # ---- analytics -------------------------------------------------------------#
 analytics_router = APIRouter(prefix="/analytics", tags=["analytics"], dependencies=AUTH)
 

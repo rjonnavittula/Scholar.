@@ -153,6 +153,9 @@
     el.innerHTML = '<span class="flame">\u{1F525}</span>' +
       st.days.map((d) => `<span class="dot l${d.level}" title="${d.day}: ${d.score}"></span>`).join('') +
       `<span class="n">${st.current}d</span>`;
+    el.style.cursor = 'pointer';
+    el.title = 'study streak \u2014 open stats';
+    el.onclick = () => showView('insights', document.querySelector('[data-view="insights"]'), 'streak');
   }
 
   function navBy(dir) {
@@ -283,18 +286,29 @@
       actGroups[k].ids.push(a.id);
       actGroups[k].days.push(a.weekday);
     }
-    const ABBR = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
-    const dayAbbr = (ds) => ds.slice().sort((x, y) => x - y).map((d) => ABBR[d]).join('');
+    const FULL = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const dayLabel = (ds) => {
+      const s = [...new Set(ds)].sort((a, b) => a - b);
+      if (s.length === 7) return 'Daily';
+      if (s.length === 5 && s.every((d, i) => d === i)) return 'Weekdays';
+      if (s.length === 2 && s[0] === 5 && s[1] === 6) return 'Weekends';
+      const contig = s.every((d, i) => i === 0 || d === s[i - 1] + 1);
+      if (contig && s.length >= 3) return `${FULL[s[0]]}\u2013${FULL[s[s.length - 1]]}`;
+      return s.map((d) => FULL[d]).join(' ');
+    };
+    const fmt12 = (m) => { const h = Math.floor(m / 60); return `${((h + 11) % 12) + 1}:${pad(m % 60)} ${h < 12 ? 'AM' : 'PM'}`; };
     $('activity-list').innerHTML = Object.values(actGroups)
       .sort((a, b) => Math.min(...a.days) - Math.min(...b.days) || a.start_min - b.start_min)
       .map((g) => `
-      <div class="side-item clickable" data-edit-act="${g.ids.join(',')}"
+      <div class="side-item act clickable" data-edit-act="${g.ids.join(',')}"
            data-title="${esc(g.title)}" data-color="${g.color}"
            data-days="${g.days.join(',')}" data-s="${g.start_min}" data-e="${g.end_min}">
         <span class="dot" style="background:${g.color}"></span>
-        <span class="nm">${esc(g.title)}</span>
-        <span class="meta">${dayAbbr(g.days)} ${minToHM(g.start_min)}</span>
-        <button class="x" data-del-act="${g.ids.join(',')}">✕</button>
+        <span class="side-txt">
+          <span class="nm" title="${esc(g.title)}">${esc(g.title)}</span>
+          <span class="meta">${dayLabel(g.days)} \u00b7 ${fmt12(g.start_min)}\u2013${fmt12(g.end_min)}</span>
+        </span>
+        <button class="x" data-del-act="${g.ids.join(',')}">\u2715</button>
       </div>`).join('') || '<p class="muted small">no activities yet</p>';
 
     $('canvas-status').textContent = S.canvas.configured
@@ -1298,21 +1312,24 @@
     ['this_month', 'This month'], ['last_month', 'Last month'], ['all', 'All time'],
   ];
 
-  function showView(name, btn) {
+  function showView(name, btn, tab) {
     for (const b of document.querySelectorAll('.rail-btn[data-view]')) b.classList.toggle('active', b === btn);
     const insights = name === 'insights';
     $('analytics').classList.toggle('hidden', !insights);
     $('calendar').classList.toggle('hidden', insights);
     const bar = document.querySelector('.topbar'); if (bar) bar.classList.toggle('hidden', insights);
     const panel = $('panel'); if (panel) panel.classList.toggle('hidden', insights);
-    if (insights) renderAnalytics();
+    if (insights) renderAnalytics(tab);
   }
 
-  function renderAnalytics() {
+  let anTab = 'analytics';
+  function renderAnalytics(initialTab) {
+    if (initialTab) anTab = initialTab;
     const el = $('analytics');
     el.innerHTML = `
       <div class="an-tabs">
-        <span class="an-tab on">Analytics</span>
+        <span class="an-tab" data-tab="analytics">Analytics</span>
+        <span class="an-tab" data-tab="streak">Streak</span>
         <span class="an-tab soon" title="coming next">Cushion</span>
         <span class="an-tab soon" title="coming next">Timeline</span>
       </div>
@@ -1321,13 +1338,22 @@
         <select class="an-range">${AN_RANGES.map(([k, l]) => `<option value="${k}" ${k === anRange ? 'selected' : ''}>${l}</option>`).join('')}</select>
       </div>
       <div class="an-body" id="an-body"><p class="muted small">loading\u2026</p></div>`;
-    const reload = () => (anMode === 'future' ? loadFuture() : loadPast());
-    el.querySelector('.an-range').onchange = (e) => { anRange = e.target.value; reload(); };
+    el.querySelector('.an-range').onchange = (e) => { anRange = e.target.value; if (anMode === 'future') loadFuture(); else loadPast(); };
     for (const sp of el.querySelectorAll('.an-pf span')) sp.onclick = () => {
       el.querySelectorAll('.an-pf span').forEach((x) => x.classList.toggle('on', x === sp));
-      anMode = sp.dataset.pf; reload();
+      anMode = sp.dataset.pf; if (anMode === 'future') loadFuture(); else loadPast();
     };
-    reload();
+    for (const t of el.querySelectorAll('.an-tab[data-tab]')) t.onclick = () => showAnTab(t.dataset.tab);
+    showAnTab(anTab);
+  }
+
+  function showAnTab(name) {
+    anTab = name;
+    const el = $('analytics');
+    el.querySelectorAll('.an-tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === name));
+    const controls = el.querySelector('.an-controls');
+    if (name === 'streak') { controls.classList.add('hidden'); loadStreak(); }
+    else { controls.classList.remove('hidden'); if (anMode === 'future') loadFuture(); else loadPast(); }
   }
 
   async function loadPast() {
@@ -1444,6 +1470,89 @@
         <div class="an-card">${_anStack(parts)}</div></section>
       <section class="an-sec"><h3>Task workload due each week</h3>
         <div class="an-card">${_anWeekStack(d.by_week)}</div></section>`;
+  }
+
+  // ---- Streak sub-tab (plan-adherence + rest days) -----------------------
+  let streakMode = 'used';    // used | planned
+  let streakStyle = 'grid';   // grid | month
+
+  async function loadStreak() {
+    const body = $('an-body'); if (!body) return;
+    body.innerHTML = '<p class="muted small">loading\u2026</p>';
+    let d;
+    try { d = await Api.get('/streak/stats'); }
+    catch (e) { body.innerHTML = '<p class="muted small">couldn\u2019t load streak</p>'; return; }
+    body.innerHTML = anStreakHtml(d);
+    const heat = () => { $('sg-heat').innerHTML = streakStyle === 'grid' ? _sgGrid(d) : _sgMonth(d); };
+    for (const s of body.querySelectorAll('.sg-style span')) s.onclick = () => {
+      streakStyle = s.dataset.st; body.querySelectorAll('.sg-style span').forEach((x) => x.classList.toggle('on', x === s)); heat();
+    };
+    for (const s of body.querySelectorAll('.sg-mode span')) s.onclick = () => {
+      streakMode = s.dataset.md; body.querySelectorAll('.sg-mode span').forEach((x) => x.classList.toggle('on', x === s)); heat();
+    };
+  }
+
+  function anStreakHtml(d) {
+    const dl = (v, unit) => v == null ? `<span class="muted">${unit}</span>`
+      : (v >= 0 ? `<span class="sg-up">\u25b2 ${v}% ${unit}</span>` : `<span class="sg-dn">\u25bc ${Math.abs(v)}% ${unit}</span>`);
+    const dys = (n) => `${n} ${n === 1 ? 'day' : 'days'}`;
+    return `
+      <div class="sg-cards">
+        <div class="sg-card"><div class="sg-lab">current streak <span class="flame">\u{1F525}</span></div><div class="sg-num">${dys(d.current)}</div><div class="sg-sub">longest \u00b7 ${dys(d.longest)}</div></div>
+        <div class="sg-card"><div class="sg-lab">today</div><div class="sg-num">${fmtDur(d.today_min)}</div><div class="sg-sub">${dl(d.today_delta, 'vs yesterday')}</div></div>
+        <div class="sg-card"><div class="sg-lab">this week</div><div class="sg-num">${fmtDur(d.week_min)}</div><div class="sg-sub">${dl(d.week_delta, 'vs last week')}</div></div>
+        <div class="sg-card"><div class="sg-lab">this term</div><div class="sg-num">${fmtDur(d.term_min)}</div><div class="sg-sub">keep going</div></div>
+      </div>
+      <div class="sg-toolbar">
+        <div class="seg sg-style"><span class="${streakStyle === 'grid' ? 'on' : ''}" data-st="grid">Grid</span><span class="${streakStyle === 'month' ? 'on' : ''}" data-st="month">Month</span></div>
+        <div class="seg sg-mode"><span class="${streakMode === 'used' ? 'on' : ''}" data-md="used">Used</span><span class="${streakMode === 'planned' ? 'on' : ''}" data-md="planned">Planned</span></div>
+      </div>
+      <div class="sg-heat" id="sg-heat">${streakStyle === 'grid' ? _sgGrid(d) : _sgMonth(d)}</div>
+      <div class="an-legend" style="margin-top:14px">less <i class="cell"></i><i class="cell l1"></i><i class="cell l2"></i><i class="cell l3"></i><i class="cell l4"></i> more</div>`;
+  }
+
+  const _mi = (iso) => (new Date(iso + 'T00:00').getDay() + 6) % 7;   // Mon=0..Sun=6
+
+  function _sgGrid(d) {
+    const key = streakMode === 'used' ? 'level' : 'plevel';
+    const cols = []; let col = [];
+    for (let k = 0, first = _mi(d.cells[0].day); k < first; k++) col.push(null);
+    for (const c of d.cells) { col.push(c); if (_mi(c.day) === 6) { cols.push(col); col = []; } }
+    if (col.length) cols.push(col);
+    const cell = (c) => {
+      if (!c) return '<div class="cell empty"></div>';
+      const lv = c[key]; const cls = ['cell']; if (lv) cls.push('l' + lv);
+      if (c.day === d.today) cls.push('today');
+      if (streakMode === 'used' && c.future) cls.push('future');
+      if (c.rest && streakMode === 'used' && !lv) cls.push('rest');
+      const v = streakMode === 'used' ? fmtDur(c.used) : fmtDur(c.planned);
+      return `<div class="${cls.join(' ')}" title="${c.day} \u00b7 ${v}${c.rest ? ' \u00b7 rest' : ''}"></div>`;
+    };
+    return `<div class="hmwrap"><div class="dows"><span>M</span><span>W</span><span>F</span><span>S</span></div>
+      <div class="hm">${cols.map((co) => `<div class="col">${Array.from({ length: 7 }, (_, r) => cell(co[r])).join('')}</div>`).join('')}</div></div>`;
+  }
+
+  function _sgMonth(d) {
+    const key = streakMode === 'used' ? 'level' : 'plevel';
+    const by = {}; d.cells.forEach((c) => { by[c.day] = c; });
+    const t = new Date(d.today + 'T00:00'); const y = t.getFullYear(); const m = t.getMonth();
+    const pad = (new Date(y, m, 1).getDay() + 6) % 7; const days = new Date(y, m + 1, 0).getDate();
+    const arr = []; for (let k = 0; k < pad; k++) arr.push(null);
+    for (let dy = 1; dy <= days; dy++) {
+      const iso = `${y}-${String(m + 1).padStart(2, '0')}-${String(dy).padStart(2, '0')}`;
+      arr.push({ dy, iso, c: by[iso] });
+    }
+    const cell = (x) => {
+      if (!x) return '<div class="mcell empty"></div>';
+      const c = x.c; const lv = c ? c[key] : 0; const cls = ['mcell']; if (lv) cls.push('l' + lv);
+      if (c && c.day === d.today) cls.push('today');
+      if (c && streakMode === 'used' && c.future) cls.push('future');
+      const v = c ? (streakMode === 'used' ? fmtDur(c.used) : fmtDur(c.planned)) : '0m';
+      return `<div class="${cls.join(' ')}" title="${x.iso} \u00b7 ${v}">${x.dy}</div>`;
+    };
+    return `<div class="mcal"><div class="mcal-h">${t.toLocaleString('en', { month: 'long' })} ${y}</div>
+      <div class="mcal-dows">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => `<span>${x}</span>`).join('')}</div>
+      <div class="mcal-grid">${arr.map(cell).join('')}</div></div>`;
   }
 
   function canvasModal() {

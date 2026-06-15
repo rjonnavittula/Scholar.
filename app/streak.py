@@ -115,3 +115,107 @@ def current_streak(scores: list[DayScore]) -> int:
         else:
             break
     return n
+
+
+# --- v5d: richer stats for the Streak page (plan-adherence + rest days) ------
+
+from collections import defaultdict  # noqa: E402
+
+
+def _bucket(mins: int) -> int:
+    """0 / <1h / 1-2h / 2-4h / 4h+  ->  0..4 (heatmap intensity)."""
+    if mins <= 0:
+        return 0
+    if mins < 60:
+        return 1
+    if mins < 120:
+        return 2
+    if mins < 240:
+        return 3
+    return 4
+
+
+def streak_stats(tasks, time_logs, planned, term_start: date | None = None,
+                 home_tz: str = "America/New_York", now: datetime | None = None) -> dict:
+    """Per-day used/planned grid + streak. A day keeps the streak if it's a
+    REST day (nothing was planned) or you met at least half your planned time.
+    Today never breaks the streak while it's still in progress."""
+    home = _zone(home_tz)
+    now = now or datetime.now(UTC)
+    now = now if now.tzinfo else now.replace(tzinfo=UTC)
+    today = _day_in_zone(now, home)
+
+    used: dict = defaultdict(int)
+    for lg in time_logs:
+        used[_day_in_zone(lg.logged_at, home)] += lg.minutes
+    plan: dict = defaultdict(int)
+    for b in planned:
+        s = b.start_at if b.start_at.tzinfo else b.start_at.replace(tzinfo=UTC)
+        e = b.end_at if b.end_at.tzinfo else b.end_at.replace(tzinfo=UTC)
+        plan[_day_in_zone(s, home)] += max(0, int((e - s).total_seconds() // 60))
+
+    start = term_start or (today - timedelta(days=120))
+    if (today - start).days > 200:
+        start = today - timedelta(days=200)
+    end = max([today] + list(plan.keys()))
+
+    cells = []
+    d = start
+    while d <= end:
+        u, p = used.get(d, 0), plan.get(d, 0)
+        rest = p == 0
+        met = rest or (u >= max(1, round(p * 0.5)))
+        cells.append({"day": d.isoformat(), "used": u, "planned": p, "rest": rest,
+                      "met": met, "level": _bucket(u), "plevel": _bucket(p),
+                      "future": d > today})
+        d += timedelta(days=1)
+
+    past = [c for c in cells if c["day"] <= today.isoformat()]
+    # trailing run of met days (today pending doesn't break it)
+    run = []
+    for c in reversed(past):
+        if c["day"] == today.isoformat() and c["used"] == 0 and c["planned"] > 0:
+            continue
+        if c["met"]:
+            run.append(c)          # today-first order
+        else:
+            break
+    sidx = [i for i, c in enumerate(run) if c["used"] > 0]
+    cur = (max(sidx) + 1) if sidx else 0   # span back to the oldest STUDIED day; drop leading rest
+
+    # longest: within each maximal met-run, the span between first & last study day
+    longest = 0
+    cur_run, runs = [], []
+    for c in past:
+        if c["met"]:
+            cur_run.append(c)
+        elif cur_run:
+            runs.append(cur_run); cur_run = []
+    if cur_run:
+        runs.append(cur_run)
+    for r in runs:
+        s = [i for i, c in enumerate(r) if c["used"] > 0]
+        if s:
+            longest = max(longest, s[-1] - s[0] + 1)
+
+    def rng(a, b):
+        return sum(used.get(a + timedelta(days=i), 0) for i in range((b - a).days + 1))
+
+    monday = today - timedelta(days=today.weekday())
+    today_min, yest = used.get(today, 0), used.get(today - timedelta(days=1), 0)
+    week, last_week = rng(monday, today), rng(monday - timedelta(days=7), monday - timedelta(days=1))
+    term_min = sum(used.get(date.fromisoformat(c["day"]), 0) for c in past)
+
+    def delta(c, p):
+        if p == 0:
+            return None
+        return round((c - p) / p * 100)
+
+    return {
+        "current": cur, "longest": longest,
+        "today_min": today_min, "yesterday_min": yest, "today_delta": delta(today_min, yest),
+        "week_min": week, "last_week_min": last_week, "week_delta": delta(week, last_week),
+        "term_min": term_min,
+        "cells": cells,
+        "today": today.isoformat(),
+    }
