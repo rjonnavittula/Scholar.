@@ -581,6 +581,14 @@ def stop_timer(session: Session = Depends(get_session)):
     return {"logged_min": mins, "task_id": task_id}
 
 
+@timer_router.post("/cancel", summary="Discard the running timer — log nothing")
+def cancel_timer(session: Session = Depends(get_session)):
+    tm = session.get(ActiveTimer, 1)
+    if tm:
+        session.delete(tm); session.commit()
+    return {"running": False, "discarded": True}
+
+
 def _aware(dt):
     return dt if dt.tzinfo else dt.replace(tzinfo=ZoneInfo("UTC"))
 

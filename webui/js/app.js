@@ -417,6 +417,14 @@
       return r;
     },
 
+    // discard the current session — clears the timer, logs nothing
+    async cancel() {
+      await Api.post('/timer/cancel');
+      this.state = { running: false };
+      this.paused = false;
+      this.render();
+    },
+
     elapsedSec() {
       if (!this.state.running) return 0;
       const base = this.state.accumulated_sec || 0;
@@ -485,71 +493,96 @@
     if (!t || !t.id) return;
     const subs = (t.subtasks || []);
     const hasSubs = subs.length > 0;
-    const family = [t, ...subs];                  // active timer may be on any of these
+    const family = [t, ...subs];
     const parent = t.parent_id ? S.tasks.find((x) => x.id === t.parent_id) : null;
+    const course = t.course_id ? S.courses.find((c) => c.id === t.course_id) : null;
     const activeId = () => (Timer.state.running ? Timer.state.task_id : null);
     const familyActive = () => family.find((x) => x.id === activeId());
+    const homeTz = (S.settings && S.settings.home_tz) || 'America/New_York';
 
-    const ctx = parent
-      ? `<p class="muted small">subtask of <strong>${esc(parent.title)}</strong></p>`
-      : (block
-        ? `<p class="muted small">${block.start_at.slice(0, 16).replace('T', ' \u00b7 ')}</p>`
-        : '');
+    // header: course · category  (falls back to "subtask of …" when nested)
+    const crumb = parent
+      ? `\u21B3 part of ${esc(parent.title)}`
+      : [course ? esc(course.name) : '', t.category ? esc(t.category) : '']
+          .filter(Boolean).join('  \u00b7  ') || 'task';
 
-    // direct = time logged on the parent itself (not via a subtask)
+    // Start pill — the planned block's start, else the task's start date
+    let startTxt = '\u2014';
+    if (block) {
+      startTxt = Api.fmtInZone(block.start_at, homeTz,
+        { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })
+        .replace(' PM', 'pm').replace(' AM', 'am');
+    } else if (t.start_date) {
+      startTxt = new Date(t.start_date + 'T00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+    // Time-planned pill — "1h 00m"
+    const need = t.time_needed_min || 0;
+    const plannedTxt = `${Math.floor(need / 60)}h ${String(need % 60).padStart(2, '0')}m`;
+
     const directMin = (t.direct_spent_min != null) ? t.direct_spent_min : (hasSubs ? 0 : (t.time_spent_min || 0));
-    const totalMin = t.time_spent_min || 0;       // server already = subtasks + direct
-    const needMin = t.time_needed_min || 0;
+    const totalMin = t.time_spent_min || 0;
 
-    // Breakdown only when there are subtasks: total + per-subtask + a direct row.
     const breakdown = hasSubs ? `
       <div class="t-breakdown">
         <div class="tb-head"><span class="muted small">total</span>
           <strong>${fmtDur(totalMin)}</strong>
-          <span class="muted small">/ ${fmtDur(needMin)} planned</span></div>
+          <span class="muted small">/ ${fmtDur(need)} planned</span></div>
         <div class="tb-row" data-tid="${t.id}">
           <button class="tb-play" data-play="${t.id}">\u25B6</button>
           <span class="tb-label">this task \u00b7 directly</span>
           <span class="tb-time">${fmtDur(directMin)}</span>
         </div>
-        ${subs.map((s) => `
-          <div class="tb-row ${s.status === 'done' ? 'done' : ''}" data-tid="${s.id}">
-            <button class="tb-play" data-play="${s.id}">\u25B6</button>
-            <span class="tb-label">${esc(s.title)}</span>
-            <span class="tb-time">${fmtDur(s.time_spent_min || 0)}</span>
+        ${subs.map((sub) => `
+          <div class="tb-row ${sub.status === 'done' ? 'done' : ''}" data-tid="${sub.id}">
+            <button class="tb-play" data-play="${sub.id}">\u25B6</button>
+            <span class="tb-label">${esc(sub.title)}</span>
+            <span class="tb-time">${fmtDur(sub.time_spent_min || 0)}</span>
           </div>`).join('')}
       </div>` : '';
 
-    // "I'll work on..": only offered when the task has no subtasks yet (Shovel pattern).
-    const willField = hasSubs ? '' : `
-      <input id="t-will" class="t-will" placeholder="I'll work on\u2026" autocomplete="off" />`;
-
     const { ov, close } = modal(`
-      <h2>${esc(t.title || 'task')}</h2>
-      ${ctx}
-      <div class="timer">
-        <div class="t-read" id="t-read" data-tid="${t.id}">00:00:00</div>
-        <div class="t-active-label muted small" id="t-active-label"></div>
-        ${willField}
-        <div class="t-ctrls">
-          <button class="ghost" id="t-toggle">start</button>
-          <button class="ghost" id="t-stop">stop & log</button>
+      <div class="sw-modal">
+        <div class="sw-head">
+          <div class="sw-crumb">${crumb}</div>
+          <button class="sw-x" id="sw-close" title="close">\u2715</button>
         </div>
-        <div class="t-manual">
+        <div class="sw-title-row">
+          <button class="sw-icon" id="sw-expand" title="open full view">\u2197</button>
+          <h2 class="sw-title">${esc(t.title || 'task')}</h2>
+          <button class="sw-icon sw-flag ${t.priority_flag ? 'on' : ''}" id="sw-flag" title="flag priority">\u2691</button>
+        </div>
+        <div class="sw-meta">
+          <div class="sw-meta-cell"><label>Start</label><span class="sw-pill">${startTxt}</span></div>
+          <div class="sw-meta-cell right"><label>Time planned</label><span class="sw-pill">${plannedTxt}</span></div>
+        </div>
+        <textarea id="t-will" class="sw-will" rows="2" placeholder="I will work on\u2026"></textarea>
+        <div class="sw-row">
+          <div class="sw">
+            <button class="sw-play" id="t-toggle" title="start">\u25B6</button>
+            <div class="sw-read t-read" id="t-read" data-tid="${t.id}">00:00:00</div>
+            <button class="sw-ic" id="t-reset" title="reset">\u21BB</button>
+            <button class="sw-ic sw-check" id="t-stop" title="stop & log">\u2713</button>
+          </div>
+          <div class="sw-extra">
+            ${block ? '<button class="sw-icon" id="sw-dup" title="duplicate block">\u29C9</button>' : ''}
+            ${block ? '<button class="sw-icon" id="sw-rmblock" title="remove from calendar">\u2715</button>' : ''}
+          </div>
+        </div>
+        <div class="t-active-label muted small" id="t-active-label"></div>
+        <div class="sw-manual">
           <span class="muted small">or log</span>
           <input id="t-mins" type="text" inputmode="numeric" placeholder="min" />
           <button class="ghost" id="t-logman">add</button>
+          ${block && !block.completed ? '<button class="ghost" id="sw-bdone">mark block studied</button>' : ''}
         </div>
-      </div>
-      ${breakdown}
-      <div class="actions">
-        ${block && !block.completed ? '<button class="ghost" data-m="bdone">mark block studied</button>' : ''}
-        ${block ? '<button class="ghost danger-btn" data-m="bdel">remove block</button>' : ''}
-        <span class="spacer"></span>
-        ${t.status !== 'done' ? '<button class="primary" data-m="done">\u2713 mark complete</button>' : '<span class="muted small">completed</span>'}
+        ${breakdown}
+        <div class="sw-foot">
+          <span class="muted">Done with the entire task?</span>
+          ${t.status !== 'done'
+            ? '<button class="primary" data-m="done">Mark Task Complete</button>'
+            : '<span class="muted small">completed</span>'}
+        </div>
       </div>`, async (act) => {
-      if (act === 'bdel') { await Api.del('/planned/' + block.id); await loadAll(); }
-      if (act === 'bdone') { await Api.patch('/planned/' + block.id, { completed: true }); await loadAll(); }
       if (act === 'done') {
         if (Timer.state.running && family.some((x) => x.id === Timer.state.task_id)) await Timer.stop();
         await Api.patch('/tasks/' + t.id, { status: 'done' }); await loadAll();
@@ -560,19 +593,20 @@
     const label = ov.querySelector('#t-active-label');
     const toggle = ov.querySelector('#t-toggle');
 
-    // Repaint big clock + active row to follow whichever family member is timing.
     const repaint = () => {
       const a = familyActive();
       if (a) {
-        read.dataset.tid = a.id;                  // ticker paints this id into #t-read
+        read.dataset.tid = a.id;
         read.textContent = Timer.fmt(Timer.elapsedSec());
         label.textContent = (a.id === t.id ? 'timing this task' : 'timing: ' + a.title) + (Timer.paused ? ' (paused)' : '');
-        toggle.textContent = Timer.paused ? 'resume' : 'pause';
+        toggle.textContent = Timer.paused ? '\u25B6' : '\u23F8';
+        toggle.classList.toggle('on', !Timer.paused);
       } else {
         read.dataset.tid = t.id;
         read.textContent = '00:00:00';
         label.textContent = '';
-        toggle.textContent = 'start';
+        toggle.textContent = '\u25B6';
+        toggle.classList.remove('on');
       }
       ov.querySelectorAll('.tb-row').forEach((r) => {
         const on = a && +r.dataset.tid === a.id;
@@ -587,24 +621,23 @@
 
     toggle.onclick = async () => {
       const a = familyActive();
-      if (a) {                                    // already timing in this family
+      if (a) {
         if (Timer.paused) { await Timer.resume(); } else { await Timer.pause(); }
         repaint(); return;
       }
       if (!hasSubs) {
         const will = (ov.querySelector('#t-will')?.value || '').trim();
-        if (will) {                               // prompt: time the parent, or make a subtask
+        if (will) {
           const choice = await chooseParentOrSub(ov, will);
           if (choice === 'cancel') return;
           if (choice === 'sub') {
             const created = await Api.post('/tasks', {
-              title: will, parent_id: t.id,
-              time_needed_min: 30, course_id: t.course_id || null,
+              title: will, parent_id: t.id, time_needed_min: 30, course_id: t.course_id || null,
             });
             await startOn(created.id, created.title);
             await loadAll();
             const fresh = S.tasks.find((x) => x.id === t.id);
-            close(); if (fresh) timerModal(fresh);  // reopen showing the new breakdown
+            close(); if (fresh) timerModal(fresh);
             return;
           }
         }
@@ -612,13 +645,43 @@
       await startOn(t.id, t.title);
     };
 
+    ov.querySelector('#t-reset').onclick = async () => {
+      if (familyActive()) { await Timer.cancel(); repaint(); toast('session reset'); }
+    };
     ov.querySelector('#t-stop').onclick = async () => { await Timer.stop(); close(); };
     ov.querySelector('#t-logman').onclick = async () => {
       const m = parseInt(ov.querySelector('#t-mins').value || '0', 10) || 0;
       if (m > 0) { await Api.post(`/tasks/${t.id}/log?minutes=${m}`); await loadAll(); close(); toast(`logged ${m} min`); }
     };
 
-    // Per-row play: switch the active timer to that task/subtask (or pause/resume it).
+    // header affordances
+    ov.querySelector('#sw-close').onclick = () => close();
+    ov.querySelector('#sw-expand').onclick = () => { close(); taskModal(t); };
+    const flag = ov.querySelector('#sw-flag');
+    flag.onclick = async () => {
+      const nv = !t.priority_flag;
+      await Api.patch('/tasks/' + t.id, { priority_flag: nv });
+      t.priority_flag = nv; flag.classList.toggle('on', nv);
+      const live = S.tasks.find((x) => x.id === t.id); if (live) live.priority_flag = nv;
+      loadAll();
+    };
+
+    // block icons
+    const dup = ov.querySelector('#sw-dup');
+    if (dup) dup.onclick = async () => {
+      const dur = Math.round((new Date(block.end_at) - new Date(block.start_at)) / 60000) || need || 60;
+      const ns = new Date(new Date(block.end_at).getTime());          // next slot, right after this one
+      const ne = new Date(ns.getTime() + dur * 60000);
+      const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+      await Api.post('/planned', { task_id: t.id, start_at: iso(ns), end_at: iso(ne) });
+      await loadAll(); toast('block duplicated');
+    };
+    const rmb = ov.querySelector('#sw-rmblock');
+    if (rmb) rmb.onclick = async () => { await Api.del('/planned/' + block.id); await loadAll(); close(); toast('block removed'); };
+    const bdone = ov.querySelector('#sw-bdone');
+    if (bdone) bdone.onclick = async () => { await Api.patch('/planned/' + block.id, { completed: true }); await loadAll(); close(); toast('block studied'); };
+
+    // per-row play in the breakdown
     ov.querySelectorAll('.tb-play').forEach((pb) => {
       pb.onclick = async (e) => {
         e.stopPropagation();
