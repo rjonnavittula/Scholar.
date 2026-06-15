@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.bak
+*.zip
+data/
+*.db
+*.sqlite
+.env
+.venv/
+node_modules/
