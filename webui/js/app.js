@@ -767,17 +767,17 @@
   }
 
   function taskModal(t) {
+    const isNew = !t;
     const subs = (t?.subtasks || []);
     const rolled = subs.length > 0;
     const parentTask = t?.parent_id ? S.tasks.find((x) => x.id === t.parent_id) : null;
-    const { ov } = modal(`
-      <h2>${t ? 'edit task' : 'new task'}</h2>
-      ${parentTask ? `<p class="muted small parentof">\u21B3 part of <strong>${esc(parentTask.title)}</strong></p>` : ''}
-      <div class="frow"><label>title</label>
-        <input id="m-title" value="${esc(t?.title || '')}" placeholder="Homework 4…" /></div>
+    const dueTz = t?.due_tz || S.settings.school_tz || 'America/New_York';
+
+    // shared edit fields (course/category/due/tz/time-needed) — same IDs as before
+    const fields = `
       <div class="frow">
         <div><label>course</label><select id="m-course">
-          <option value="">—</option>
+          <option value="">\u2014</option>
           ${S.courses.map((c) => `<option value="${c.id}" ${t?.course_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
         </select></div>
         <div><label>category</label><select id="m-cat">
@@ -788,10 +788,7 @@
         <div><label>due date</label><input id="m-due-d" type="date" /></div>
         <div><label>due time</label><input id="m-due-t" type="time" value="23:59" /></div>
         <div><label>timezone</label>
-          <div class="tz-pick">
-            <select id="m-tz-country"></select>
-            <select id="m-tz-zone"></select>
-          </div></div>
+          <div class="tz-pick"><select id="m-tz-country"></select><select id="m-tz-zone"></select></div></div>
         <div><label>time needed${rolled ? ' (from subtasks)' : ''}</label>
           <div class="dur ${rolled ? 'disabled' : ''}" id="m-need" data-min="${t?.time_needed_min ?? 60}">
             <div class="dseg">
@@ -807,53 +804,207 @@
               <button type="button" class="dstep" data-k="m" data-d="-1" ${rolled ? 'disabled' : ''}>\u25BC</button>
             </div>
           </div></div>
-      </div>
-      <div class="frow col"><label>notes</label>
-        <textarea id="m-notes" rows="3" placeholder="details, links, instructions…">${esc(t?.notes || '')}</textarea></div>
-      ${t ? `
-      <div class="subtasks-sec">
-        <div class="sub-head"><label>subtasks</label>
-          <span class="muted small" id="m-sub-roll"></span></div>
-        <div id="m-sub-list"></div>
-        <div class="sub-add">
-          <input id="m-sub-new" placeholder="add a subtask and press enter" />
-          <div class="dur sm" id="m-sub-dur" data-min="30">
-            <input class="dh" type="text" maxlength="2" value="0" /><i>h</i>
-            <input class="dm" type="text" maxlength="2" value="30" /><i>m</i>
+      </div>`;
+
+    const saveHandler = async (act, ovEl) => {
+      if (act === 'trash' || act === 'done') return;   // handled manually below
+      if (act !== 'save') return;
+      const dd = ovEl.querySelector('#m-due-d').value;
+      const body = {
+        title: ovEl.querySelector('#m-title').value.trim() || 'untitled',
+        course_id: +ovEl.querySelector('#m-course').value || null,
+        category: ovEl.querySelector('#m-cat').value,
+        notes: ovEl.querySelector('#m-notes').value,
+        due_at: dd ? `${dd}T${ovEl.querySelector('#m-due-t').value || '23:59'}:00` : null,
+        due_tz: ovEl.querySelector('#m-tz-zone')?.value || (S.settings.school_tz || 'America/New_York'),
+      };
+      if (!rolled) body.time_needed_min = +ovEl.querySelector('#m-need').dataset.min || 60;
+      t ? await Api.patch('/tasks/' + t.id, body) : await Api.post('/tasks', body);
+      await loadAll();
+      toast(t ? `updated \u00b7 ${body.title}` : `added task \u00b7 ${body.title}`);
+    };
+
+    // ---- NEW TASK: simple create form ----
+    if (isNew) {
+      const { ov } = modal(`
+        <h2>new task</h2>
+        <div class="frow"><label>title</label>
+          <input id="m-title" value="" placeholder="Homework 4\u2026" /></div>
+        ${fields}
+        <div class="frow col"><label>notes</label>
+          <textarea id="m-notes" rows="3" placeholder="details, links, instructions\u2026"></textarea></div>
+        <p class="muted small">save the task first to add subtasks.</p>
+        ${ACTIONS('save')}`, saveHandler);
+      initTzPicker(ov, dueTz);
+      if (!rolled) wireStepper(ov.querySelector('#m-need'));
+      ov.querySelector('#m-title').focus();
+      return;
+    }
+
+    // ---- EDIT: runway command center ----
+    const courseName = t.course_id ? (S.courses.find((c) => c.id === t.course_id)?.name || '') : '';
+    const dueChip = t.due_at
+      ? Api.fmtInZone(t.due_at, dueTz, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })
+          .replace(' PM', 'pm').replace(' AM', 'am')
+      : 'no due date';
+
+    const { ov, close } = modal(`
+      <div class="rw">
+        <div class="rw-top">
+          <input id="m-title" class="rw-title" value="${esc(t.title || '')}" />
+          <button class="ic ${t.priority_flag ? 'on' : ''}" id="rw-flag" title="flag priority">\u2691</button>
+          <button class="ic" id="rw-complete" title="${t.status === 'done' ? 'completed' : 'mark complete'}">\u2713</button>
+        </div>
+        ${parentTask ? `<p class="muted small parentof">\u21B3 part of <strong>${esc(parentTask.title)}</strong></p>` : ''}
+        <div class="rw-chips">
+          <span class="chip crs" id="rw-course"><i>\u25C9</i> ${courseName ? esc(courseName) : 'no course'}</span>
+          <span class="chip" id="rw-cat">${esc(t.category || '\u2014')}</span>
+          <span class="chip" id="rw-due">${dueChip}</span>
+          <button class="chip edit" id="rw-edit-toggle">edit details</button>
+        </div>
+
+        <div class="rw-card" id="rw-runway"></div>
+
+        <div class="rw-work">
+          <div class="rw-sw">
+            <div class="t-read" id="t-read" data-tid="${t.id}">00:00:00</div>
+            <button class="play" id="t-toggle" title="start">\u25B6</button>
+            <div class="muted small" id="t-active-label"></div>
+          </div>
+          <div class="rw-subs">
+            <div class="sub-head"><label>subtasks</label><span class="muted small" id="m-sub-roll"></span></div>
+            <div id="m-sub-list"></div>
+            <div class="sub-add">
+              <input id="m-sub-new" placeholder="add a subtask and press enter" />
+              <div class="dur sm" id="m-sub-dur" data-min="30">
+                <input class="dh" type="text" maxlength="2" value="0" /><i>h</i>
+                <input class="dm" type="text" maxlength="2" value="30" /><i>m</i>
+              </div>
+            </div>
           </div>
         </div>
-      </div>` : '<p class="muted small">save the task first to add subtasks.</p>'}
-      ${ACTIONS('save')}`,
-      async (act, ovEl) => {
-        if (act !== 'save') return;
-        const dd = ovEl.querySelector('#m-due-d').value;
-        const body = {
-          title: ovEl.querySelector('#m-title').value.trim() || 'untitled',
-          course_id: +ovEl.querySelector('#m-course').value || null,
-          category: ovEl.querySelector('#m-cat').value,
-          notes: ovEl.querySelector('#m-notes').value,
-          due_at: dd ? `${dd}T${ovEl.querySelector('#m-due-t').value || '23:59'}:00` : null,
-          due_tz: ovEl.querySelector('#m-tz-zone')?.value || (S.settings.school_tz || 'America/New_York'),
-        };
-        if (!rolled) body.time_needed_min = +ovEl.querySelector('#m-need').dataset.min || 60;
-        t ? await Api.patch('/tasks/' + t.id, body) : await Api.post('/tasks', body);
-        await loadAll();
-        toast(t ? `updated \u00b7 ${body.title}` : `added task \u00b7 ${body.title}`);
-      });
 
-    if (t?.due_at) {
-      ov.querySelector('#m-due-d').value = Api.dayInZone(t.due_at, t.due_tz || S.settings.school_tz || 'America/New_York');
-      ov.querySelector('#m-due-t').value = Api.fmtInZone(t.due_at, t.due_tz || S.settings.school_tz || 'America/New_York', { hour: '2-digit', minute: '2-digit', hour12: false });
+        <div class="rw-fold" id="rw-details" hidden>${fields}</div>
+        <div class="rw-foldhead" id="rw-notes-toggle"><i>\u270E</i> notes</div>
+        <textarea id="m-notes" class="rw-notes" rows="3" hidden
+          placeholder="details, links, instructions\u2026">${esc(t.notes || '')}</textarea>
+
+        <div class="actions rw-foot">
+          <button class="ghost danger-btn" id="rw-trash">move to trash</button>
+          <span class="spacer"></span>
+          <button class="ghost" data-m="cancel">cancel</button>
+          <button class="primary" data-m="save">save</button>
+        </div>
+      </div>`, saveHandler);
+
+    // prefill due + tz + stepper (existing behaviour)
+    if (t.due_at) {
+      ov.querySelector('#m-due-d').value = Api.dayInZone(t.due_at, dueTz);
+      ov.querySelector('#m-due-t').value = Api.fmtInZone(t.due_at, dueTz, { hour: '2-digit', minute: '2-digit', hour12: false });
     }
-    initTzPicker(ov, t?.due_tz || S.settings.school_tz || 'America/New_York');
+    initTzPicker(ov, dueTz);
     if (!rolled) wireStepper(ov.querySelector('#m-need'));
-    if (t) wireSubtasks(ov, t);
-    ov.querySelector('#m-title').focus();
+
+    // work-zone stopwatch follows whichever family member is timing
+    const family = [t, ...subs];
+    const familyActive = () => (Timer.state.running ? family.find((x) => x.id === Timer.state.task_id) : null);
+    const read = ov.querySelector('#t-read');
+    const label = ov.querySelector('#t-active-label');
+    const toggle = ov.querySelector('#t-toggle');
+    const repaintWork = () => {
+      const a = familyActive();
+      if (a) {
+        read.dataset.tid = a.id;
+        read.textContent = Timer.fmt(Timer.elapsedSec());
+        label.textContent = (a.id === t.id ? 'timing this task' : 'timing: ' + a.title) + (Timer.paused ? ' (paused)' : '');
+        toggle.textContent = Timer.paused ? '\u25B6' : '\u23F8';
+        toggle.classList.toggle('on', !Timer.paused);
+      } else {
+        read.dataset.tid = t.id; read.textContent = '00:00:00';
+        label.textContent = ''; toggle.textContent = '\u25B6'; toggle.classList.remove('on');
+      }
+    };
+    toggle.onclick = async () => {
+      const a = familyActive();
+      if (a) { if (Timer.paused) { await Timer.resume(); } else { await Timer.pause(); } }
+      else { await Timer.start(t.id, t.title); }
+      repaintWork();
+    };
+
+    wireSubtasks(ov, t, { showTimeBar: false, onChange: repaintWork });
+    repaintWork();
+    renderRunway();
+
+    function renderRunway() {
+      const el = ov.querySelector('#rw-runway');
+      if (!t.due_at) { el.innerHTML = '<div class="rw-empty">no due date \u2014 add one to see your runway</div>'; return; }
+      const cu = S.cushionByTask[t.id];
+      const due = new Date(t.due_at);
+      const now = new Date();
+      let startD = t.start_date ? new Date(t.start_date + 'T00:00:00') : new Date(t.created_at || now);
+      if (!(startD < due)) startD = new Date(now.getTime() - 86400000);
+      const span = Math.max(1, due - startD);
+      const fr = (d) => Math.max(0, Math.min(1, (new Date(d) - startD) / span));
+      const nowPct = +(fr(now) * 100).toFixed(1);
+      const daysLeft = Math.ceil((due - now) / 86400000);
+      const fam = new Set([t.id, ...subs.map((x) => x.id)]);
+      const ticks = (S.planned || []).filter((b) => fam.has(b.task_id)).map((b) => +(fr(b.start_at) * 100).toFixed(1));
+      let lvl = cu ? cu.level : 'green';
+      let cushTxt;
+      if (cu) { const m = cu.cushion_min; cushTxt = m >= 0 ? `${fmtDur(m)} cushion` : `${fmtDur(-m)} short`; }
+      else { cushTxt = 'on track'; }
+      const need = t.time_needed_min || 0, spent = t.time_spent_min || 0;
+      const pct = need ? Math.min(100, Math.round(spent / need * 100)) : 0;
+      const stillNeed = Math.max(0, need - spent);
+      el.innerHTML = `
+        <div class="rw-rl"><span>RUNWAY TO DEADLINE</span><span class="rw-cush ${lvl}">${cushTxt}</span></div>
+        <div class="rw-track">
+          <div class="rw-base"></div>
+          <div class="rw-elapsed" style="width:${nowPct}%"></div>
+          <div class="rw-slack ${lvl}" style="left:${nowPct}%"></div>
+          ${ticks.map((f) => `<div class="rw-tick" style="left:${f}%"></div>`).join('')}
+          <div class="rw-now" style="left:${nowPct}%"></div>
+        </div>
+        <div class="rw-axis"><span>now</span><span>${daysLeft >= 0 ? daysLeft + 'd to due' : 'overdue'}</span></div>
+        <div class="rw-bar"><div class="rw-fill" style="width:${pct}%"></div></div>
+        <div class="rw-barlab"><span>TIME USED <b>${fmtDur(spent)}</b></span><span>of ${fmtDur(need)}</span><span>STILL NEED <b>${fmtDur(stillNeed)}</b></span></div>`;
+    }
+
+    // chips / disclosures
+    const detailsEl = ov.querySelector('#rw-details');
+    const showDetails = () => { detailsEl.hidden = !detailsEl.hidden; };
+    ov.querySelector('#rw-edit-toggle').onclick = showDetails;
+    ov.querySelector('#rw-course').onclick = showDetails;
+    ov.querySelector('#rw-cat').onclick = showDetails;
+    ov.querySelector('#rw-due').onclick = showDetails;
+    const notesEl = ov.querySelector('#m-notes');
+    ov.querySelector('#rw-notes-toggle').onclick = () => { notesEl.hidden = !notesEl.hidden; if (!notesEl.hidden) notesEl.focus(); };
+
+    // flag / complete / trash
+    const flag = ov.querySelector('#rw-flag');
+    flag.onclick = async () => {
+      const nv = !t.priority_flag;
+      await Api.patch('/tasks/' + t.id, { priority_flag: nv });
+      t.priority_flag = nv; flag.classList.toggle('on', nv);
+      const live = S.tasks.find((x) => x.id === t.id); if (live) live.priority_flag = nv;
+      loadAll();
+    };
+    ov.querySelector('#rw-complete').onclick = async () => {
+      if (t.status === 'done') return;
+      if (Timer.state.running && family.some((x) => x.id === Timer.state.task_id)) await Timer.stop();
+      await Api.patch('/tasks/' + t.id, { status: 'done' }); await loadAll(); close();
+    };
+    ov.querySelector('#rw-trash').onclick = async () => {
+      if (!confirm('Delete task?')) return;
+      await Api.del('/tasks/' + t.id); await loadAll(); close();
+    };
   }
 
   // Subtasks: render list, add (enter), toggle done, delete. Each has its own
   // time estimate; the parent's totals roll up server-side.
-  function wireSubtasks(ov, parent) {
+  function wireSubtasks(ov, parent, opts = {}) {
+    const showBar = opts.showTimeBar !== false;
+    const onChange = opts.onChange || (() => {});
     const listEl = ov.querySelector('#m-sub-list');
     const rollEl = ov.querySelector('#m-sub-roll');
     let subs = (parent.subtasks || []).slice();
@@ -876,10 +1027,10 @@
       const done = subs.filter((s) => s.status === 'done').length;
 
       listEl.innerHTML = `
-        <div class="time-used-bar">
+        ${showBar ? `<div class="time-used-bar">
           <span>TIME USED <strong>${fmtDur(used)}</strong></span>
           <span>STILL NEED <strong>${fmtDur(Math.max(0, need - used))}</strong></span>
-        </div>
+        </div>` : ''}
         <div class="sub-row direct" data-tid="${parent.id}">
           <button type="button" class="tb-play" data-play="${parent.id}">\u25B6</button>
           <span class="sub-title">this task \u00b7 directly</span>
@@ -900,14 +1051,14 @@
           const id = +cb.closest('[data-sid]').dataset.sid;
           await Api.patch('/tasks/' + id, { status: cb.checked ? 'done' : 'todo' });
           const s = subs.find((x) => x.id === id); if (s) s.status = cb.checked ? 'done' : 'todo';
-          render(); loadAll();
+          render(); onChange(); loadAll();
         };
       for (const x of listEl.querySelectorAll('[data-del]'))
         x.onclick = async () => {
           const id = +x.closest('[data-sid]').dataset.sid;
           await Api.del('/tasks/' + id);
           subs = subs.filter((s) => s.id !== id);
-          render(); loadAll();
+          render(); onChange(); loadAll();
         };
       for (const pb of listEl.querySelectorAll('.tb-play'))
         pb.onclick = async () => {
@@ -915,11 +1066,11 @@
           const cur = (window.__TIMER && window.__TIMER.running) ? window.__TIMER.task_id : null;
           if (cur === id) {
             if (window.__TIMER.paused) { await Timer.resume(); } else { await Timer.pause(); }
-            markActive(); return;
+            markActive(); onChange(); return;
           }
           const row = (id === parent.id) ? parent : subs.find((x) => x.id === id);
           await Timer.start(id, row ? row.title : 'task');
-          markActive();
+          markActive(); onChange();
         };
       markActive();
     };
@@ -935,7 +1086,7 @@
       });
       subs.push({ ...created, status: 'todo' });
       newInp.value = '';
-      render(); loadAll();
+      render(); onChange(); loadAll();
     };
     render();
   }
