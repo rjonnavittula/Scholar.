@@ -571,8 +571,10 @@
   function taskModal(t) {
     const subs = (t?.subtasks || []);
     const rolled = subs.length > 0;
+    const parentTask = t?.parent_id ? S.tasks.find((x) => x.id === t.parent_id) : null;
     const { ov } = modal(`
       <h2>${t ? 'edit task' : 'new task'}</h2>
+      ${parentTask ? `<p class="muted small parentof">\u21B3 part of <strong>${esc(parentTask.title)}</strong></p>` : ''}
       <div class="frow"><label>title</label>
         <input id="m-title" value="${esc(t?.title || '')}" placeholder="Homework 4…" /></div>
       <div class="frow">

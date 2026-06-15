@@ -132,8 +132,10 @@ const Cal = (() => {
         const c = courseOf(t);
         const sMin = zoneMin(p.start_at, tz().home);
         const eMin = zoneMin(p.end_at, tz().home) || 1440;
+        const nowM = new Date().getHours() * 60 + new Date().getMinutes();
+        const isPassed = (iso < todayIso) || (iso === todayIso && eMin <= nowM);
         html += evHtml({
-          cls: 'planned' + (p.completed ? ' done' : ''), id: p.id,
+          cls: 'planned' + (p.completed ? ' done' : '') + (isPassed ? ' passed' : ''), id: p.id,
           top: y(sMin), h: hPx(eMin - sMin), color: c?.color || '#8A7F73',
           title: t.title || '?', sub: `${minToHM(sMin)}–${minToHM(eMin)}`,
           resize: !p.completed,
@@ -149,10 +151,14 @@ const Cal = (() => {
                       style="top:${y(m) - 7}px">⚑ ${esc(t.title)}</div>`;
       }
 
-      // now line
+      // now line + today's passed-time tint (behind blocks)
       if (iso === todayIso) {
         const nm = new Date();
-        html += `<div class="now-line" data-now style="top:${y(nm.getHours() * 60 + nm.getMinutes())}px"></div>`;
+        const nowMin = nm.getHours() * 60 + nm.getMinutes();
+        html = html.replace(`<div class="day-col today" data-date="${iso}"`,
+                            `<div class="day-col today" data-date="${iso}"`); // marker noop
+        html += `<div class="passed-tint" style="top:0;height:${hPx(nowMin)}px"></div>`;
+        html += `<div class="now-line" data-now style="top:${y(nowMin)}px"></div>`;
       }
       html += '</div>';
     }
@@ -172,8 +178,10 @@ const Cal = (() => {
     return `<div class="ev ${cls}" ${id ? `data-pid="${id}"` : ''}
       style="top:${top}px;height:${Math.max(h, 16)}px;
              background:${hexA(color, 0.16)};border-color:${hexA(color, 0.55)}">
+      ${resize ? '<div class="rs rs-top" data-edge="s"></div>' : ''}
       <div class="t" style="color:${color}">${esc(title)}</div>
-      <div class="d">${sub}</div>${resize ? '<div class="rs"></div>' : ''}</div>`;
+      <div class="d">${sub}</div>
+      ${resize ? '<div class="rs rs-bot" data-edge="e"></div>' : ''}</div>`;
   }
 
   function hexA(hex, a) {
@@ -258,7 +266,8 @@ const Cal = (() => {
   function startDrag(e, el, block) {
     if (!block) return;
     e.preventDefault();
-    const resizing = e.target.classList.contains('rs');
+    // resize edge from the handle that was grabbed (data-edge="s"|"e"); else move
+    const edge = e.target.classList.contains('rs') ? e.target.dataset.edge : null;
     const startMin0 = hmToMin(block.start_at.slice(11, 16));
     const endMin0 = hmToMin(block.end_at.slice(11, 16)) || 1440;
     const grabOffset = minAt(colAt(e.clientX) || colRects[0], e.clientY) - startMin0;
@@ -269,10 +278,14 @@ const Cal = (() => {
       if (!col) return;
       moved = true;
       el.classList.add('dragging');
-      if (resizing) {
-        const ne = Math.max(cur.s + 15, snap(minAt(col, me.clientY), 15));
-        cur.e = Math.min(ne, 1440);
+      if (edge === 'e') {
+        // resize bottom: move end only, keep start
+        cur.e = Math.min(1440, Math.max(cur.s + 15, snap(minAt(col, me.clientY), 15)));
+      } else if (edge === 's') {
+        // resize top: move start only, keep end
+        cur.s = Math.max(0, Math.min(cur.e - 15, snap(minAt(col, me.clientY), 15)));
       } else {
+        // move: shift whole block, preserve duration, allow column change
         const dur = endMin0 - startMin0;
         let ns = snap(minAt(col, me.clientY) - grabOffset, 15);
         ns = Math.max(0, Math.min(ns, 1440 - dur));
