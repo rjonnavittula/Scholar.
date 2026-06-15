@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from sqlmodel import Session, select
 
 from app.models import Course, Settings, Source, Task
+from app.ics import parse_ics, ext_id as ics_ext_id
 
 PALETTE = ["#8A7F73", "#7A6A56", "#5F6B5A", "#6B5A66", "#56646E", "#7A5A4A"]
 
@@ -79,3 +80,90 @@ def sync_canvas(session: Session, st: Settings) -> dict:
             session.add(task)
     session.commit()
     return {"courses": courses_seen, "created": created, "updated": updated}
+
+
+# --- shared upsert helpers (used by token sync, ICS feed, and the bookmarklet) ---
+
+def upsert_course(session: Session, name: str, canvas_id=None, seen: int = 1):
+    ext = f"canvas:{canvas_id}" if canvas_id is not None else None
+    course = None
+    if ext:
+        course = session.exec(select(Course).where(Course.external_id == ext)).first()
+    if not course and name:
+        course = session.exec(select(Course).where(Course.name == name)).first()
+    if not course:
+        course = Course(name=name or "course", source=Source.canvas, external_id=ext,
+                        color=PALETTE[seen % len(PALETTE)])
+        session.add(course); session.commit(); session.refresh(course)
+    elif ext and not course.external_id:
+        course.external_id = ext; course.source = Source.canvas; session.add(course)
+    return course
+
+
+def upsert_assignment(session: Session, st: Settings, *, ext_id: str, title: str,
+                      due, course=None, url: str = "", category=None) -> str:
+    cat = category if category is not None else guess_category(title)
+    task = session.exec(select(Task).where(Task.external_id == ext_id)).first()
+    if task:
+        task.title = title
+        task.due_at = due
+        if course and not task.course_id:
+            task.course_id = course.id
+        task.updated_at = datetime.now()
+        session.add(task)
+        return "updated"
+    task = Task(
+        title=title, course_id=(course.id if course else None), category=cat, due_at=due,
+        start_date=(due.date() - timedelta(days=st.start_ahead_days)) if due else None,
+        time_needed_min=ESTIMATES.get(cat, 60), notes=url or "",
+        source=Source.canvas, external_id=ext_id,
+    )
+    session.add(task)
+    return "created"
+
+
+# --- ICS calendar feed (no token, no cookie; server polls the feed URL) ---
+
+def sync_canvas_ics(session: Session, st: Settings) -> dict:
+    import urllib.request
+    url = (st.canvas_ics_url or "").replace("webcal://", "https://")
+    req = urllib.request.Request(url, headers={"User-Agent": "scholar/1.0"})
+    with urllib.request.urlopen(req, timeout=25) as r:
+        text = r.read().decode("utf-8", "replace")
+    events = parse_ics(text)
+    created = updated = 0
+    for ev in events:
+        title = ev.get("summary") or "assignment"
+        due = ev.get("dtstart") or ev.get("dtend")
+        res = upsert_assignment(session, st, ext_id=ics_ext_id(ev), title=title,
+                                due=due, url=ev.get("url", ""))
+        created += res == "created"
+        updated += res == "updated"
+    session.commit()
+    return {"events": len(events), "created": created, "updated": updated}
+
+
+# --- bookmarklet payload import (data fetched in the browser on Canvas) ---
+
+def import_canvas_payload(session: Session, st: Settings, payload: dict) -> dict:
+    cmap = {}
+    for i, c in enumerate(payload.get("courses", []) or []):
+        course = upsert_course(session, c.get("name") or "", canvas_id=c.get("id"), seen=i + 1)
+        if c.get("id") is not None:
+            cmap[c["id"]] = course
+    created = updated = 0
+    for a in payload.get("assignments", []) or []:
+        aid = a.get("id")
+        if aid is None:
+            continue
+        due = None
+        if a.get("due_at"):
+            due = datetime.fromisoformat(str(a["due_at"]).replace("Z", "+00:00"))
+        course = cmap.get(a.get("course_id"))
+        res = upsert_assignment(session, st, ext_id=f"canvas:{aid}",
+                                title=a.get("name") or "assignment", due=due,
+                                course=course, url=a.get("html_url", "") or "")
+        created += res == "created"
+        updated += res == "updated"
+    session.commit()
+    return {"courses": len(cmap), "created": created, "updated": updated}

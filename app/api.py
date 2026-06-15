@@ -422,7 +422,7 @@ def list_timezones(country: Optional[str] = None):
 def put_settings(body: dict, session: Session = Depends(get_session)):
     st = session.get(Settings, 1) or Settings(id=1)
     for k in ("min_block_min", "start_ahead_days", "yellow_threshold_pct",
-              "day_start_min", "canvas_base_url", "canvas_token",
+              "day_start_min", "canvas_base_url", "canvas_token", "canvas_ics_url",
               "home_tz", "school_tz", "week_start", "country", "onboarded",
               "theme", "accent", "density", "fontscale", "default_view",
               "display_name"):
@@ -620,7 +620,8 @@ integrations_router = APIRouter(prefix="/integrations", tags=["integrations"], d
 def canvas_status(session: Session = Depends(get_session)):
     st = session.get(Settings, 1) or Settings(id=1)
     return {"configured": bool(st.canvas_base_url and st.canvas_token),
-            "base_url": st.canvas_base_url}
+            "base_url": st.canvas_base_url,
+            "ics_configured": bool(st.canvas_ics_url)}
 
 
 @integrations_router.post("/canvas/sync")
@@ -633,3 +634,27 @@ def canvas_sync(session: Session = Depends(get_session)):
         return sync_canvas(session, st)
     except Exception as e:  # surface the reason to the UI
         raise HTTPException(502, f"canvas_sync_failed: {e}")
+
+
+@integrations_router.post("/canvas/sync-ics", summary="Pull the Canvas calendar feed (no token)")
+def canvas_sync_ics(session: Session = Depends(get_session)):
+    from app.integrations import sync_canvas_ics
+    st = session.get(Settings, 1) or Settings(id=1)
+    if not st.canvas_ics_url:
+        raise HTTPException(400, "ics_not_configured")
+    try:
+        return sync_canvas_ics(session, st)
+    except Exception as e:
+        raise HTTPException(502, f"ics_sync_failed: {e}")
+
+
+@integrations_router.post("/canvas/import", summary="Import data collected by the browser script")
+def canvas_import(payload: dict, session: Session = Depends(get_session)):
+    from app.integrations import import_canvas_payload
+    st = session.get(Settings, 1) or Settings(id=1)
+    if not isinstance(payload, dict) or not payload.get("assignments"):
+        raise HTTPException(400, "empty_payload")
+    try:
+        return import_canvas_payload(session, st, payload)
+    except Exception as e:
+        raise HTTPException(502, f"import_failed: {e}")

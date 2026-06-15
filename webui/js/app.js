@@ -298,7 +298,8 @@
       </div>`).join('') || '<p class="muted small">no activities yet</p>';
 
     $('canvas-status').textContent = S.canvas.configured
-      ? `linked · ${S.canvas.base_url.replace(/^https?:\/\//, '')}` : 'not configured';
+      ? `linked · ${S.canvas.base_url.replace(/^https?:\/\//, '')}`
+      : (S.canvas.ics_configured ? 'calendar feed linked' : 'not configured');
     $('btn-canvas-sync').classList.toggle('hidden', !S.canvas.configured);
 
     for (const b of document.querySelectorAll('[data-del-course]'))
@@ -1245,24 +1246,89 @@
   }
 
   function canvasModal() {
-    modal(`
+    const ics = S.canvas.ics_configured ? '' : '';
+    const BM = "javascript:(async()=>{try{var b=location.origin;var J=async u=>{var r=await fetch(b+u,{headers:{Accept:'application/json'}});return r.json()};var cs=[],p=1;while(p<6){var x=await J('/api/v1/courses?enrollment_state=active&per_page=100&page='+p);if(!x.length)break;cs=cs.concat(x);if(x.length<100)break;p++}var A=[];for(var c of cs){try{var as=await J('/api/v1/courses/'+c.id+'/assignments?per_page=100&bucket=upcoming');for(var a of as)A.push({id:a.id,name:a.name,due_at:a.due_at,course_id:c.id,html_url:a.html_url})}catch(e){}}await navigator.clipboard.writeText(JSON.stringify({courses:cs.map(c=>({id:c.id,name:c.name})),assignments:A}));alert('scholar: copied '+A.length+' assignments from '+cs.length+' courses. Paste into scholar.')}catch(e){alert('scholar failed: '+e)}})();";
+    const { ov, close } = modal(`
       <h2>canvas</h2>
-      <p class="muted small">token: psu.instructure.com → Account → Settings → + New Access Token.
-        Stored in your own database, used server-side only.</p>
-      <div class="frow"><label>base url</label>
-        <input id="m-url" value="${esc(S.canvas.base_url || 'https://psu.instructure.com')}" /></div>
-      <div class="frow"><label>access token</label>
-        <input id="m-tok" type="password" placeholder="${S.canvas.configured ? '•••••• (saved)' : 'paste token'}" /></div>
-      ${ACTIONS('save')}`,
-      async (act, ov) => {
-        if (act !== 'save') return;
-        const body = { canvas_base_url: ov.querySelector('#m-url').value.trim() };
-        const tok = ov.querySelector('#m-tok').value.trim();
-        if (tok) body.canvas_token = tok;
-        await Api.put('/config/settings', body);
-        await loadAll();
-        toast('canvas saved — hit sync now');
-      });
+      <div class="seg cv-seg">
+        <span data-tab="token" class="on">Access token</span>
+        <span data-tab="ics">Calendar feed</span>
+        <span data-tab="script">Quick script</span>
+      </div>
+
+      <div class="cv-panel" data-panel="token">
+        <p class="muted small">token: psu.instructure.com → Account → Settings → + New Access Token.
+          Stored in your own database, used server-side only.</p>
+        <div class="frow"><label>base url</label>
+          <input id="m-url" value="${esc(S.canvas.base_url || 'https://psu.instructure.com')}" /></div>
+        <div class="frow"><label>access token</label>
+          <input id="m-tok" type="password" placeholder="${S.canvas.configured ? '•••••• (saved)' : 'paste token'}" /></div>
+        <button class="primary" id="cv-save-token">save</button>
+        <p class="muted small" style="margin-top:12px">Can't make a token (school disabled it)? Use
+          <a class="lnk" data-go="ics">Calendar feed</a> or the <a class="lnk" data-go="script">Quick script</a>.</p>
+      </div>
+
+      <div class="cv-panel" data-panel="ics" hidden>
+        <p class="muted small">No token, no cookie. In Canvas: <strong>Calendar → Calendar Feed</strong>, copy the link.
+          scholar polls it server-side and turns assignment due dates into tasks.</p>
+        <div class="frow"><label>calendar feed URL ${S.canvas.ics_configured ? '· <span class="ok-i">saved</span>' : ''}</label>
+          <input id="m-ics" placeholder="https://psu.instructure.com/feeds/calendars/user_….ics" /></div>
+        <div class="btns"><button class="ghost" id="cv-save-ics">save</button>
+          <button class="primary" id="cv-sync-ics">save &amp; sync now</button></div>
+      </div>
+
+      <div class="cv-panel" data-panel="script" hidden>
+        <p class="muted small">For when token creation is disabled. Make a bookmark whose URL is the code below
+          (or paste it into the browser console while logged into Canvas). It copies your courses + assignments
+          to your clipboard — works on http too.</p>
+        <label>1 · the script</label>
+        <textarea id="cv-bm" class="cv-code" readonly rows="3">${BM}</textarea>
+        <button class="ghost" id="cv-copy-bm">copy script</button>
+        <label style="margin-top:14px">2 · run it on Canvas, then paste what it copied</label>
+        <textarea id="cv-paste" class="cv-code" rows="3" placeholder="paste the copied data here…"></textarea>
+        <button class="primary" id="cv-import">import pasted data</button>
+      </div>
+
+      <div class="actions"><span class="spacer"></span><button class="ghost" data-m="cancel">close</button></div>`,
+      () => {});
+
+    // tab switching
+    const show = (name) => {
+      ov.querySelectorAll('.cv-seg span').forEach((s) => s.classList.toggle('on', s.dataset.tab === name));
+      ov.querySelectorAll('.cv-panel').forEach((p) => { p.hidden = p.dataset.panel !== name; });
+    };
+    ov.querySelectorAll('.cv-seg span').forEach((s) => { s.onclick = () => show(s.dataset.tab); });
+    ov.querySelectorAll('[data-go]').forEach((a) => { a.onclick = () => show(a.dataset.go); });
+
+    ov.querySelector('#cv-save-token').onclick = async () => {
+      const body = { canvas_base_url: ov.querySelector('#m-url').value.trim() };
+      const tok = ov.querySelector('#m-tok').value.trim();
+      if (tok) body.canvas_token = tok;
+      await Api.put('/config/settings', body); await loadAll(); toast('canvas token saved — hit sync');
+    };
+    const saveIcs = async () => {
+      const u = ov.querySelector('#m-ics').value.trim();
+      if (!u) { toast('paste the feed URL first'); return false; }
+      await Api.put('/config/settings', { canvas_ics_url: u }); await loadAll(); return true;
+    };
+    ov.querySelector('#cv-save-ics').onclick = async () => { if (await saveIcs()) toast('feed saved'); };
+    ov.querySelector('#cv-sync-ics').onclick = async () => {
+      if (!(await saveIcs())) return;
+      try { const r = await Api.post('/integrations/canvas/sync-ics');
+        toast(`feed: ${r.created} new, ${r.updated} updated (${r.events} events)`); close(); }
+      catch (e) { toast('feed sync failed — check the URL'); }
+    };
+    ov.querySelector('#cv-copy-bm').onclick = async () => {
+      try { await navigator.clipboard.writeText(ov.querySelector('#cv-bm').value); toast('script copied'); }
+      catch (e) { ov.querySelector('#cv-bm').select(); toast('press ⌘/Ctrl-C to copy'); }
+    };
+    ov.querySelector('#cv-import').onclick = async () => {
+      let data; try { data = JSON.parse(ov.querySelector('#cv-paste').value.trim()); }
+      catch (e) { toast('that doesn\u2019t look like the copied data'); return; }
+      try { const r = await Api.post('/integrations/canvas/import', data);
+        toast(`imported: ${r.created} new, ${r.updated} updated`); close(); }
+      catch (e) { toast('import failed'); }
+    };
   }
 
   // ============================================================

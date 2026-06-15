@@ -126,6 +126,7 @@ class Settings(SQLModel, table=True):
     display_name: str = ""
     canvas_base_url: str = ""
     canvas_token: str = ""
+    canvas_ics_url: str = ""
 
 
 class TimeLog(SQLModel, table=True):
