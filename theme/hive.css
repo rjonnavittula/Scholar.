@@ -1,0 +1,97 @@
+/* =========================================================================
+   H.I.V.E. — ma. theme for Super Productivity
+   Wabi-sabi / amber-on-dark. Quiet surfaces, one warm accent, mono type.
+
+   Two layers:
+   1) Design tokens (--hive-*) — your single source of truth.
+   2) A thin mapping onto Super Productivity's own CSS variables. SP exposes
+      theming via CSS custom properties + an Angular Material palette; the
+      exact variable names live in SP's `*.scss` theme files and shift between
+      releases, so treat section 2 as a starting map and reconcile names
+      against your checked-out version (search the SCSS for `--bg`, `--card`,
+      `--text`, `--palette-accent`, etc.).
+   ========================================================================= */
+
+:root {
+  /* ---- tokens ---- */
+  --hive-bg:          #1e2128;
+  --hive-bg-elev:     #23262e;
+  --hive-bg-sunken:   #181b21;
+  --hive-line:        rgba(242, 242, 242, 0.08);
+
+  --hive-fg:          rgb(242, 242, 242);
+  --hive-fg-muted:    rgba(242, 242, 242, 0.60);
+  --hive-fg-faint:    rgba(242, 242, 242, 0.38);
+
+  --hive-amber:       rgb(232, 201, 106);
+  --hive-amber-soft:  rgba(232, 201, 106, 0.16);
+  --hive-amber-line:  rgba(232, 201, 106, 0.42);
+
+  /* semantic — reuse the one accent; let red mean only "at risk" */
+  --hive-ok:          rgb(232, 201, 106);
+  --hive-risk:        #d98a7a;   /* desaturated, not alarm-red — wabi-sabi */
+
+  --hive-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+  --hive-radius: 6px;
+  --hive-gap: 12px;
+}
+
+/* ---- 2) map onto Super Productivity ---- */
+body,
+body.isDark,
+.dark-theme {
+  --bg:               var(--hive-bg);
+  --bg-darker:        var(--hive-bg-sunken);
+  --card-bg:          var(--hive-bg-elev);
+  --sidebar-bg:       var(--hive-bg-sunken);
+  --text-color:       var(--hive-fg);
+  --text-color-less-intense: var(--hive-fg-muted);
+  --text-color-muted: var(--hive-fg-faint);
+  --divider-color:    var(--hive-line);
+
+  --palette-accent-500: var(--hive-amber);
+  --c-accent:           var(--hive-amber);
+  --select-hover-bg:    var(--hive-amber-soft);
+  --task-c-bg:          var(--hive-bg-elev);
+  --task-c-selected-bg: var(--hive-amber-soft);
+}
+
+/* ---- type: mono everywhere, light weight, generous tracking ---- */
+body, button, input, textarea, .task-title, .mat-mdc-button {
+  font-family: var(--hive-mono) !important;
+  font-feature-settings: 'calt' 0;
+  letter-spacing: 0.01em;
+}
+
+/* ---- restraint: kill heavy shadows, prefer hairlines ---- */
+.task, .mat-mdc-card, .panel {
+  box-shadow: none !important;
+  border: 1px solid var(--hive-line);
+  border-radius: var(--hive-radius);
+  background: var(--hive-bg-elev);
+}
+
+/* ---- accent only where it carries meaning ---- */
+.current-task, .task.isCurrent {
+  border-left: 2px solid var(--hive-amber);
+  background: var(--hive-amber-soft);
+}
+
+/* ---- timeboxing / planner blocks ---- */
+.schedule-event, .timeline-entry {
+  background: var(--hive-amber-soft);
+  border: 1px solid var(--hive-amber-line);
+  border-radius: var(--hive-radius);
+  color: var(--hive-fg);
+}
+
+/* ---- Cushion widget (your custom component; styling reserved) ---- */
+.hive-cushion { font-family: var(--hive-mono); color: var(--hive-fg); }
+.hive-cushion--ok   { color: var(--hive-amber); }
+.hive-cushion--risk { color: var(--hive-risk); }
+
+/* ---- scrollbars, selection: small touches that sell the aesthetic ---- */
+::selection { background: var(--hive-amber-soft); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--hive-line); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: var(--hive-amber-line); }

@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>scholar.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+/* ma. — dark. presence over decoration · warmth over sterility · breath over snap */
+:root {
+  --bg:#141210; --elev:#1E1A16; --input:#251F1A;
+  --fg:#E8E4DC; --muted:#8A8078; --faint:rgba(232,228,220,.38);
+  --accent:#8A7F73; --accent-soft:rgba(138,127,115,.18);
+  --line:rgba(255,255,255,.08); --line-mid:rgba(255,255,255,.12);
+  --danger:#9A4040;
+  --serif:'Cormorant Garamond',Georgia,serif; --sans:'Inter',system-ui,sans-serif;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:400 14px/1.55 var(--sans);
+       letter-spacing:.01em; padding:28px 18px 80px; }
+.wrap { max-width:920px; margin:0 auto; }
+h1 { font:400 34px var(--serif); margin:0; letter-spacing:.02em; }
+h1 .dot { color:var(--accent); }
+h2 { font:400 21px var(--serif); color:var(--muted); margin:34px 0 12px; }
+.sub { color:var(--muted); margin-top:2px; }
+
+/* breathing underline — beneath the living */
+@keyframes breathe { 0%,100%{transform:scaleX(.18)} 50%{transform:scaleX(1)} }
+.alive { position:relative; display:inline-block; }
+.alive::after { content:''; position:absolute; left:0; right:0; bottom:-4px; height:1px;
+  background:var(--accent); transform-origin:left center;
+  animation:breathe 4s ease-in-out infinite; }
+
+/* hero cushion */
+.hero { border:1px solid var(--line); background:var(--elev); border-radius:18px;
+  padding:26px 26px 22px; margin-top:24px; }
+.hero .num { font:500 56px/1 var(--serif); margin:4px 0 6px; }
+.hero.ok .num { color:var(--accent); } .hero.bad .num { color:var(--danger); }
+.hero .verdict { color:var(--muted); }
+
+/* availability week */
+.week { display:flex; gap:10px; margin-top:14px; }
+.day { flex:1; text-align:center; }
+.day .bar { height:64px; border-radius:999px; background:var(--input);
+  position:relative; overflow:hidden; border:1px solid var(--line); }
+.day .fill { position:absolute; bottom:0; left:0; right:0; background:var(--accent-soft);
+  border-top:1px solid var(--accent); transition:height .8s ease; }
+.day .lab { color:var(--faint); font-size:11px; margin-top:6px; }
+.day .min { color:var(--muted); font-size:11px; }
+
+/* cards */
+.card { border:1px solid var(--line); background:var(--elev); border-radius:14px;
+  padding:14px 16px; margin-top:10px; display:flex; gap:14px; align-items:center; }
+.card.risk { border-color:var(--danger); }
+.card .grow { flex:1; min-width:0; }
+.card .t { color:var(--fg); }
+.card .d { color:var(--muted); font-size:12px; margin-top:2px; }
+.course-name { font:400 17px var(--serif); color:var(--accent); }
+
+/* progress ring-ish: a quiet pill */
+.prog { height:4px; border-radius:999px; background:var(--input); margin-top:8px;
+  overflow:hidden; }
+.prog i { display:block; height:100%; background:var(--accent); border-radius:999px;
+  transition:width .6s ease; }
+
+/* buttons: pill, quiet */
+button { font:inherit; color:var(--fg); background:var(--input);
+  border:1px solid var(--line-mid); border-radius:999px; padding:7px 14px;
+  cursor:pointer; }
+button:hover { border-color:var(--accent); color:var(--accent); }
+button.primary { background:var(--accent-soft); border-color:var(--accent);
+  color:var(--accent); }
+input, select { font:inherit; color:var(--fg); background:var(--input);
+  border:1px solid var(--line); border-radius:999px; padding:8px 14px; width:100%; }
+input:focus, select:focus { outline:none; border-color:var(--accent); }
+
+.row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+.row > * { flex:1; min-width:130px; }
+.muted { color:var(--muted); font-size:12px; }
+.gate { max-width:420px; margin:80px auto; }
+.hidden { display:none; }
+dialog { background:var(--elev); color:var(--fg); border:1px solid var(--line-mid);
+  border-radius:18px; padding:22px; max-width:430px; width:92%; }
+dialog::backdrop { background:rgba(0,0,0,.55); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- key gate -->
+  <div id="gate" class="gate">
+    <h1>scholar<span class="dot">.</span></h1>
+    <p class="sub">the H.I.V.E. study planner — enter your API key to begin.</p>
+    <div class="row"><input id="gkey" type="password" placeholder="hive_..." /></div>
+    <div class="row"><button class="primary" onclick="saveKey()">enter</button></div>
+    <p class="muted">mint one at <code>POST /auth/keys</code> (see /docs). stored locally in this browser only.</p>
+  </div>
+
+  <!-- app -->
+  <div id="app" class="hidden">
+    <h1><span class="alive">scholar</span><span class="dot">.</span></h1>
+    <p class="sub" id="today"></p>
+
+    <div class="hero" id="hero">
+      <div class="muted">cushion — time to spare across every deadline</div>
+      <div class="num" id="cushion-num">…</div>
+      <div class="verdict" id="cushion-verdict"></div>
+      <div class="week" id="week"></div>
+    </div>
+
+    <div id="risks"></div>
+
+    <h2>tasks <span class="muted" id="task-count"></span></h2>
+    <div class="row">
+      <input id="nt-title" placeholder="new task — title" />
+      <input id="nt-due" type="date" />
+      <input id="nt-min" type="number" min="0" step="15" placeholder="minutes needed" />
+      <button class="primary" onclick="addTask()">add</button>
+    </div>
+    <div id="tasks"></div>
+
+    <h2>week shape <span class="muted">(commitments)</span></h2>
+    <div class="row">
+      <select id="nc-day">
+        <option value="0">mon</option><option value="1">tue</option>
+        <option value="2">wed</option><option value="3">thu</option>
+        <option value="4">fri</option><option value="5">sat</option>
+        <option value="6">sun</option>
+      </select>
+      <input id="nc-title" placeholder="block — e.g. CMPEN 331 lecture" />
+      <input id="nc-start" type="time" value="10:00" />
+      <input id="nc-end" type="time" value="10:50" />
+      <button onclick="addCommitment()">block it</button>
+    </div>
+    <div id="commitments"></div>
+
+    <p class="muted" style="margin-top:34px">
+      timeboxing &amp; timers live in Super Productivity — this is the brain.
+      <a href="/docs" style="color:var(--accent)">api</a> ·
+      <span style="cursor:pointer" onclick="logout()">change key</span>
+    </p>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let KEY = localStorage.getItem('hive-key') || '';
+const H = () => ({ 'X-API-Key': KEY, 'Content-Type': 'application/json' });
+const api = async (path, opts = {}) => {
+  const r = await fetch(path, { headers: H(), ...opts });
+  if (r.status === 401) { logout(); throw new Error('unauthorized'); }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.status === 204 ? null : r.json();
+};
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
+  (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const DAYS = ['mon','tue','wed','thu','fri','sat','sun'];
+
+function saveKey(){ KEY = $('gkey').value.trim(); localStorage.setItem('hive-key', KEY); boot(); }
+function logout(){ localStorage.removeItem('hive-key'); KEY=''; $('app').classList.add('hidden'); $('gate').classList.remove('hidden'); }
+
+async function boot(){
+  if (!KEY) return;
+  try { await api('/tasks'); } catch { return; }
+  $('gate').classList.add('hidden'); $('app').classList.remove('hidden');
+  $('today').textContent = new Date().toLocaleDateString(undefined,
+    { weekday:'long', month:'long', day:'numeric' });
+  refresh();
+  setInterval(refresh, 60000);
+}
+
+async function refresh(){
+  const [cushion, avail, tasks, courses, commits] = await Promise.all([
+    api('/cushion'), api('/cushion/availability?days=7'),
+    api('/tasks'), api('/courses'), api('/commitments'),
+  ]);
+  renderCushion(cushion); renderWeek(avail);
+  renderRisks(cushion, tasks); renderTasks(tasks, courses);
+  renderCommitments(commits);
+}
+
+function renderCushion(c){
+  const hero = $('hero');
+  hero.classList.toggle('ok', c.feasible);
+  hero.classList.toggle('bad', !c.feasible);
+  $('cushion-num').textContent = c.total_cushion_human;
+  $('cushion-verdict').textContent = c.feasible
+    ? 'on track for every deadline'
+    : 'schedule infeasible — something has to move';
+}
+
+function renderWeek(days){
+  const max = Math.max(...days.map(d => d.capacity_min), 1);
+  $('week').innerHTML = days.map(d => {
+    const date = new Date(d.date + 'T00:00');
+    return `<div class="day">
+      <div class="bar"><div class="fill" style="height:${Math.round(100*d.free_min/max)}%"></div></div>
+      <div class="lab">${DAYS[(date.getDay()+6)%7]}</div>
+      <div class="min">${Math.floor(d.free_min/60)}h${d.free_min%60 ? (d.free_min%60)+'m' : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderRisks(c, tasks){
+  const byId = Object.fromEntries(tasks.map(t => [t.id, t]));
+  $('risks').innerHTML = (c.per_task || []).filter(t => t.slack_min < 0).slice(0, 6)
+    .map(t => `<div class="card risk"><div class="grow">
+        <div class="t">${esc(t.title)}</div>
+        <div class="d">short by ${Math.abs(t.slack_min)} min · due ${esc((t.due_at||'').slice(0,10))}</div>
+      </div>
+      <button onclick="done(${t.task_id})">done</button></div>`).join('');
+}
+
+function renderTasks(tasks, courses){
+  const cname = Object.fromEntries(courses.map(c => [c.id, c.name]));
+  const open = tasks.filter(t => t.status !== 'done')
+    .sort((a, b) => (a.due_at || '9999').localeCompare(b.due_at || '9999'));
+  $('task-count').textContent = '· ' + open.length + ' open';
+  const groups = {};
+  open.forEach(t => { (groups[t.course_id ?? 'none'] ??= []).push(t); });
+  $('tasks').innerHTML = Object.entries(groups).map(([cid, ts]) => {
+    const head = `<div style="margin-top:18px" class="course-name">${esc(cname[cid] || 'unassigned')}</div>`;
+    return head + ts.map(t => {
+      const pct = t.time_needed_min ? Math.min(100, Math.round(100*t.time_spent_min/t.time_needed_min)) : 0;
+      return `<div class="card"><div class="grow">
+          <div class="t">${esc(t.title)}</div>
+          <div class="d">${t.due_at ? 'due ' + esc(t.due_at.slice(0,10)) + ' · ' : ''}${t.time_spent_min}/${t.time_needed_min} min</div>
+          <div class="prog"><i style="width:${pct}%"></i></div>
+        </div>
+        <button onclick="logTime(${t.id}, ${t.time_spent_min})">+30m</button>
+        <button class="primary" onclick="done(${t.id})">done</button></div>`;
+    }).join('');
+  }).join('');
+}
+
+function renderCommitments(cs){
+  $('commitments').innerHTML = cs
+    .sort((a, b) => a.weekday - b.weekday || a.start.localeCompare(b.start))
+    .map(c => `<div class="card"><div class="grow">
+      <div class="t">${esc(c.title)}</div>
+      <div class="d">${DAYS[c.weekday]} · ${esc(c.start)}–${esc(c.end)}</div></div>
+      <button onclick="delCommitment(${c.id})">release</button></div>`).join('');
+}
+
+async function done(id){ await api('/tasks/' + id, { method:'PATCH', body: JSON.stringify({ status:'done' }) }); refresh(); }
+async function logTime(id, cur){ await api('/tasks/' + id, { method:'PATCH', body: JSON.stringify({ time_spent_min: cur + 30 }) }); refresh(); }
+async function addTask(){
+  const title = $('nt-title').value.trim(); if (!title) return;
+  const body = { title, time_needed_min: parseInt($('nt-min').value || '60', 10) };
+  if ($('nt-due').value) body.due_at = $('nt-due').value + 'T23:59:00';
+  await api('/tasks', { method:'POST', body: JSON.stringify(body) });
+  $('nt-title').value = ''; $('nt-min').value = ''; refresh();
+}
+async function addCommitment(){
+  const title = $('nc-title').value.trim(); if (!title) return;
+  await api('/commitments', { method:'POST', body: JSON.stringify({
+    title, weekday: parseInt($('nc-day').value, 10),
+    start: $('nc-start').value, end: $('nc-end').value,
+  }) });
+  $('nc-title').value = ''; refresh();
+}
+async function delCommitment(id){ await api('/commitments/' + id, { method:'DELETE' }); refresh(); }
+
+boot();
+</script>
+</body>
+</html>

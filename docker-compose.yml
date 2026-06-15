@@ -1,0 +1,46 @@
+# H.I.V.E. study stack — drop in /opt/stacks/hive-tasks/
+# Follows the house pattern: no `user:` / `env_file:` / PUID/PGID/TZ;
+# values come from a local `.env` (symlink the shared one if you prefer),
+# and container_name doubles as the in-network hostname.
+services:
+  hive-db:
+    image: postgres:16-alpine
+    container_name: hive-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${HIVE_DB_USER}
+      POSTGRES_PASSWORD: ${HIVE_DB_PASSWORD}
+      POSTGRES_DB: hive
+    volumes:
+      - hive-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${HIVE_DB_USER} -d hive"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  hive-api:
+    build: .
+    container_name: hive-api
+    restart: unless-stopped
+    depends_on:
+      hive-db:
+        condition: service_healthy
+    environment:
+      HIVE_DATABASE_URL: postgresql+psycopg://${HIVE_DB_USER}:${HIVE_DB_PASSWORD}@hive-db:5432/hive
+    ports:
+      - "8077:8077"   # reach via Tailscale / your reverse proxy; keep off the open WAN
+
+  # Super Productivity web (PWA) — the client UI. Mount the H.I.V.E. theme
+  # and (later) point its custom sync provider at hive-api.
+  superproductivity:
+    image: johannesjo/super-productivity:latest
+    container_name: superproductivity
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    # volumes:
+    #   - ./theme/hive.css:/usr/share/nginx/html/assets/hive.css:ro
+
+volumes:
+  hive-db-data:

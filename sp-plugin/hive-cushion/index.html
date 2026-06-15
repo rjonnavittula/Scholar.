@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>HIVE Cushion</title>
+<style>
+  /* ma. — self-contained so the iframe needs nothing from the host */
+  :root {
+    --bg: #1e2128; --bg-elev: #23262e;
+    --line: rgba(242,242,242,0.08);
+    --fg: rgb(242,242,242); --fg-muted: rgba(242,242,242,0.6);
+    --amber: rgb(232,201,106); --amber-soft: rgba(232,201,106,0.16);
+    --risk: #d98a7a;
+  }
+  html, body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px; letter-spacing: 0.01em;
+  }
+  h3 { font-weight: 400; color: var(--fg-muted); margin: 0 0 4px;
+       text-transform: lowercase; }
+  .num { font-size: 2.2rem; margin: 2px 0 6px; }
+  .ok .num { color: var(--amber); }
+  .bad .num { color: var(--risk); }
+  .verdict { color: var(--fg-muted); margin-bottom: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 6px;
+          background: var(--bg-elev); padding: 10px 12px; margin-top: 8px; }
+  .card .t { color: var(--fg); }
+  .card .d { color: var(--fg-muted); font-size: 11px; margin-top: 2px; }
+  .card.risk { border-color: var(--risk); }
+  .err { color: var(--risk); }
+  .cfg { margin-top: 16px; }
+  .cfg input { width: 100%; box-sizing: border-box; background: var(--bg-elev);
+    border: 1px solid var(--line); border-radius: 6px; color: var(--fg);
+    font: inherit; padding: 6px 8px; margin-top: 6px; }
+  .cfg button { margin-top: 8px; background: var(--amber-soft);
+    border: 1px solid var(--amber); border-radius: 6px; color: var(--amber);
+    font: inherit; padding: 6px 12px; cursor: pointer; }
+  .muted { color: var(--fg-muted); font-size: 11px; }
+</style>
+</head>
+<body>
+  <h3>cushion</h3>
+  <div id="out"><span class="muted">configure below, then it refreshes each minute</span></div>
+
+  <div class="cfg" id="cfg">
+    <input id="url" placeholder="HIVE API url — e.g. http://127.0.0.1:8077" />
+    <input id="key" placeholder="X-API-Key — hive_..." type="password" />
+    <button id="save">save &amp; connect</button>
+    <div class="muted" id="cfghint"></div>
+  </div>
+
+<script>
+  // NOTE on storage: kept in-memory + best-effort persistence so a panel
+  // reopen doesn't always re-ask. If the iframe is sandboxed without
+  // storage, it degrades to "re-enter on reload" gracefully.
+  var CFG = { url: '', key: '' };
+  try {
+    var saved = window.localStorage && localStorage.getItem('hive-cushion-cfg');
+    if (saved) { CFG = JSON.parse(saved); }
+  } catch (e) { /* sandboxed — in-memory only */ }
+
+  var out = document.getElementById('out');
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+    });
+  }
+
+  function render(c) {
+    var ok = !!c.feasible;
+    var risks = (c.per_task || []).filter(function (t) { return t.slack_min < 0; });
+    var html =
+      '<div class="' + (ok ? 'ok' : 'bad') + '">' +
+      '<div class="num">' + esc(c.total_cushion_human || (c.total_cushion_min + 'm')) + '</div>' +
+      '<div class="verdict">' + (ok
+        ? 'on track for every deadline'
+        : 'schedule infeasible — tightest point is negative') + '</div>' +
+      '</div>';
+    risks.slice(0, 5).forEach(function (t) {
+      html += '<div class="card risk"><div class="t">' + esc(t.title) + '</div>' +
+        '<div class="d">short by ' + Math.abs(t.slack_min) + ' min · due ' +
+        esc((t.due_at || '').slice(0, 10)) + '</div></div>';
+    });
+    if ((c.unscheduled_task_ids || []).length) {
+      html += '<div class="card"><div class="d">' + c.unscheduled_task_ids.length +
+        ' task(s) with no due date — not counted</div></div>';
+    }
+    out.innerHTML = html;
+  }
+
+  function tick() {
+    if (!CFG.url || !CFG.key) { return; }
+    fetch(CFG.url.replace(/\/$/, '') + '/cushion', {
+      headers: { 'X-API-Key': CFG.key },
+    })
+      .then(function (r) {
+        if (!r.ok) { throw new Error('HTTP ' + r.status); }
+        return r.json();
+      })
+      .then(render)
+      .catch(function (e) {
+        out.innerHTML = '<div class="err">cannot reach HIVE: ' + esc(e.message) +
+          '</div><div class="muted">check url/key, CORS on the API, and that ' +
+          'you are on the tailnet</div>';
+      });
+  }
+
+  document.getElementById('save').onclick = function () {
+    CFG.url = document.getElementById('url').value.trim();
+    CFG.key = document.getElementById('key').value.trim();
+    try {
+      localStorage.setItem('hive-cushion-cfg', JSON.stringify(CFG));
+      document.getElementById('cfghint').textContent = 'saved.';
+    } catch (e) {
+      document.getElementById('cfghint').textContent =
+        'storage sandboxed — config held for this session only.';
+    }
+    tick();
+  };
+
+  if (CFG.url) { document.getElementById('url').value = CFG.url; }
+  if (CFG.key) { document.getElementById('key').value = CFG.key; }
+  tick();
+  setInterval(tick, 60000);
+</script>
+</body>
+</html>

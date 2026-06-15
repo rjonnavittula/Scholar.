@@ -1,0 +1,132 @@
+/* =========================================================================
+   ma. — dark — for Super Productivity
+   presence over decoration · warmth over sterility · breath over snap
+
+   The true ma. spec (not the H.I.V.E. amber/mono system — that's hive.css):
+   warm-dark palette (no inversion), Cormorant Garamond for the named,
+   Inter for the functional, one accent (#8A7F73), no shadows, pill/circle
+   geometry, and the breathing underline beneath living/named things.
+
+   Same caveat as hive.css: section 2 maps onto SP's CSS variables, whose
+   names drift between releases — reconcile against your checkout.
+   ========================================================================= */
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Inter:wght@400;500&display=swap');
+
+:root {
+  /* ---- ma. dark tokens (own palette — not an inversion) ---- */
+  --ma-bg:          #141210;
+  --ma-bg-elev:     #1E1A16;
+  --ma-bg-input:    #251F1A;
+  --ma-text:        #E8E4DC;
+  --ma-text-muted:  #8A8078;
+  --ma-text-faint:  rgba(232, 228, 220, 0.38);
+  --ma-accent:      #8A7F73;
+  --ma-accent-soft: rgba(138, 127, 115, 0.18);
+  --ma-border:      rgba(255, 255, 255, 0.08);
+  --ma-border-mid:  rgba(255, 255, 255, 0.12);
+  --ma-danger:      #9A4040;
+
+  --ma-serif: 'Cormorant Garamond', Georgia, serif;
+  --ma-sans:  'Inter', system-ui, sans-serif;
+  --ma-pill:  999px;
+  --ma-radius: 14px;            /* cards: soft, generous */
+}
+
+/* ---- map onto Super Productivity (reconcile names per release) ---- */
+body,
+body.isDark,
+.dark-theme {
+  --bg:                        var(--ma-bg);
+  --bg-darker:                 var(--ma-bg);
+  --card-bg:                   var(--ma-bg-elev);
+  --sidebar-bg:                var(--ma-bg);
+  --text-color:                var(--ma-text);
+  --text-color-less-intense:   var(--ma-text-muted);
+  --text-color-muted:          var(--ma-text-faint);
+  --divider-color:             var(--ma-border);
+
+  --palette-accent-500:        var(--ma-accent);
+  --c-accent:                  var(--ma-accent);
+  --select-hover-bg:           var(--ma-accent-soft);
+  --task-c-bg:                 var(--ma-bg-elev);
+  --task-c-selected-bg:        var(--ma-accent-soft);
+}
+
+/* ---- typography: serif for the named, sans for the functional ---- */
+body, button, input, textarea, .mat-mdc-button {
+  font-family: var(--ma-sans);
+  letter-spacing: 0.01em;
+}
+h1, h2, h3,
+.project-title, .tag-title,
+.page-title, .main-header .current-work-context-title {
+  font-family: var(--ma-serif);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+/* ---- no shadows; elevation is a color step ---- */
+.task, .mat-mdc-card, .panel, .mat-mdc-dialog-container {
+  box-shadow: none !important;
+  border: 1px solid var(--ma-border);
+  border-radius: var(--ma-radius);
+  background: var(--ma-bg-elev);
+}
+
+/* ---- pill & circle geometry ---- */
+button, .mat-mdc-button, .mat-mdc-raised-button,
+input[type='text'], input[type='search'], .tag, .chip {
+  border-radius: var(--ma-pill) !important;
+}
+input, textarea, .mat-mdc-form-field {
+  background: var(--ma-bg-input);
+}
+
+/* ---- the breathing underline: beneath the living and the named ----
+   current task title + active work context (project/tag) breathe. */
+@keyframes ma-breathe {
+  0%, 100% { transform: scaleX(0.18); }
+  50%      { transform: scaleX(1); }
+}
+.task.isCurrent .task-title,
+.current-work-context-title {
+  position: relative;
+}
+.task.isCurrent .task-title::after,
+.current-work-context-title::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: -3px;
+  height: 1px;
+  background: var(--ma-accent);
+  transform-origin: left center;
+  animation: ma-breathe 4s ease-in-out infinite;
+}
+
+/* ---- current task: presence, not highlight ---- */
+.current-task, .task.isCurrent {
+  background: var(--ma-accent-soft);
+  border-color: var(--ma-border-mid);
+}
+
+/* ---- planner / timebox blocks ---- */
+.schedule-event, .timeline-entry {
+  background: var(--ma-accent-soft);
+  border: 1px solid var(--ma-border-mid);
+  border-radius: var(--ma-radius);
+  color: var(--ma-text);
+}
+
+/* ---- danger, used sparingly ---- */
+.warn, .mat-warn, .danger { color: var(--ma-danger) !important; }
+
+/* ---- cushion widget (shared classnames with hive.css) ---- */
+.hive-cushion { font-family: var(--ma-sans); color: var(--ma-text); }
+.hive-cushion--ok   { color: var(--ma-accent); }
+.hive-cushion--risk { color: var(--ma-danger); }
+
+/* ---- quiet edges ---- */
+::selection { background: var(--ma-accent-soft); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--ma-border); border-radius: var(--ma-pill); }
+::-webkit-scrollbar-thumb:hover { background: var(--ma-border-mid); }

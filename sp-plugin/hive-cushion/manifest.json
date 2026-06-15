@@ -1,0 +1,14 @@
+{
+  "id": "hive-cushion",
+  "name": "HIVE Cushion",
+  "version": "0.1.0",
+  "minVersion": "14.0.0",
+  "description": "Real-time deadline feasibility from the HIVE Tasks API — amber when on track, red when the schedule is infeasible.",
+  "manifestVersion": 1,
+  "type": "standard",
+  "main": "plugin.js",
+  "iFrame": "index.html",
+  "icon": "schedule",
+  "hooks": [],
+  "permissions": []
+}
