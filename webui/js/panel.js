@@ -66,6 +66,7 @@ const Panel = (() => {
     const planLbl = plannedMin > 0 ? `${Math.round(plannedMin/60*10)/10}h of ${Math.round(need/60*10)/10}h planned` : '';
     const subs = t.subtasks || [];
     const subLbl = subs.length ? `\u2611 ${subs.filter((x)=>x.status==='done').length}/${subs.length} subtasks` : '';
+    const tmr = (window.__TIMER && window.__TIMER.running && window.__TIMER.task_id === t.id) ? window.__TIMER : null;
     return `<div class="tcard" draggable="true" data-tid="${t.id}">
         <button class="plan-btn" data-plan="${t.id}" title="plan into next free slot">plan</button>
       <div class="row-actions">
@@ -81,6 +82,8 @@ const Panel = (() => {
         ${t.category ? `<span>${esc(t.category)}</span>` : ''}
         ${t.due_at ? `<span>due ${Api.fmtInZone(t.due_at, SCHOOL_TZ(), { month: '2-digit', day: '2-digit' })} ${Api.fmtInZone(t.due_at, SCHOOL_TZ(), { hour: '2-digit', minute: '2-digit', hour12: false })}</span>` : ''}
         <span>need ${fmtDur(rem)}</span>
+        ${t.time_spent_min ? `<span class="logged">logged ${fmtDur(t.time_spent_min)}</span>` : ''}
+        ${tmr ? `<span class="timing" data-timing="${t.id}"><span class="tp-dot"></span>timing…</span>` : ''}
         ${cu ? `<span class="cushion ${cu.level}">cushion ${cu.cushion_min < 0 ? '−' : ''}${fmtDur(cu.cushion_min)}</span>` : ''}
       </div>
     </div>`;

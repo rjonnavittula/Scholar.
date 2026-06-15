@@ -116,7 +116,7 @@
     const name = (S.settings && S.settings.display_name) || '';
     const h = new Date().getHours();
     const part = h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening';
-    el.textContent = name ? `good ${part}, ${name}` : '';
+    el.textContent = name ? `Good ${part}, ${name}` : '';
   }
 
   function renderStreak() {
@@ -408,6 +408,7 @@
     },
 
     render() {
+      window.__TIMER = this.state.running ? { ...this.state, paused: this.paused } : { running: false };
       let pill = document.getElementById('timer-pill');
       if (!this.state.running) {
         if (pill) pill.remove();
@@ -423,7 +424,12 @@
         const anchor = document.getElementById('topbar-actions') || document.querySelector('.topbar');
         anchor.insertBefore(pill, anchor.firstChild);
       }
-      const paint = () => { pill.innerHTML = `<span class="tp-dot ${this.paused ? 'paused' : ''}"></span>⏱ ${this.fmt(this.elapsedSec())}`; };
+      const paint = () => {
+        const txt = this.fmt(this.elapsedSec());
+        pill.innerHTML = `<span class="tp-dot ${this.paused ? 'paused' : ''}"></span>⏱ ${txt}`;
+        const chip = document.querySelector(`[data-timing="${this.state.task_id}"]`);
+        if (chip) chip.innerHTML = `<span class="tp-dot"></span>${txt}`;
+      };
       paint();
       if (this._tick) clearInterval(this._tick);
       if (!this.paused) this._tick = setInterval(paint, 1000);
@@ -839,101 +845,134 @@
     const paneTerm = `
       <section class="set-sec" data-pane="term">
         <h3>Term</h3>
-        <div class="frow">
-          <div><label>country</label><select id="m-country"></select></div>
-          <div><label>school timezone</label><select id="m-school-tz"></select></div>
+        <p class="set-sub">where you study and when the term runs.</p>
+        <div class="set-grouphdr">location & timezone</div>
+        <div class="set-group">
+          <div class="row"><div><div class="rlabel">country</div></div>
+            <div class="rctl"><select id="m-country"></select></div></div>
+          <div class="row"><div><div class="rlabel">school timezone</div>
+            <div class="rhint">where due dates are anchored</div></div>
+            <div class="rctl"><select id="m-school-tz"></select></div></div>
+          <div class="row"><div><div class="rlabel">your current timezone</div>
+            <div class="rhint">awake hours follow this</div></div>
+            <div class="rctl"><select id="m-home-tz"></select></div></div>
         </div>
-        <div class="frow">
-          <div><label>your current timezone (home)</label><select id="m-home-tz"></select></div>
-        </div>
-        <p class="set-grouplabel">term dates</p>
-        <div class="frow">
-          <div><label>classes start</label><input id="m-ts" type="date" value="${t.classes_start || ''}" /></div>
-          <div><label>classes end</label><input id="m-te" type="date" value="${t.classes_end || ''}" /></div>
-          <div><label>exams end</label><input id="m-tx" type="date" value="${t.exam_end || ''}" /></div>
+        <div class="set-grouphdr">term dates</div>
+        <div class="set-group">
+          <div class="row"><div class="rlabel">classes start</div>
+            <div class="rctl"><input id="m-ts" type="date" value="${t.classes_start || ''}" /></div></div>
+          <div class="row"><div class="rlabel">classes end</div>
+            <div class="rctl"><input id="m-te" type="date" value="${t.classes_end || ''}" /></div></div>
+          <div class="row"><div class="rlabel">exams end</div>
+            <div class="rctl"><input id="m-tx" type="date" value="${t.exam_end || ''}" /></div></div>
         </div>
       </section>`;
 
     const panePers = `
       <section class="set-sec hidden" data-pane="pers">
         <h3>Personalization</h3>
-        <p class="set-grouplabel">study planning</p>
-        <div class="frow">
-          <div><label>min study block (min)</label><input id="m-min" type="number" value="${S.settings.min_block_min}" /></div>
-          <div><label>start ahead (days)</label><input id="m-ahead" type="number" value="${S.settings.start_ahead_days}" /></div>
-          <div><label>cushion yellow at (%)</label><input id="m-yel" type="number" value="${S.settings.yellow_threshold_pct}" /></div>
-        </div>
-        <div class="frow">
-          <div><label>week starts on</label>
-            <select id="m-wkstart">
+        <p class="set-sub">how the planner schedules your time.</p>
+        <div class="set-grouphdr">study planning</div>
+        <div class="set-group">
+          <div class="row"><div class="rlabel">minimum study block</div>
+            <div class="rctl"><input id="m-min" type="number" value="${S.settings.min_block_min}" /><span class="muted small">min</span></div></div>
+          <div class="row"><div><div class="rlabel">start ahead</div>
+            <div class="rhint">begin tasks this many days early</div></div>
+            <div class="rctl"><input id="m-ahead" type="number" value="${S.settings.start_ahead_days}" /><span class="muted small">days</span></div></div>
+          <div class="row"><div><div class="rlabel">cushion turns yellow at</div>
+            <div class="rhint">% of needed time remaining</div></div>
+            <div class="rctl"><input id="m-yel" type="number" value="${S.settings.yellow_threshold_pct}" /><span class="muted small">%</span></div></div>
+          <div class="row"><div class="rlabel">week starts on</div>
+            <div class="rctl"><select id="m-wkstart">
               <option value="6" ${S.settings.week_start === 6 ? 'selected' : ''}>Sunday</option>
               <option value="0" ${S.settings.week_start === 0 ? 'selected' : ''}>Monday</option>
-            </select></div>
-          <div><label>default view</label>
-            <select id="m-defview">${['week', 'day', 'month'].map((v) => `<option value="${v}" ${(S.settings.default_view || 'week') === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+            </select></div></div>
+          <div class="row"><div class="rlabel">default view</div>
+            <div class="rctl"><select id="m-defview">${['week', 'day', 'month'].map((v) => `<option value="${v}" ${(S.settings.default_view || 'week') === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div></div>
         </div>
-        <p class="set-grouplabel">awake time — study time can only exist inside</p>
-        <div class="awake-wrap" id="awake-wrap">
-          <div class="awake-default">
-            <span class="muted small">usually awake</span>
-            <input type="time" id="awk-def-s" value="08:00" />
-            <span class="muted">→</span>
-            <input type="time" id="awk-def-e" value="23:30" />
-            <button type="button" class="ghost xs" id="awk-apply-all">apply to all</button>
+        <div class="set-grouphdr">awake time — study can only be scheduled inside</div>
+        <div class="set-group awake-group">
+          <div class="awake-wrap" id="awake-wrap">
+            <div class="awake-default">
+              <span class="muted small">usually awake</span>
+              <input type="time" id="awk-def-s" value="08:00" />
+              <span class="muted">→</span>
+              <input type="time" id="awk-def-e" value="23:30" />
+              <button type="button" class="ghost xs" id="awk-apply-all">apply to all</button>
+            </div>
+            <div class="awake-presets">
+              <button type="button" class="ghost xs" data-preset="weekday">set weekdays</button>
+              <button type="button" class="ghost xs" data-preset="weekend">set weekend</button>
+            </div>
+            <div class="awake-days" id="awake-days"></div>
           </div>
-          <div class="awake-presets">
-            <button type="button" class="ghost xs" data-preset="weekday">set weekdays</button>
-            <button type="button" class="ghost xs" data-preset="weekend">set weekend</button>
-          </div>
-          <div class="awake-days" id="awake-days"></div>
+          ${DAYS.map((d, i) => `<input type="hidden" data-aws="${i}" value="${aw[i]?.start_min ?? 480}" />
+            <input type="hidden" data-awe="${i}" value="${aw[i]?.end_min ?? 1410}" />`).join('')}
         </div>
-        ${DAYS.map((d, i) => `<input type="hidden" data-aws="${i}" value="${aw[i]?.start_min ?? 480}" />
-          <input type="hidden" data-awe="${i}" value="${aw[i]?.end_min ?? 1410}" />`).join('')}
       </section>`;
 
     const paneAppear = `
       <section class="set-sec hidden" data-pane="appear">
         <h3>Appearance</h3>
-        <div class="frow">
-          <div><label>theme</label>
-            <select id="m-theme">
+        <p class="set-sub">make it yours.</p>
+        <div class="set-group">
+          <div class="row"><div class="rlabel">theme</div>
+            <div class="rctl"><select id="m-theme">
               <option value="dark" ${(S.settings.theme || 'dark') === 'dark' ? 'selected' : ''}>dark</option>
               <option value="light" ${S.settings.theme === 'light' ? 'selected' : ''}>light</option>
-            </select></div>
-          <div><label>density</label>
-            <select id="m-density">
+            </select></div></div>
+          <div class="row"><div class="rlabel">density</div>
+            <div class="rctl"><select id="m-density">
               <option value="1" ${(+S.settings.density || 1) === 1 ? 'selected' : ''}>comfortable</option>
               <option value="0.85" ${(+S.settings.density) === 0.85 ? 'selected' : ''}>compact</option>
-            </select></div>
-          <div><label>font size</label>
-            <select id="m-font">
+            </select></div></div>
+          <div class="row"><div class="rlabel">font size</div>
+            <div class="rctl"><select id="m-font">
               <option value="0.92" ${(+S.settings.fontscale) === 0.92 ? 'selected' : ''}>small</option>
               <option value="1" ${(+S.settings.fontscale || 1) === 1 ? 'selected' : ''}>normal</option>
               <option value="1.12" ${(+S.settings.fontscale) === 1.12 ? 'selected' : ''}>large</option>
-            </select></div>
+            </select></div></div>
         </div>
-        <p class="set-grouplabel">accent</p>
-        <div class="swatches" id="m-accent">${ACC.map((c) => `<span class="swatch ${accent === c ? 'sel' : ''}" data-c="${c}" style="background:${c}"></span>`).join('')}</div>
+        <div class="set-grouphdr">accent</div>
+        <div class="set-group">
+          <div class="row"><div class="rlabel">color</div>
+            <div class="rctl"><div class="swatches" id="m-accent">${ACC.map((c) => `<span class="swatch ${accent === c ? 'sel' : ''}" data-c="${c}" style="background:${c}"></span>`).join('')}</div></div></div>
+        </div>
       </section>`;
 
     const paneNotif = `
       <section class="set-sec hidden" data-pane="notif">
-        <h3>Notifications <span class="soon-badge">coming soon</span></h3>
-        <p class="muted small">Browser notifications need a notification service — not wired yet. These are placeholders for the next phase.</p>
-        <label class="set-toggle"><input type="checkbox" disabled /> Should be working on — nudge me about what's next</label>
-        <label class="set-toggle"><input type="checkbox" disabled /> Overdue — notify when a task slips</label>
-        <label class="set-toggle"><input type="checkbox" disabled /> Planned task starts — remind me before a block</label>
+        <h3>Notifications</h3>
+        <p class="set-sub">Browser notifications aren't wired yet — these are placeholders for the next phase. <span class="soon-badge">coming soon</span></p>
+        <div class="set-group">
+          <div class="row"><div><div class="rlabel">should be working on</div>
+            <div class="rhint">nudge me about what's next</div></div>
+            <div class="rctl"><input type="checkbox" disabled /></div></div>
+          <div class="row"><div><div class="rlabel">overdue</div>
+            <div class="rhint">notify when a task slips</div></div>
+            <div class="rctl"><input type="checkbox" disabled /></div></div>
+          <div class="row"><div><div class="rlabel">planned task starts</div>
+            <div class="rhint">remind me before a block</div></div>
+            <div class="rctl"><input type="checkbox" disabled /></div></div>
+        </div>
       </section>`;
 
     const paneAcct = `
       <section class="set-sec hidden" data-pane="acct">
         <h3>Account</h3>
-        <p class="muted small">Single-user, self-hosted. Auth is your API key.</p>
-        <div class="frow"><div><label>display name</label><input id="m-name" type="text" value="${esc(S.settings.display_name || '')}" placeholder="your name" /></div></div>
-        <p class="set-grouplabel">API key</p>
-        <p class="muted small">Keys are shown once. Mint a fresh one here if needed.</p>
-        <button class="ghost" id="m-newkey">mint a new key</button>
-        <div id="m-newkey-out" class="muted small" style="margin-top:8px;word-break:break-all"></div>
+        <p class="set-sub">Single-user, self-hosted — auth is your API key.</p>
+        <div class="set-group">
+          <div class="row"><div class="rlabel">display name</div>
+            <div class="rctl"><input id="m-name" type="text" value="${esc(S.settings.display_name || '')}" placeholder="your name" /></div></div>
+        </div>
+        <div class="set-grouphdr">API key</div>
+        <div class="set-group">
+          <div class="row"><div><div class="rlabel">mint a new key</div>
+            <div class="rhint">keys are shown once</div></div>
+            <div class="rctl"><button class="ghost" id="m-newkey">mint</button></div></div>
+          <div class="row" id="m-newkey-row" style="display:none"><div class="rlabel">your key</div>
+            <div class="rctl"><code id="m-newkey-out" style="word-break:break-all;font-size:0.75rem"></code></div></div>
+        </div>
       </section>`;
 
     const { ov: sov } = settingsShell([
@@ -977,10 +1016,13 @@
 
     const mk = sov.querySelector('#m-newkey');
     if (mk) mk.onclick = async () => {
+      const row = sov.querySelector('#m-newkey-row');
+      const out = sov.querySelector('#m-newkey-out');
       try {
         const r = await Api.post('/auth/keys?label=ui');
-        sov.querySelector('#m-newkey-out').textContent = r.api_key || '(minted — check server)';
-      } catch (e) { sov.querySelector('#m-newkey-out').textContent = 'mint failed: ' + e.message; }
+        out.textContent = r.api_key || '(minted — check server)';
+      } catch (e) { out.textContent = 'mint failed: ' + e.message; }
+      if (row) row.style.display = 'flex';
     };
   }
 
