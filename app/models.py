@@ -122,6 +122,7 @@ class Settings(SQLModel, table=True):
     density: float = 1.0
     fontscale: float = 1.0
     default_view: str = "week"
+    display_name: str = ""
     canvas_base_url: str = ""
     canvas_token: str = ""
 

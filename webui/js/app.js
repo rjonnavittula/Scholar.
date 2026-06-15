@@ -649,80 +649,189 @@
     const termCfg = await Api.get('/config/term');
     const t = termCfg.term || {};
     const aw = Object.fromEntries(awake.map((a) => [a.weekday, a]));
-    const { ov: sov } = modal(`
-      <h2>settings</h2>
-      <div class="frow">
-        <div><label>min study block (min)</label>
-          <input id="m-min" type="number" value="${S.settings.min_block_min}" /></div>
-        <div><label>start ahead (days)</label>
-          <input id="m-ahead" type="number" value="${S.settings.start_ahead_days}" /></div>
-        <div><label>yellow at (% of need)</label>
-          <input id="m-yel" type="number" value="${S.settings.yellow_threshold_pct}" /></div>
-        <div><label>week starts on</label>
-          <select id="m-wkstart">
-            <option value="6" ${S.settings.week_start === 6 ? 'selected' : ''}>Sunday</option>
-            <option value="0" ${S.settings.week_start === 0 ? 'selected' : ''}>Monday</option>
-          </select></div>
-        <div><label>theme</label>
-          <select id="m-theme">
-            <option value="dark" ${(S.settings.theme||'dark')==='dark'?'selected':''}>dark</option>
-            <option value="light" ${(S.settings.theme)==='light'?'selected':''}>light</option>
-          </select></div>
-        <div><label>accent</label>
-          <div class="swatches" id="m-accent">${['#8A7F73','#B59B5B','#6F7F66','#7A6A8A','#5F6B7A','#9A6A5A'].map((c)=>`<span class="swatch ${ (S.settings.accent||'#8A7F73')===c?'sel':''}" data-c="${c}" style="background:${c}"></span>`).join('')}</div></div>
-        <div><label>density</label>
-          <select id="m-density">
-            <option value="1" ${(+S.settings.density||1)===1?'selected':''}>comfortable</option>
-            <option value="0.85" ${(+S.settings.density)===0.85?'selected':''}>compact</option>
-          </select></div>
-        <div><label>font size</label>
-          <select id="m-font">
-            <option value="0.92" ${(+S.settings.fontscale)===0.92?'selected':''}>small</option>
-            <option value="1" ${(+S.settings.fontscale||1)===1?'selected':''}>normal</option>
-            <option value="1.12" ${(+S.settings.fontscale)===1.12?'selected':''}>large</option>
-          </select></div>
-        <div><label>default view</label>
-          <select id="m-defview">
-            ${['week','day','month'].map((v)=>`<option value="${v}" ${(S.settings.default_view||'week')===v?'selected':''}>${v}</option>`).join('')}
-          </select></div>
-      </div>
-      <div class="frow"><label>term — classes start / end / exams end</label>
-        <input id="m-ts" type="date" value="${t.classes_start || ''}" />
-        <input id="m-te" type="date" value="${t.classes_end || ''}" />
-        <input id="m-tx" type="date" value="${t.exam_end || ''}" />
-      </div>
-      <div class="frow"><label>awake time (study time can only exist inside)</label></div>
-      ${DAYS.map((d, i) => `<div class="awake-row"><span class="muted">${d}</span>
-        <input type="time" data-aws="${i}" value="${minToHM(aw[i]?.start_min ?? 480)}" />
-        <input type="time" data-awe="${i}" value="${minToHM(aw[i]?.end_min ?? 1410)}" />
-      </div>`).join('')}
-      ${ACTIONS('save')}`,
-      async (act, ov) => {
-        if (act !== 'save') return;
-        await Api.put('/config/settings', {
-          min_block_min: +ov.querySelector('#m-min').value || 30,
-          start_ahead_days: +ov.querySelector('#m-ahead').value || 3,
-          yellow_threshold_pct: +ov.querySelector('#m-yel').value || 40,
-          week_start: +ov.querySelector('#m-wkstart').value,
-          theme: ov.querySelector('#m-theme').value,
-          accent: ov.querySelector('#m-accent .swatch.sel')?.dataset.c || '#8A7F73',
-          density: +ov.querySelector('#m-density').value,
-          fontscale: +ov.querySelector('#m-font').value,
-          default_view: ov.querySelector('#m-defview').value,
-        });
-        await Api.put('/config/term', {
-          classes_start: ov.querySelector('#m-ts').value || null,
-          classes_end: ov.querySelector('#m-te').value || null,
-          exam_end: ov.querySelector('#m-tx').value || null,
-        });
-        await Api.put('/awake', DAYS.map((_, i) => ({
-          weekday: i,
-          start_min: hmToMin(ov.querySelector(`[data-aws="${i}"]`).value),
-          end_min: hmToMin(ov.querySelector(`[data-awe="${i}"]`).value),
-        })));
-        await loadAll();
+    const accent = S.settings.accent || '#8A7F73';
+    const ACC = ['#8A7F73', '#B59B5B', '#6F7F66', '#7A6A8A', '#5F6B7A', '#9A6A5A'];
+
+    const paneTerm = `
+      <section class="set-sec" data-pane="term">
+        <h3>Term</h3>
+        <div class="frow">
+          <div><label>country</label><select id="m-country"></select></div>
+          <div><label>school timezone</label><select id="m-school-tz"></select></div>
+        </div>
+        <div class="frow">
+          <div><label>your current timezone (home)</label><select id="m-home-tz"></select></div>
+        </div>
+        <p class="set-grouplabel">term dates</p>
+        <div class="frow">
+          <div><label>classes start</label><input id="m-ts" type="date" value="${t.classes_start || ''}" /></div>
+          <div><label>classes end</label><input id="m-te" type="date" value="${t.classes_end || ''}" /></div>
+          <div><label>exams end</label><input id="m-tx" type="date" value="${t.exam_end || ''}" /></div>
+        </div>
+      </section>`;
+
+    const panePers = `
+      <section class="set-sec hidden" data-pane="pers">
+        <h3>Personalization</h3>
+        <p class="set-grouplabel">study planning</p>
+        <div class="frow">
+          <div><label>min study block (min)</label><input id="m-min" type="number" value="${S.settings.min_block_min}" /></div>
+          <div><label>start ahead (days)</label><input id="m-ahead" type="number" value="${S.settings.start_ahead_days}" /></div>
+          <div><label>cushion yellow at (%)</label><input id="m-yel" type="number" value="${S.settings.yellow_threshold_pct}" /></div>
+        </div>
+        <div class="frow">
+          <div><label>week starts on</label>
+            <select id="m-wkstart">
+              <option value="6" ${S.settings.week_start === 6 ? 'selected' : ''}>Sunday</option>
+              <option value="0" ${S.settings.week_start === 0 ? 'selected' : ''}>Monday</option>
+            </select></div>
+          <div><label>default view</label>
+            <select id="m-defview">${['week', 'day', 'month'].map((v) => `<option value="${v}" ${(S.settings.default_view || 'week') === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+        </div>
+        <p class="set-grouplabel">awake time — study time can only exist inside</p>
+        ${DAYS.map((d, i) => `<div class="awake-row"><span class="muted">${d}</span>
+          <input type="time" data-aws="${i}" value="${minToHM(aw[i]?.start_min ?? 480)}" />
+          <input type="time" data-awe="${i}" value="${minToHM(aw[i]?.end_min ?? 1410)}" />
+        </div>`).join('')}
+      </section>`;
+
+    const paneAppear = `
+      <section class="set-sec hidden" data-pane="appear">
+        <h3>Appearance</h3>
+        <div class="frow">
+          <div><label>theme</label>
+            <select id="m-theme">
+              <option value="dark" ${(S.settings.theme || 'dark') === 'dark' ? 'selected' : ''}>dark</option>
+              <option value="light" ${S.settings.theme === 'light' ? 'selected' : ''}>light</option>
+            </select></div>
+          <div><label>density</label>
+            <select id="m-density">
+              <option value="1" ${(+S.settings.density || 1) === 1 ? 'selected' : ''}>comfortable</option>
+              <option value="0.85" ${(+S.settings.density) === 0.85 ? 'selected' : ''}>compact</option>
+            </select></div>
+          <div><label>font size</label>
+            <select id="m-font">
+              <option value="0.92" ${(+S.settings.fontscale) === 0.92 ? 'selected' : ''}>small</option>
+              <option value="1" ${(+S.settings.fontscale || 1) === 1 ? 'selected' : ''}>normal</option>
+              <option value="1.12" ${(+S.settings.fontscale) === 1.12 ? 'selected' : ''}>large</option>
+            </select></div>
+        </div>
+        <p class="set-grouplabel">accent</p>
+        <div class="swatches" id="m-accent">${ACC.map((c) => `<span class="swatch ${accent === c ? 'sel' : ''}" data-c="${c}" style="background:${c}"></span>`).join('')}</div>
+      </section>`;
+
+    const paneNotif = `
+      <section class="set-sec hidden" data-pane="notif">
+        <h3>Notifications <span class="soon-badge">coming soon</span></h3>
+        <p class="muted small">Browser notifications need a notification service — not wired yet. These are placeholders for the next phase.</p>
+        <label class="set-toggle"><input type="checkbox" disabled /> Should be working on — nudge me about what's next</label>
+        <label class="set-toggle"><input type="checkbox" disabled /> Overdue — notify when a task slips</label>
+        <label class="set-toggle"><input type="checkbox" disabled /> Planned task starts — remind me before a block</label>
+      </section>`;
+
+    const paneAcct = `
+      <section class="set-sec hidden" data-pane="acct">
+        <h3>Account</h3>
+        <p class="muted small">Single-user, self-hosted. Auth is your API key.</p>
+        <div class="frow"><div><label>display name</label><input id="m-name" type="text" value="${esc(S.settings.display_name || '')}" placeholder="your name" /></div></div>
+        <p class="set-grouplabel">API key</p>
+        <p class="muted small">Keys are shown once. Mint a fresh one here if needed.</p>
+        <button class="ghost" id="m-newkey">mint a new key</button>
+        <div id="m-newkey-out" class="muted small" style="margin-top:8px;word-break:break-all"></div>
+      </section>`;
+
+    const { ov: sov } = settingsShell([
+      ['term', 'Term', paneTerm],
+      ['pers', 'Personalization', panePers],
+      ['appear', 'Appearance', paneAppear],
+      ['notif', 'Notifications', paneNotif],
+      ['acct', 'Account', paneAcct],
+    ], async (ov) => {
+      await Api.put('/config/settings', {
+        min_block_min: +ov.querySelector('#m-min').value || 30,
+        start_ahead_days: +ov.querySelector('#m-ahead').value || 3,
+        yellow_threshold_pct: +ov.querySelector('#m-yel').value || 40,
+        week_start: +ov.querySelector('#m-wkstart').value,
+        default_view: ov.querySelector('#m-defview').value,
+        theme: ov.querySelector('#m-theme').value,
+        accent: ov.querySelector('#m-accent .swatch.sel')?.dataset.c || '#8A7F73',
+        density: +ov.querySelector('#m-density').value,
+        fontscale: +ov.querySelector('#m-font').value,
+        home_tz: ov.querySelector('#m-home-tz').value,
+        school_tz: ov.querySelector('#m-school-tz').value,
+        country: ov.querySelector('#m-country').value,
+        display_name: ov.querySelector('#m-name')?.value || '',
       });
+      await Api.put('/config/term', {
+        classes_start: ov.querySelector('#m-ts').value || null,
+        classes_end: ov.querySelector('#m-te').value || null,
+        exam_end: ov.querySelector('#m-tx').value || null,
+      });
+      await Api.put('/awake', DAYS.map((_, i) => ({
+        weekday: i,
+        start_min: hmToMin(ov.querySelector(`[data-aws="${i}"]`).value),
+        end_min: hmToMin(ov.querySelector(`[data-awe="${i}"]`).value),
+      })));
+      await loadAll();
+    });
+
     wireSwatches(sov);
+    await initSettingsTz(sov);
+
+    const mk = sov.querySelector('#m-newkey');
+    if (mk) mk.onclick = async () => {
+      try {
+        const r = await Api.post('/auth/keys?label=ui');
+        sov.querySelector('#m-newkey-out').textContent = r.api_key || '(minted — check server)';
+      } catch (e) { sov.querySelector('#m-newkey-out').textContent = 'mint failed: ' + e.message; }
+    };
+  }
+
+  function settingsShell(sections, onSave) {
+    const nav = sections.map(([id, label], i) =>
+      `<button class="set-navitem ${i === 0 ? 'active' : ''}" data-go="${id}">${label}</button>`).join('');
+    const panes = sections.map(([, , html]) => html).join('');
+    const { ov, close } = modal(`
+      <div class="set-wrap">
+        <aside class="set-nav"><h2>settings</h2>${nav}</aside>
+        <div class="set-body">${panes}
+          <div class="actions"><span class="spacer"></span>
+            <button class="ghost" data-m="cancel">cancel</button>
+            <button class="primary" data-m="save">save</button>
+          </div>
+        </div>
+      </div>`, async (act, ovEl) => { if (act === 'save') await onSave(ovEl); });
+    ov.classList.add('wide');
+    for (const b of ov.querySelectorAll('[data-go]')) {
+      b.onclick = () => {
+        for (const n of ov.querySelectorAll('.set-navitem')) n.classList.toggle('active', n === b);
+        for (const p of ov.querySelectorAll('.set-sec')) p.classList.toggle('hidden', p.dataset.pane !== b.dataset.go);
+      };
+    }
+    return { ov, close };
+  }
+
+  async function initSettingsTz(ov) {
+    const cSel = ov.querySelector('#m-country');
+    const homeSel = ov.querySelector('#m-home-tz');
+    const schoolSel = ov.querySelector('#m-school-tz');
+    if (!cSel) return;
+    const country = S.settings.country || 'US';
+    let data;
+    try { data = await Api.get('/config/timezones?country=' + country); }
+    catch { data = { countries: ['US'], zones: [], all: [] }; }
+    cSel.innerHTML = data.countries.map((c) => `<option value="${c}" ${c === country ? 'selected' : ''}>${c}</option>`).join('');
+    const fillTz = (sel, selected, zones, all) => {
+      const opts = (zones && zones.length ? zones.map((z) => [z.id, z.label]) : (all || []).map((z) => [z, z]));
+      sel.innerHTML = opts.map(([id, lbl]) => `<option value="${id}" ${id === selected ? 'selected' : ''}>${lbl}</option>`).join('');
+    };
+    fillTz(schoolSel, S.settings.school_tz || 'America/New_York', data.zones, data.all);
+    fillTz(homeSel, S.settings.home_tz || 'America/New_York', data.zones, data.all);
+    cSel.onchange = async () => {
+      const d = await Api.get('/config/timezones?country=' + cSel.value);
+      fillTz(schoolSel, schoolSel.value, d.zones, d.all);
+      fillTz(homeSel, homeSel.value, d.zones, d.all);
+    };
   }
 
   // ---------- toast ----------
