@@ -3,4 +3,5 @@ uvicorn[standard]>=0.30
 sqlmodel>=0.0.22
 pydantic>=2.7
 psycopg[binary]>=3.2
+alembic>=1.13
 canvasapi>=3.2

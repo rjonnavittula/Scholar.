@@ -6,7 +6,7 @@
 <title>scholar.</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="css/app.css?v=1781301862" />
+<link rel="stylesheet" href="css/app.css?v=1781315854" />
 </head>
 <body>
 
@@ -53,12 +53,21 @@
         <button class="tab active">Calendar</button>
         <button class="tab muted" title="phase 4">Task List</button>
       </div>
+      <div class="viewtabs" id="viewtabs">
+        <button data-view="day">Day</button>
+        <button data-view="week" class="active">Week</button>
+        <button data-view="month">Month</button>
+        <select id="view-n" title="next N days"><option value="">Next…</option>
+          <option value="3">Next 3</option><option value="5">Next 5</option>
+          <option value="7">Next 7</option></select>
+      </div>
       <div class="weeknav">
         <button class="ghost" id="nav-today">today</button>
         <button class="ghost" id="nav-prev">‹</button>
         <button class="ghost" id="nav-next">›</button>
         <span id="week-label" class="serif"></span>
       </div>
+      <div class="streak" id="streak" title="study streak"></div>
       <div class="cushion-chip" id="cushion-chip">cushion …</div>
       <button class="primary" id="btn-add-task">+ task</button>
     </header>
@@ -73,9 +82,9 @@
 
 <div id="modal-root"></div>
 
-<script src="js/api.js?v=1781301862"></script>
-<script src="js/calendar.js?v=1781301862"></script>
-<script src="js/panel.js?v=1781301862"></script>
-<script src="js/app.js?v=1781301862"></script>
+<script src="js/api.js?v=1781315854"></script>
+<script src="js/calendar.js?v=1781315854"></script>
+<script src="js/panel.js?v=1781315854"></script>
+<script src="js/app.js?v=1781315854"></script>
 </body>
 </html>

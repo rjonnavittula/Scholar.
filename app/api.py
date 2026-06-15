@@ -43,7 +43,7 @@ def _home_to_utc(dt, home_tz: str):
 from app.db import get_session
 from app.models import (
     Activity, ApiKey, AwakeTime, Course, Holiday, PlannedBlock,
-    Settings, Source, Task, TaskStatus, Term,
+    Settings, Source, Task, TaskStatus, Term, TimeLog,
 )
 
 
@@ -187,11 +187,36 @@ def update_task(tid: int, payload: TaskPatch, session: Session = Depends(get_ses
     if "due_at" in patch:
         st = session.get(Settings, 1) or Settings(id=1)
         patch["due_at"] = _due_to_utc(patch["due_at"], st.school_tz)
+    going_done = patch.get("status") == TaskStatus.done and t.status != TaskStatus.done
     for k, v in patch.items():
         setattr(t, k, v)
-    t.updated_at = datetime.now(ZoneInfo("UTC"))
+    now_utc = datetime.now(ZoneInfo("UTC"))
+    t.updated_at = now_utc
+    if going_done:
+        t.completed_at = now_utc
+        # log any not-yet-logged spent time so the streak/effort reflects it
+        already = sum(lg.minutes for lg in session.exec(
+            select(TimeLog).where(TimeLog.task_id == t.id)).all())
+        gap = max(0, t.time_spent_min - already)
+        if gap:
+            session.add(TimeLog(task_id=t.id, minutes=gap, logged_at=now_utc, source="manual"))
+    elif patch.get("status") == TaskStatus.todo and t.completed_at:
+        t.completed_at = None  # un-completing
     session.add(t); session.commit(); session.refresh(t)
     return t
+
+
+@tasks_router.post("/{tid}/log", summary="Log focused minutes on a task")
+def log_time(tid: int, minutes: int = Query(..., gt=0), session: Session = Depends(get_session)):
+    t = session.get(Task, tid)
+    if not t:
+        raise HTTPException(404)
+    t.time_spent_min += minutes
+    t.updated_at = datetime.now(ZoneInfo("UTC"))
+    session.add(t)
+    session.add(TimeLog(task_id=tid, minutes=minutes, source="timer"))
+    session.commit()
+    return {"task_id": tid, "time_spent_min": t.time_spent_min}
 
 
 @tasks_router.delete("/{tid}", status_code=204)
@@ -334,16 +359,39 @@ def get_settings(session: Session = Depends(get_session)):
     return out
 
 
-@config_router.get("/timezones", summary="Common IANA zones for the picker")
-def list_timezones():
+@config_router.get("/timezones", summary="Zones grouped for the location picker")
+def list_timezones(country: Optional[str] = None):
+    # Friendly labels for US zones; falls back to the raw zone id elsewhere.
+    US_LABELS = {
+        "America/New_York": "Eastern", "America/Chicago": "Central",
+        "America/Denver": "Mountain", "America/Phoenix": "Arizona (no DST)",
+        "America/Los_Angeles": "Pacific", "America/Anchorage": "Alaska",
+        "Pacific/Honolulu": "Hawaii",
+    }
+    try:
+        import zoneinfo
+        by_country = zoneinfo.available_timezones  # not country-mapped in stdlib
+    except Exception:
+        pass
+    # stdlib has no country->zone map; ship a curated common set + full list.
+    COUNTRIES = {
+        "US": [("America/New_York", "Eastern"), ("America/Chicago", "Central"),
+               ("America/Denver", "Mountain"), ("America/Phoenix", "Arizona (no DST)"),
+               ("America/Los_Angeles", "Pacific"), ("America/Anchorage", "Alaska"),
+               ("Pacific/Honolulu", "Hawaii")],
+        "IN": [("Asia/Kolkata", "India (IST)")],
+        "GB": [("Europe/London", "UK")],
+        "CA": [("America/Toronto", "Eastern"), ("America/Winnipeg", "Central"),
+               ("America/Edmonton", "Mountain"), ("America/Vancouver", "Pacific"),
+               ("America/Halifax", "Atlantic")],
+        "AU": [("Australia/Sydney", "Eastern"), ("Australia/Adelaide", "Central"),
+               ("Australia/Perth", "Western")],
+    }
     from zoneinfo import available_timezones
-    common = [
-        "America/Los_Angeles", "America/Denver", "America/Chicago",
-        "America/New_York", "America/Phoenix", "America/Anchorage",
-        "Pacific/Honolulu", "Europe/London", "Asia/Kolkata", "UTC",
-    ]
-    allz = sorted(available_timezones())
-    return {"common": common, "all": allz}
+    out = {"countries": sorted(COUNTRIES.keys()),
+           "zones": [{"id": z, "label": lbl} for z, lbl in COUNTRIES.get((country or "US").upper(), [])],
+           "all": sorted(available_timezones())}
+    return out
 
 
 @config_router.put("/settings")
@@ -351,7 +399,7 @@ def put_settings(body: dict, session: Session = Depends(get_session)):
     st = session.get(Settings, 1) or Settings(id=1)
     for k in ("min_block_min", "start_ahead_days", "yellow_threshold_pct",
               "day_start_min", "canvas_base_url", "canvas_token",
-              "home_tz", "school_tz"):
+              "home_tz", "school_tz", "week_start", "country", "onboarded"):
         if k in body and body[k] is not None:
             setattr(st, k, body[k])
     session.add(st); session.commit()
@@ -422,6 +470,25 @@ def get_availability(start: Optional[date] = None, days: int = 7,
     for d in out:
         d["due_count"] = sum(1 for t in tasks if t.due_at and t.due_at.date().isoformat() == d["date"])
     return out
+
+
+# ---- study streak ----------------------------------------------------------#
+streak_router = APIRouter(prefix="/streak", tags=["streak"], dependencies=AUTH)
+
+
+@streak_router.get("", summary="Daily efficiency scores for the streak bar")
+def get_streak(days: int = 9, session: Session = Depends(get_session)):
+    from app.streak import current_streak, streak_window
+    st = session.get(Settings, 1) or Settings(id=1)
+    tasks = session.exec(select(Task)).all()
+    logs = session.exec(select(TimeLog)).all()
+    window = streak_window(tasks, logs, days=max(1, min(days, 30)), home_tz=st.home_tz)
+    return {
+        "current": current_streak(window),
+        "days": [{"day": d.day.isoformat(), "score": d.score, "level": d.level,
+                  "completed": d.completed, "minutes": d.minutes, "overdue": d.overdue}
+                 for d in window],
+    }
 
 
 # ---- canvas integration ------------------------------------------------------------#

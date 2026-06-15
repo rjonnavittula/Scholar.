@@ -15,7 +15,14 @@
 
   const S = {
     weekStart: mondayOf(new Date()),
+    view: 'week', viewN: 7,
     get weekDays() {
+      if (this.view === 'day') return [new Date(this.weekStart)];
+      if (this.view === 'nextN') return [...Array(this.viewN)].map((_, i) => addDays(new Date(), i));
+      if (this.view === 'month') {
+        // month view builds its own grid; return the month's weeks start
+        return [...Array(7)].map((_, i) => addDays(this.weekStart, i));
+      }
       return [...Array(7)].map((_, i) => addDays(this.weekStart, i));
     },
     get todayIso() { return isoOf(new Date()); },
@@ -50,21 +57,22 @@
   window.__S = S;
   async function loadAll() {
     const weekIso = isoOf(S.weekStart);
-    const [settings, courses, activities, tasks, planned, cushion, avail, canvas] =
+    const [settings, courses, activities, tasks, planned, cushion, avail, canvas, streak] =
       await Promise.all([
         Api.get('/config/settings'), Api.get('/courses'), Api.get('/activities'),
         Api.get('/tasks'), Api.get('/planned'), Api.get('/cushion'),
         Api.get(`/cushion/availability?start=${weekIso}&days=7`),
         Api.get('/integrations/canvas/status'),
+        Api.get('/streak?days=9'),
       ]);
     Object.assign(S, { settings, courses, activities, tasks, planned, cushion,
-                       availability: avail, canvas });
+                       availability: avail, canvas, streak });
     S.cushionByTask = Object.fromEntries((cushion.per_task || []).map((c) => [c.task_id, c]));
     renderAll();
   }
 
   function renderAll() {
-    renderSidebar(); renderTop(); Cal.render(); Panel.render();
+    renderSidebar(); renderTop(); renderStreak(); Cal.render(); Panel.render();
     const list = document.getElementById('tasklist');
     if (list && !list.classList.contains('hidden')) renderTaskList(list);
   }
@@ -81,7 +89,28 @@
     chip.className = 'cushion-chip ' + (c.feasible ? 'ok' : 'bad');
   }
 
+  function renderStreak() {
+    const el = document.getElementById('streak'); if (!el) return;
+    const st = S.streak || { current: 0, days: [] };
+    el.innerHTML = '<span class="flame">\u{1F525}</span>' +
+      st.days.map((d) => `<span class="dot l${d.level}" title="${d.day}: ${d.score}"></span>`).join('') +
+      `<span class="n">${st.current}d</span>`;
+  }
+
+  function setCalView(view) {
+    S.view = view;
+    for (const b of document.querySelectorAll('#viewtabs [data-view]'))
+      b.classList.toggle('active', b.dataset.view === view);
+    if (view !== 'nextN') document.getElementById('view-n').value = '';
+    Cal.setView ? Cal.setView(view, S.viewN || 7) : null;
+    loadAll();
+  }
+
   function wireChrome() {
+    for (const b of document.querySelectorAll('#viewtabs [data-view]'))
+      b.onclick = () => setCalView(b.dataset.view);
+    const vn = document.getElementById('view-n');
+    if (vn) vn.onchange = () => { if (vn.value) { S.viewN = +vn.value; setCalView('nextN'); } };
     $('nav-today').onclick = () => { S.weekStart = mondayOf(new Date()); loadAll(); };
     $('nav-prev').onclick = () => { S.weekStart = addDays(S.weekStart, -7); loadAll(); };
     $('nav-next').onclick = () => { S.weekStart = addDays(S.weekStart, 7); loadAll(); };
@@ -320,18 +349,27 @@
         </select></div>
       </div>
       <div class="frow">
-        <div><label>due date</label><input id="m-due-d" type="date"
-          value="${t?.due_at ? t.due_at.slice(0, 10) : ''}" /></div>
-        <div><label>due time</label><input id="m-due-t" type="time"
-          value="${t?.due_at ? t.due_at.slice(11, 16) : '23:59'}" /></div>
+        <div><label>due date</label><input id="m-due-d" type="date" /></div>
+        <div><label>due time</label><input id="m-due-t" type="time" value="23:59" /></div>
+        <div><label>timezone</label>
+          <div class="tz-pick">
+            <select id="m-tz-country"></select>
+            <select id="m-tz-zone"></select>
+          </div></div>
         <div><label>time needed</label>
-          <div class="dur-field">
-            <input id="m-need" type="number" min="0" step="${(t?.time_needed_min ?? 60) % 60 === 0 ? 1 : 15}"
-              value="${(t?.time_needed_min ?? 60) % 60 === 0 ? (t?.time_needed_min ?? 60) / 60 : (t?.time_needed_min ?? 60)}" />
-            <select id="m-need-unit">
-              <option value="hrs" ${(t?.time_needed_min ?? 60) % 60 === 0 ? 'selected' : ''}>hrs</option>
-              <option value="min" ${(t?.time_needed_min ?? 60) % 60 !== 0 ? 'selected' : ''}>min</option>
-            </select>
+          <div class="dur" id="m-need" data-min="${t?.time_needed_min ?? 60}">
+            <div class="dseg">
+              <button type="button" class="dstep" data-k="h" data-d="1">\u25B2</button>
+              <input class="dh" type="text" inputmode="numeric" maxlength="2"
+                value="${Math.floor((t?.time_needed_min ?? 60) / 60)}" /><i>h</i>
+              <button type="button" class="dstep" data-k="h" data-d="-1">\u25BC</button>
+            </div>
+            <div class="dseg">
+              <button type="button" class="dstep" data-k="m" data-d="1">\u25B2</button>
+              <input class="dm" type="text" inputmode="numeric" maxlength="2"
+                value="${String((t?.time_needed_min ?? 60) % 60).padStart(2, '0')}" /><i>m</i>
+              <button type="button" class="dstep" data-k="m" data-d="-1">\u25BC</button>
+            </div>
           </div></div>
       </div>
       ${ACTIONS('save')}`,
@@ -343,14 +381,88 @@
           course_id: +ovEl.querySelector('#m-course').value || null,
           category: ovEl.querySelector('#m-cat').value,
           due_at: dd ? `${dd}T${ovEl.querySelector('#m-due-t').value || '23:59'}:00` : null,
-          time_needed_min: (() => { const v = +ovEl.querySelector('#m-need').value || 0;
-            return ovEl.querySelector('#m-need-unit').value === 'hrs' ? Math.round(v * 60) : v; })() || 60,
+          due_tz: ovEl.querySelector('#m-tz-zone')?.value || (S.settings.school_tz || 'America/New_York'),
+          time_needed_min: +ovEl.querySelector('#m-need').dataset.min || 60,
         };
         t ? await Api.patch('/tasks/' + t.id, body) : await Api.post('/tasks', body);
         await loadAll();
         toast(t ? `updated \u00b7 ${body.title}` : `added task \u00b7 ${body.title}`);
       });
+    // populate due date/time (zone-correct prefill) + location tz picker
+    if (t?.due_at) {
+      ov.querySelector('#m-due-d').value = Api.dayInZone(t.due_at, t.due_tz || S.settings.school_tz || 'America/New_York');
+      ov.querySelector('#m-due-t').value = Api.fmtInZone(t.due_at, t.due_tz || S.settings.school_tz || 'America/New_York', { hour: '2-digit', minute: '2-digit', hour12: false });
+    }
+    initTzPicker(ov, t?.due_tz || S.settings.school_tz || 'America/New_York');
+    wireStepper(ov.querySelector('#m-need'));
     ov.querySelector('#m-title').focus();
+  }
+
+  async function initTzPicker(ov, selectedZone) {
+    const cSel = ov.querySelector('#m-tz-country');
+    const zSel = ov.querySelector('#m-tz-zone');
+    if (!cSel || !zSel) return;
+    const country = (S.settings.country || detectCountry() || 'US');
+    let data;
+    try { data = await Api.get('/config/timezones?country=' + country); }
+    catch { data = { countries: ['US'], zones: [] }; }
+    cSel.innerHTML = data.countries.map((c) => `<option value="${c}" ${c === country ? 'selected' : ''}>${c}</option>`).join('');
+    const fillZones = async (cc) => {
+      const d = await Api.get('/config/timezones?country=' + cc);
+      zSel.innerHTML = d.zones.length
+        ? d.zones.map((z) => `<option value="${z.id}" ${z.id === selectedZone ? 'selected' : ''}>${z.label}</option>`).join('')
+        : `<option value="${selectedZone}">${selectedZone}</option>`;
+    };
+    await fillZones(country);
+    cSel.onchange = () => fillZones(cSel.value);
+  }
+
+  function wireStepper(el) {
+    if (!el) return;
+    const hI = el.querySelector('.dh'), mI = el.querySelector('.dm');
+    const sync = () => {
+      let h = Math.max(0, Math.min(24, parseInt(hI.value || '0', 10) || 0));
+      let m = Math.max(0, Math.min(59, parseInt(mI.value || '0', 10) || 0));
+      let total = h * 60 + m;
+      if (total > 1440) total = 1440;
+      el.dataset.min = total;
+    };
+    const redraw = () => {
+      const t = +el.dataset.min;
+      hI.value = Math.floor(t / 60);
+      mI.value = String(t % 60).padStart(2, '0');
+    };
+    // typing: keep digits only, sync live; normalize on blur
+    [hI, mI].forEach((inp) => {
+      inp.addEventListener('input', () => {
+        inp.value = inp.value.replace(/[^0-9]/g, '').slice(0, 2);
+        sync();
+      });
+      inp.addEventListener('blur', () => { sync(); redraw(); });
+      inp.addEventListener('focus', () => inp.select());
+    });
+    // arrows: hours \u00b11, minutes \u00b15 with rollover
+    for (const b of el.querySelectorAll('.dstep')) {
+      b.onclick = () => {
+        sync();
+        let total = +el.dataset.min;
+        total += (b.dataset.k === 'h' ? 60 : 5) * (+b.dataset.d);
+        el.dataset.min = Math.max(0, Math.min(1440, total));
+        redraw();
+      };
+    }
+    sync();
+  }
+
+  function detectCountry() {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      if (tz.startsWith('America/')) return 'US';
+      if (tz.startsWith('Asia/Kolkata')) return 'IN';
+      if (tz.startsWith('Europe/London')) return 'GB';
+      if (tz.startsWith('Australia/')) return 'AU';
+    } catch { /* noop */ }
+    return 'US';
   }
 
   function courseModal(course) {
@@ -446,6 +558,11 @@
           <input id="m-ahead" type="number" value="${S.settings.start_ahead_days}" /></div>
         <div><label>yellow at (% of need)</label>
           <input id="m-yel" type="number" value="${S.settings.yellow_threshold_pct}" /></div>
+        <div><label>week starts on</label>
+          <select id="m-wkstart">
+            <option value="6" ${S.settings.week_start === 6 ? 'selected' : ''}>Sunday</option>
+            <option value="0" ${S.settings.week_start === 0 ? 'selected' : ''}>Monday</option>
+          </select></div>
       </div>
       <div class="frow"><label>term — classes start / end / exams end</label>
         <input id="m-ts" type="date" value="${t.classes_start || ''}" />
@@ -464,6 +581,7 @@
           min_block_min: +ov.querySelector('#m-min').value || 30,
           start_ahead_days: +ov.querySelector('#m-ahead').value || 3,
           yellow_threshold_pct: +ov.querySelector('#m-yel').value || 40,
+          week_start: +ov.querySelector('#m-wkstart').value,
         });
         await Api.put('/config/term', {
           classes_start: ov.querySelector('#m-ts').value || null,

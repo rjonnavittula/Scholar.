@@ -40,7 +40,46 @@ const Cal = (() => {
   function taskOf(id) { return S.tasks.find((t) => t.id === id); }
 
   // ---------- render ----------
+  let VIEW = 'week', VIEWN = 7;
+  function setView(v, n) { VIEW = v; if (n) VIEWN = n; }
+
   function render() {
+    if (VIEW === 'month') return renderMonth();
+    // 'day' and 'nextN' reuse the time-grid; app.js sets S.weekDays length.
+    return renderWeek();
+  }
+
+  function renderMonth() {
+    const first = S.weekDays[0];
+    const monthStart = new Date(first.getFullYear(), first.getMonth(), 1);
+    const ws = (S.settings && S.settings.week_start != null) ? S.settings.week_start : 6;
+    const lead = (monthStart.getDay() - ((ws + 1) % 7) + 7) % 7;
+    const gridStart = new Date(monthStart); gridStart.setDate(1 - lead);
+    const dows = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const order = [...Array(7)].map((_, i) => dows[(i + ws) % 7]);
+    let html = '<div class="month-head">' + order.map((d) => `<div>${d}</div>`).join('') + '</div>';
+    html += '<div class="month-grid">';
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(gridStart); d.setDate(gridStart.getDate() + i);
+      const iso = isoOf(d);
+      const dim = d.getMonth() !== first.getMonth() ? 'dim' : '';
+      const today = iso === S.todayIso ? 'today' : '';
+      const due = S.tasks.filter((t) => t.status !== 'done' && t.due_at &&
+        dayInSchool(t.due_at) === iso);
+      html += `<div class="month-cell ${dim} ${today}"><div class="dom">${d.getDate()}</div>` +
+        due.slice(0, 3).map((t) => `<div class="mev"><span class="due">\u29BF</span> ${esc(t.title)}</div>`).join('') +
+        (due.length > 3 ? `<div class="mev">+${due.length - 3} more</div>` : '') + '</div>';
+    }
+    html += '</div>';
+    root.innerHTML = html;
+  }
+
+  function dayInSchool(iso) {
+    const z = (S.settings && S.settings.school_tz) || 'America/New_York';
+    return zoneDay(iso, z);
+  }
+
+  function renderWeek() {
     const days = S.weekDays;                       // [Date x7]
     const todayIso = S.todayIso;
     const avail = Object.fromEntries((S.availability || []).map((a) => [a.date, a]));
@@ -256,5 +295,5 @@ const Cal = (() => {
     }
   }, 60000);
 
-  return { mount, render };
+  return { mount, render, setView };
 })();

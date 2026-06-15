@@ -50,6 +50,8 @@ class Task(SQLModel, table=True):
     status: TaskStatus = TaskStatus.todo
     source: Source = Source.manual
     external_id: Optional[str] = Field(default=None, index=True)
+    due_tz: Optional[str] = None          # IANA zone the due time was set in
+    completed_at: Optional[datetime] = None   # UTC instant the task was marked done
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 
@@ -112,8 +114,20 @@ class Settings(SQLModel, table=True):
     day_start_min: int = 480          # calendar scroll-to
     home_tz: str = "America/New_York"     # your current physical zone
     school_tz: str = "America/New_York"   # where due dates are anchored
+    week_start: int = 6                   # 0=Mon .. 6=Sun (calendar week start)
+    country: str = "US"                   # ISO-3166 for the location->tz picker
+    onboarded: bool = False
     canvas_base_url: str = ""
     canvas_token: str = ""
+
+
+class TimeLog(SQLModel, table=True):
+    """A logged chunk of work on a task (manual or from a completed block)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    task_id: int = Field(foreign_key="task.id", index=True)
+    minutes: int
+    logged_at: datetime = Field(default_factory=datetime.now, index=True)  # UTC
+    source: str = "manual"   # manual | block | timer
 
 
 class ApiKey(SQLModel, table=True):
