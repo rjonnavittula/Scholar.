@@ -6,6 +6,8 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
     (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const minToHM = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+  const fmtDur = (m) => { m = Math.abs(Math.round(m)); const h = Math.floor(m / 60), mm = m % 60;
+    return h && mm ? `${h}h ${mm}m` : h ? `${h}h` : `${mm}m`; };
   const hmToMin = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + (m || 0); };
   const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
   const nowHM = () => { const n = new Date(); return `${pad(n.getHours())}:${pad(n.getMinutes())}`; };
@@ -435,6 +437,8 @@
   }
 
   function taskModal(t) {
+    const subs = (t?.subtasks || []);
+    const rolled = subs.length > 0;
     const { ov } = modal(`
       <h2>${t ? 'edit task' : 'new task'}</h2>
       <div class="frow"><label>title</label>
@@ -456,22 +460,37 @@
             <select id="m-tz-country"></select>
             <select id="m-tz-zone"></select>
           </div></div>
-        <div><label>time needed</label>
-          <div class="dur" id="m-need" data-min="${t?.time_needed_min ?? 60}">
+        <div><label>time needed${rolled ? ' (from subtasks)' : ''}</label>
+          <div class="dur ${rolled ? 'disabled' : ''}" id="m-need" data-min="${t?.time_needed_min ?? 60}">
             <div class="dseg">
-              <button type="button" class="dstep" data-k="h" data-d="1">\u25B2</button>
-              <input class="dh" type="text" inputmode="numeric" maxlength="2"
+              <button type="button" class="dstep" data-k="h" data-d="1" ${rolled ? 'disabled' : ''}>\u25B2</button>
+              <input class="dh" type="text" inputmode="numeric" maxlength="2" ${rolled ? 'disabled' : ''}
                 value="${Math.floor((t?.time_needed_min ?? 60) / 60)}" /><i>h</i>
-              <button type="button" class="dstep" data-k="h" data-d="-1">\u25BC</button>
+              <button type="button" class="dstep" data-k="h" data-d="-1" ${rolled ? 'disabled' : ''}>\u25BC</button>
             </div>
             <div class="dseg">
-              <button type="button" class="dstep" data-k="m" data-d="1">\u25B2</button>
-              <input class="dm" type="text" inputmode="numeric" maxlength="2"
+              <button type="button" class="dstep" data-k="m" data-d="1" ${rolled ? 'disabled' : ''}>\u25B2</button>
+              <input class="dm" type="text" inputmode="numeric" maxlength="2" ${rolled ? 'disabled' : ''}
                 value="${String((t?.time_needed_min ?? 60) % 60).padStart(2, '0')}" /><i>m</i>
-              <button type="button" class="dstep" data-k="m" data-d="-1">\u25BC</button>
+              <button type="button" class="dstep" data-k="m" data-d="-1" ${rolled ? 'disabled' : ''}>\u25BC</button>
             </div>
           </div></div>
       </div>
+      <div class="frow col"><label>notes</label>
+        <textarea id="m-notes" rows="3" placeholder="details, links, instructions…">${esc(t?.notes || '')}</textarea></div>
+      ${t ? `
+      <div class="subtasks-sec">
+        <div class="sub-head"><label>subtasks</label>
+          <span class="muted small" id="m-sub-roll"></span></div>
+        <div id="m-sub-list"></div>
+        <div class="sub-add">
+          <input id="m-sub-new" placeholder="add a subtask and press enter" />
+          <div class="dur sm" id="m-sub-dur" data-min="30">
+            <input class="dh" type="text" maxlength="2" value="0" /><i>h</i>
+            <input class="dm" type="text" maxlength="2" value="30" /><i>m</i>
+          </div>
+        </div>
+      </div>` : '<p class="muted small">save the task first to add subtasks.</p>'}
       ${ACTIONS('save')}`,
       async (act, ovEl) => {
         if (act !== 'save') return;
@@ -480,22 +499,74 @@
           title: ovEl.querySelector('#m-title').value.trim() || 'untitled',
           course_id: +ovEl.querySelector('#m-course').value || null,
           category: ovEl.querySelector('#m-cat').value,
+          notes: ovEl.querySelector('#m-notes').value,
           due_at: dd ? `${dd}T${ovEl.querySelector('#m-due-t').value || '23:59'}:00` : null,
           due_tz: ovEl.querySelector('#m-tz-zone')?.value || (S.settings.school_tz || 'America/New_York'),
-          time_needed_min: +ovEl.querySelector('#m-need').dataset.min || 60,
         };
+        if (!rolled) body.time_needed_min = +ovEl.querySelector('#m-need').dataset.min || 60;
         t ? await Api.patch('/tasks/' + t.id, body) : await Api.post('/tasks', body);
         await loadAll();
         toast(t ? `updated \u00b7 ${body.title}` : `added task \u00b7 ${body.title}`);
       });
-    // populate due date/time (zone-correct prefill) + location tz picker
+
     if (t?.due_at) {
       ov.querySelector('#m-due-d').value = Api.dayInZone(t.due_at, t.due_tz || S.settings.school_tz || 'America/New_York');
       ov.querySelector('#m-due-t').value = Api.fmtInZone(t.due_at, t.due_tz || S.settings.school_tz || 'America/New_York', { hour: '2-digit', minute: '2-digit', hour12: false });
     }
     initTzPicker(ov, t?.due_tz || S.settings.school_tz || 'America/New_York');
-    wireStepper(ov.querySelector('#m-need'));
+    if (!rolled) wireStepper(ov.querySelector('#m-need'));
+    if (t) wireSubtasks(ov, t);
     ov.querySelector('#m-title').focus();
+  }
+
+  // Subtasks: render list, add (enter), toggle done, delete. Each has its own
+  // time estimate; the parent's totals roll up server-side.
+  function wireSubtasks(ov, parent) {
+    const listEl = ov.querySelector('#m-sub-list');
+    const rollEl = ov.querySelector('#m-sub-roll');
+    let subs = (parent.subtasks || []).slice();
+
+    const render = () => {
+      listEl.innerHTML = subs.map((s) => `
+        <div class="sub-row ${s.status === 'done' ? 'done' : ''}" data-sid="${s.id}">
+          <input type="checkbox" ${s.status === 'done' ? 'checked' : ''} data-toggle />
+          <span class="sub-title">${esc(s.title)}</span>
+          <span class="muted small">${fmtDur(s.time_needed_min)}</span>
+          <button class="x" data-del>\u2715</button>
+        </div>`).join('') || '<p class="muted small">no subtasks yet</p>';
+      const need = subs.reduce((a, s) => a + s.time_needed_min, 0);
+      const done = subs.filter((s) => s.status === 'done').length;
+      rollEl.textContent = subs.length ? `${done}/${subs.length} done \u00b7 ${fmtDur(need)} total` : '';
+      for (const cb of listEl.querySelectorAll('[data-toggle]'))
+        cb.onchange = async () => {
+          const id = +cb.closest('[data-sid]').dataset.sid;
+          await Api.patch('/tasks/' + id, { status: cb.checked ? 'done' : 'todo' });
+          const s = subs.find((x) => x.id === id); if (s) s.status = cb.checked ? 'done' : 'todo';
+          render(); loadAll();
+        };
+      for (const x of listEl.querySelectorAll('[data-del]'))
+        x.onclick = async () => {
+          const id = +x.closest('[data-sid]').dataset.sid;
+          await Api.del('/tasks/' + id);
+          subs = subs.filter((s) => s.id !== id);
+          render(); loadAll();
+        };
+    };
+
+    const dur = ov.querySelector('#m-sub-dur');
+    const durMin = () => (+dur.querySelector('.dh').value || 0) * 60 + (+dur.querySelector('.dm').value || 0);
+    const newInp = ov.querySelector('#m-sub-new');
+    newInp.onkeydown = async (e) => {
+      if (e.key !== 'Enter' || !newInp.value.trim()) return;
+      const created = await Api.post('/tasks', {
+        title: newInp.value.trim(), parent_id: parent.id,
+        time_needed_min: durMin() || 30, course_id: parent.course_id || null,
+      });
+      subs.push({ ...created, status: 'todo' });
+      newInp.value = '';
+      render(); loadAll();
+    };
+    render();
   }
 
   async function initTzPicker(ov, selectedZone) {

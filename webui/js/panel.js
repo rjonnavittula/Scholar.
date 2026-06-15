@@ -64,6 +64,8 @@ const Panel = (() => {
       .reduce((a, b) => a + Math.round((new Date(b.end_at) - new Date(b.start_at)) / 60000), 0);
     const need = t.time_needed_min || 0;
     const planLbl = plannedMin > 0 ? `${Math.round(plannedMin/60*10)/10}h of ${Math.round(need/60*10)/10}h planned` : '';
+    const subs = t.subtasks || [];
+    const subLbl = subs.length ? `\u2611 ${subs.filter((x)=>x.status==='done').length}/${subs.length} subtasks` : '';
     return `<div class="tcard" draggable="true" data-tid="${t.id}">
         <button class="plan-btn" data-plan="${t.id}" title="plan into next free slot">plan</button>
       <div class="row-actions">

@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 from zoneinfo import ZoneInfo
 
 from app.cushion import EngineConfig, availability_days, compute_cushion
+from app.rollup import roll_up
 
 
 def _due_to_utc(due, school_tz: str):
@@ -136,6 +137,7 @@ class TaskIn(BaseModel):
     title: str
     notes: str = ""
     course_id: Optional[int] = None
+    parent_id: Optional[int] = None
     category: str = ""
     due_at: Optional[datetime] = None
     start_date: Optional[date] = None
@@ -147,6 +149,7 @@ class TaskPatch(BaseModel):
     title: Optional[str] = None
     notes: Optional[str] = None
     course_id: Optional[int] = None
+    parent_id: Optional[int] = None
     category: Optional[str] = None
     due_at: Optional[datetime] = None
     start_date: Optional[date] = None
@@ -163,7 +166,25 @@ def list_tasks(status: Optional[TaskStatus] = None,
     if status:
         stmt = stmt.where(Task.status == status)
     rows = session.exec(stmt.order_by(Task.due_at)).all()
-    return [{**t.model_dump(), "remaining_min": t.remaining_min} for t in rows]
+    kids = {}
+    for t in rows:
+        if t.parent_id is not None:
+            kids.setdefault(t.parent_id, []).append(t)
+    out = []
+    for t in rows:
+        if t.parent_id is not None:
+            continue  # children are nested under parents below
+        d = {**t.model_dump(), "remaining_min": t.remaining_min}
+        ch = kids.get(t.id, [])
+        if ch:
+            d["subtasks"] = [{**c.model_dump(), "remaining_min": c.remaining_min} for c in ch]
+            d["time_needed_min"] = sum(c.time_needed_min for c in ch)
+            d["time_spent_min"] = sum(c.time_spent_min for c in ch)
+            d["remaining_min"] = sum(c.remaining_min for c in ch)
+        else:
+            d["subtasks"] = []
+        out.append(d)
+    return out
 
 
 @tasks_router.post("", status_code=201)
@@ -446,7 +467,7 @@ cushion_router = APIRouter(prefix="/cushion", tags=["cushion"], dependencies=AUT
 @cushion_router.get("")
 def get_cushion(session: Session = Depends(get_session)):
     st, cfg, acts, planned, term, hols = engine_ctx(session)
-    tasks = session.exec(select(Task)).all()
+    tasks = roll_up(session.exec(select(Task)).all())
     r = compute_cushion(tasks, cfg, acts, planned, term, hols)
     return {
         "computed_at": r.computed_at,
@@ -482,7 +503,7 @@ streak_router = APIRouter(prefix="/streak", tags=["streak"], dependencies=AUTH)
 def get_streak(days: int = 9, session: Session = Depends(get_session)):
     from app.streak import current_streak, streak_window
     st = session.get(Settings, 1) or Settings(id=1)
-    tasks = session.exec(select(Task)).all()
+    tasks = roll_up(session.exec(select(Task)).all())
     logs = session.exec(select(TimeLog)).all()
     window = streak_window(tasks, logs, days=max(1, min(days, 30)), home_tz=st.home_tz)
     return {

@@ -41,6 +41,7 @@ class Task(SQLModel, table=True):
     title: str
     notes: str = ""
     course_id: Optional[int] = Field(default=None, foreign_key="course.id", index=True)
+    parent_id: Optional[int] = Field(default=None, foreign_key="task.id", index=True)
     category: str = ""                      # Homework / Quiz / Reading / ...
     due_at: Optional[datetime] = Field(default=None, index=True)
     start_date: Optional[date] = None       # "start ahead" anchor
