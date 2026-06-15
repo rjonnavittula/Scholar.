@@ -56,7 +56,9 @@ def roll_up(tasks):
             out.append(t)  # standalone — pass through unchanged
             continue
         need = sum(k.time_needed_min for k in kids)
-        spent = sum(k.time_spent_min for k in kids)
+        # parent total spent = sum of subtasks + any time logged directly on the
+        # parent (e.g. general work not tied to a specific subtask).
+        spent = sum(k.time_spent_min for k in kids) + t.time_spent_min
         all_done = all(_status_str(k.status) == "done" for k in kids)
         status = "done" if all_done else "todo"
         completed = t.completed_at if all_done else None

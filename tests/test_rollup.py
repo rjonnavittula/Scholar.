@@ -47,6 +47,17 @@ class RollupTests(unittest.TestCase):
         self.assertEqual(out[0].time_spent_min, 60)
         self.assertEqual(out[0].remaining_min, 60)  # 120 - 60
 
+    def test_parent_direct_time_adds_to_children(self):
+        # parent has its own logged time (general work) PLUS subtasks.
+        # total spent = sum(children) + parent direct.
+        ts = [T(1, time_spent_min=20),  # 20m logged directly on the parent
+              T(2, parent_id=1, time_needed_min=90, time_spent_min=30),
+              T(3, parent_id=1, time_needed_min=30, time_spent_min=30)]
+        out = roll_up(ts)
+        self.assertEqual(out[0].time_needed_min, 120)
+        self.assertEqual(out[0].time_spent_min, 80)   # 30 + 30 + 20 direct
+        self.assertEqual(out[0].remaining_min, 40)     # 120 - 80
+
     def test_parent_done_when_all_children_done(self):
         ts = [T(1), T(2, parent_id=1, status="done"), T(3, parent_id=1, status="done")]
         out = roll_up(ts)

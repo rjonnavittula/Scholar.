@@ -483,21 +483,56 @@
   // (task or subtask, with its parent), logs on stop, and completing is separate.
   function timerModal(t, block) {
     if (!t || !t.id) return;
-    const running = Timer.state.running && Timer.state.task_id === t.id;
+    const subs = (t.subtasks || []);
+    const hasSubs = subs.length > 0;
+    const family = [t, ...subs];                  // active timer may be on any of these
     const parent = t.parent_id ? S.tasks.find((x) => x.id === t.parent_id) : null;
+    const activeId = () => (Timer.state.running ? Timer.state.task_id : null);
+    const familyActive = () => family.find((x) => x.id === activeId());
+
     const ctx = parent
       ? `<p class="muted small">subtask of <strong>${esc(parent.title)}</strong></p>`
       : (block
-        ? `<p class="muted small">${block.start_at.slice(0, 16).replace('T', ' · ')}</p>`
-        : `<p class="muted small">${t.time_spent_min || 0}/${t.time_needed_min || 0} min logged</p>`);
+        ? `<p class="muted small">${block.start_at.slice(0, 16).replace('T', ' \u00b7 ')}</p>`
+        : '');
+
+    // direct = time logged on the parent itself (not via a subtask)
+    const directMin = (t.direct_spent_min != null) ? t.direct_spent_min : (hasSubs ? 0 : (t.time_spent_min || 0));
+    const totalMin = t.time_spent_min || 0;       // server already = subtasks + direct
+    const needMin = t.time_needed_min || 0;
+
+    // Breakdown only when there are subtasks: total + per-subtask + a direct row.
+    const breakdown = hasSubs ? `
+      <div class="t-breakdown">
+        <div class="tb-head"><span class="muted small">total</span>
+          <strong>${fmtDur(totalMin)}</strong>
+          <span class="muted small">/ ${fmtDur(needMin)} planned</span></div>
+        <div class="tb-row" data-tid="${t.id}">
+          <button class="tb-play" data-play="${t.id}">\u25B6</button>
+          <span class="tb-label">this task \u00b7 directly</span>
+          <span class="tb-time">${fmtDur(directMin)}</span>
+        </div>
+        ${subs.map((s) => `
+          <div class="tb-row ${s.status === 'done' ? 'done' : ''}" data-tid="${s.id}">
+            <button class="tb-play" data-play="${s.id}">\u25B6</button>
+            <span class="tb-label">${esc(s.title)}</span>
+            <span class="tb-time">${fmtDur(s.time_spent_min || 0)}</span>
+          </div>`).join('')}
+      </div>` : '';
+
+    // "I'll work on..": only offered when the task has no subtasks yet (Shovel pattern).
+    const willField = hasSubs ? '' : `
+      <input id="t-will" class="t-will" placeholder="I'll work on\u2026" autocomplete="off" />`;
 
     const { ov, close } = modal(`
       <h2>${esc(t.title || 'task')}</h2>
       ${ctx}
       <div class="timer">
         <div class="t-read" id="t-read" data-tid="${t.id}">00:00:00</div>
+        <div class="t-active-label muted small" id="t-active-label"></div>
+        ${willField}
         <div class="t-ctrls">
-          <button class="ghost" id="t-toggle">${running ? (Timer.paused ? 'resume' : 'pause') : 'start'}</button>
+          <button class="ghost" id="t-toggle">start</button>
           <button class="ghost" id="t-stop">stop & log</button>
         </div>
         <div class="t-manual">
@@ -506,6 +541,7 @@
           <button class="ghost" id="t-logman">add</button>
         </div>
       </div>
+      ${breakdown}
       <div class="actions">
         ${block && !block.completed ? '<button class="ghost" data-m="bdone">mark block studied</button>' : ''}
         ${block ? '<button class="ghost danger-btn" data-m="bdel">remove block</button>' : ''}
@@ -515,34 +551,110 @@
       if (act === 'bdel') { await Api.del('/planned/' + block.id); await loadAll(); }
       if (act === 'bdone') { await Api.patch('/planned/' + block.id, { completed: true }); await loadAll(); }
       if (act === 'done') {
-        if (Timer.state.running && Timer.state.task_id === t.id) await Timer.stop();
+        if (Timer.state.running && family.some((x) => x.id === Timer.state.task_id)) await Timer.stop();
         await Api.patch('/tasks/' + t.id, { status: 'done' }); await loadAll();
       }
     });
 
     const read = ov.querySelector('#t-read');
-    const isThis = () => Timer.state.running && Timer.state.task_id === t.id;
-    const paint = () => { read.textContent = Timer.fmt(isThis() ? Timer.elapsedSec() : 0); };
-    paint();  // global ticker (Timer.startTicker) keeps it live while running
-
+    const label = ov.querySelector('#t-active-label');
     const toggle = ov.querySelector('#t-toggle');
-    toggle.onclick = async () => {
-      if (!Timer.state.running || Timer.state.task_id !== t.id) {
-        const ok = await Timer.start(t.id, t.title);
-        if (!ok) return;
-        toggle.textContent = 'pause';
-      } else if (Timer.paused) {
-        await Timer.resume(); toggle.textContent = 'pause';
+
+    // Repaint big clock + active row to follow whichever family member is timing.
+    const repaint = () => {
+      const a = familyActive();
+      if (a) {
+        read.dataset.tid = a.id;                  // ticker paints this id into #t-read
+        read.textContent = Timer.fmt(Timer.elapsedSec());
+        label.textContent = (a.id === t.id ? 'timing this task' : 'timing: ' + a.title) + (Timer.paused ? ' (paused)' : '');
+        toggle.textContent = Timer.paused ? 'resume' : 'pause';
       } else {
-        await Timer.pause(); toggle.textContent = 'resume';
+        read.dataset.tid = t.id;
+        read.textContent = '00:00:00';
+        label.textContent = '';
+        toggle.textContent = 'start';
       }
-      paint();
+      ov.querySelectorAll('.tb-row').forEach((r) => {
+        const on = a && +r.dataset.tid === a.id;
+        r.classList.toggle('active', !!on);
+        const pb = r.querySelector('.tb-play');
+        if (pb) pb.textContent = on ? (Timer.paused ? '\u25B6' : '\u23F8') : '\u25B6';
+      });
     };
+    repaint();
+
+    const startOn = async (id, title) => { const ok = await Timer.start(id, title); if (ok) repaint(); return ok; };
+
+    toggle.onclick = async () => {
+      const a = familyActive();
+      if (a) {                                    // already timing in this family
+        if (Timer.paused) { await Timer.resume(); } else { await Timer.pause(); }
+        repaint(); return;
+      }
+      if (!hasSubs) {
+        const will = (ov.querySelector('#t-will')?.value || '').trim();
+        if (will) {                               // prompt: time the parent, or make a subtask
+          const choice = await chooseParentOrSub(ov, will);
+          if (choice === 'cancel') return;
+          if (choice === 'sub') {
+            const created = await Api.post('/tasks', {
+              title: will, parent_id: t.id,
+              time_needed_min: 30, course_id: t.course_id || null,
+            });
+            await startOn(created.id, created.title);
+            await loadAll();
+            const fresh = S.tasks.find((x) => x.id === t.id);
+            close(); if (fresh) timerModal(fresh);  // reopen showing the new breakdown
+            return;
+          }
+        }
+      }
+      await startOn(t.id, t.title);
+    };
+
     ov.querySelector('#t-stop').onclick = async () => { await Timer.stop(); close(); };
     ov.querySelector('#t-logman').onclick = async () => {
       const m = parseInt(ov.querySelector('#t-mins').value || '0', 10) || 0;
       if (m > 0) { await Api.post(`/tasks/${t.id}/log?minutes=${m}`); await loadAll(); close(); toast(`logged ${m} min`); }
     };
+
+    // Per-row play: switch the active timer to that task/subtask (or pause/resume it).
+    ov.querySelectorAll('.tb-play').forEach((pb) => {
+      pb.onclick = async (e) => {
+        e.stopPropagation();
+        const id = +pb.dataset.play;
+        const a = familyActive();
+        if (a && a.id === id) {
+          if (Timer.paused) { await Timer.resume(); } else { await Timer.pause(); }
+          repaint();
+        } else {
+          const row = family.find((x) => x.id === id) || { id, title: 'task' };
+          await startOn(id, row.title);
+        }
+      };
+    });
+  }
+
+  // Inline two-way choice inside the stopwatch: time the parent task, or spin
+  // the typed "I'll work on" text into a new subtask and time that. Resolves to
+  // 'parent' | 'sub' | 'cancel'.
+  function chooseParentOrSub(ov, will) {
+    return new Promise((resolve) => {
+      ov.querySelector('.t-choose')?.remove();
+      const box = document.createElement('div');
+      box.className = 't-choose';
+      box.innerHTML = `
+        <p class="muted small">log this time against\u2026</p>
+        <div class="t-choose-btns">
+          <button class="ghost" data-c="parent">the whole task</button>
+          <button class="primary" data-c="sub">a new subtask \u201c${esc(will)}\u201d</button>
+        </div>
+        <button class="link-btn" data-c="cancel">cancel</button>`;
+      ov.querySelector('.timer').appendChild(box);
+      box.querySelectorAll('[data-c]').forEach((b) => {
+        b.onclick = () => { box.remove(); resolve(b.dataset.c); };
+      });
+    });
   }
 
   // ---------- panel handlers ----------
@@ -683,17 +795,43 @@
     const rollEl = ov.querySelector('#m-sub-roll');
     let subs = (parent.subtasks || []).slice();
 
+    const markActive = () => {
+      const cur = (window.__TIMER && window.__TIMER.running) ? window.__TIMER.task_id : null;
+      listEl.querySelectorAll('[data-tid]').forEach((r) => {
+        const on = cur && +r.dataset.tid === cur;
+        r.classList.toggle('timing', !!on);
+        const pb = r.querySelector('.tb-play'); if (pb) pb.textContent = on ? '\u23F8' : '\u25B6';
+      });
+    };
+
     const render = () => {
-      listEl.innerHTML = subs.map((s) => `
-        <div class="sub-row ${s.status === 'done' ? 'done' : ''}" data-sid="${s.id}">
-          <input type="checkbox" ${s.status === 'done' ? 'checked' : ''} data-toggle />
-          <span class="sub-title">${esc(s.title)}</span>
-          <span class="muted small">${fmtDur(s.time_needed_min)}</span>
-          <button class="x" data-del>\u2715</button>
-        </div>`).join('') || '<p class="muted small">no subtasks yet</p>';
-      const need = subs.reduce((a, s) => a + s.time_needed_min, 0);
+      const directMin = (parent.direct_spent_min != null)
+        ? parent.direct_spent_min : (subs.length ? 0 : (parent.time_spent_min || 0));
+      const need = subs.length ? subs.reduce((a, s) => a + s.time_needed_min, 0) : (parent.time_needed_min || 0);
+      const usedSubs = subs.reduce((a, s) => a + (s.time_spent_min || 0), 0);
+      const used = usedSubs + directMin;
       const done = subs.filter((s) => s.status === 'done').length;
-      rollEl.textContent = subs.length ? `${done}/${subs.length} done \u00b7 ${fmtDur(need)} total` : '';
+
+      listEl.innerHTML = `
+        <div class="time-used-bar">
+          <span>TIME USED <strong>${fmtDur(used)}</strong></span>
+          <span>STILL NEED <strong>${fmtDur(Math.max(0, need - used))}</strong></span>
+        </div>
+        <div class="sub-row direct" data-tid="${parent.id}">
+          <button type="button" class="tb-play" data-play="${parent.id}">\u25B6</button>
+          <span class="sub-title">this task \u00b7 directly</span>
+          <span class="muted small">${fmtDur(directMin)}</span>
+        </div>
+        ${subs.map((s) => `
+          <div class="sub-row ${s.status === 'done' ? 'done' : ''}" data-sid="${s.id}" data-tid="${s.id}">
+            <input type="checkbox" ${s.status === 'done' ? 'checked' : ''} data-toggle />
+            <button type="button" class="tb-play" data-play="${s.id}">\u25B6</button>
+            <span class="sub-title">${esc(s.title)}</span>
+            <span class="muted small">${fmtDur(s.time_spent_min || 0)} / ${fmtDur(s.time_needed_min)}</span>
+            <button class="x" data-del>\u2715</button>
+          </div>`).join('')}`;
+      rollEl.textContent = subs.length ? `${done}/${subs.length} done` : '';
+
       for (const cb of listEl.querySelectorAll('[data-toggle]'))
         cb.onchange = async () => {
           const id = +cb.closest('[data-sid]').dataset.sid;
@@ -708,6 +846,19 @@
           subs = subs.filter((s) => s.id !== id);
           render(); loadAll();
         };
+      for (const pb of listEl.querySelectorAll('.tb-play'))
+        pb.onclick = async () => {
+          const id = +pb.dataset.play;
+          const cur = (window.__TIMER && window.__TIMER.running) ? window.__TIMER.task_id : null;
+          if (cur === id) {
+            if (window.__TIMER.paused) { await Timer.resume(); } else { await Timer.pause(); }
+            markActive(); return;
+          }
+          const row = (id === parent.id) ? parent : subs.find((x) => x.id === id);
+          await Timer.start(id, row ? row.title : 'task');
+          markActive();
+        };
+      markActive();
     };
 
     const dur = ov.querySelector('#m-sub-dur');

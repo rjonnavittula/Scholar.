@@ -174,13 +174,16 @@ def list_tasks(status: Optional[TaskStatus] = None,
     for t in rows:
         if t.parent_id is not None:
             continue  # children are nested under parents below
-        d = {**t.model_dump(), "remaining_min": t.remaining_min}
+        d = {**t.model_dump(), "remaining_min": t.remaining_min,
+             "direct_spent_min": t.time_spent_min}
         ch = kids.get(t.id, [])
         if ch:
-            d["subtasks"] = [{**c.model_dump(), "remaining_min": c.remaining_min} for c in ch]
+            d["subtasks"] = [{**c.model_dump(), "remaining_min": c.remaining_min,
+                              "direct_spent_min": c.time_spent_min} for c in ch]
             d["time_needed_min"] = sum(c.time_needed_min for c in ch)
-            d["time_spent_min"] = sum(c.time_spent_min for c in ch)
-            d["remaining_min"] = sum(c.remaining_min for c in ch)
+            # parent total = subtasks' spent + time logged directly on the parent
+            d["time_spent_min"] = sum(c.time_spent_min for c in ch) + t.time_spent_min
+            d["remaining_min"] = max(0, d["time_needed_min"] - d["time_spent_min"])
         else:
             d["subtasks"] = []
         out.append(d)
