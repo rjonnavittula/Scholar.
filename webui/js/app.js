@@ -65,7 +65,7 @@
         Api.get('/tasks'), Api.get('/planned'), Api.get('/cushion'),
         Api.get(`/cushion/availability?start=${weekIso}&days=7`),
         Api.get('/integrations/canvas/status'),
-        Api.get('/streak?days=9'),
+        Api.get('/streak?days=7'),
       ]);
     Object.assign(S, { settings, courses, activities, tasks, planned, cushion,
                        availability: avail, canvas, streak });
@@ -140,9 +140,9 @@
     const cl = document.getElementById('collapse-left');
     const cr = document.getElementById('collapse-right');
     if (cl) cl.onclick = () => { document.body.classList.toggle('no-left');
-      cl.textContent = document.body.classList.contains('no-left') ? '\u203A' : '\u2039'; };
+      cl.textContent = document.body.classList.contains('no-left') ? '›' : '‹'; };
     if (cr) cr.onclick = () => { document.body.classList.toggle('no-right');
-      cr.textContent = document.body.classList.contains('no-right') ? '\u2039' : '\u203A'; };
+      cr.textContent = document.body.classList.contains('no-right') ? '‹' : '›'; };
     for (const b of document.querySelectorAll('#viewtabs [data-view]'))
       b.onclick = () => setCalView(b.dataset.view);
     const vn = document.getElementById('view-n');
@@ -424,15 +424,30 @@
         const anchor = document.getElementById('topbar-actions') || document.querySelector('.topbar');
         anchor.insertBefore(pill, anchor.firstChild);
       }
-      const paint = () => {
-        const txt = this.fmt(this.elapsedSec());
-        pill.innerHTML = `<span class="tp-dot ${this.paused ? 'paused' : ''}"></span>⏱ ${txt}`;
-        const chip = document.querySelector(`[data-timing="${this.state.task_id}"]`);
-        if (chip) chip.innerHTML = `<span class="tp-dot"></span>${txt}`;
-      };
-      paint();
-      if (this._tick) clearInterval(this._tick);
-      if (!this.paused) this._tick = setInterval(paint, 1000);
+      this.paintPill();
+      this.startTicker();
+    },
+
+    paintPill() {
+      const pill = document.getElementById('timer-pill');
+      if (!pill || !this.state.running) return;
+      const txt = this.fmt(this.elapsedSec());
+      pill.innerHTML = `<span class="tp-dot ${this.paused ? 'paused' : ''}"></span>\u23F1 ${txt}`;
+      const chip = document.querySelector(`[data-timing="${this.state.task_id}"]`);
+      if (chip) chip.innerHTML = `<span class="tp-dot"></span>${txt}`;
+      // live update any open modal stopwatch
+      const read = document.getElementById('t-read');
+      if (read && read.dataset.tid == this.state.task_id) read.textContent = txt;
+    },
+
+    // one persistent ticker for the whole app; repaints every second while
+    // a timer runs and is not paused. Never stacked, never cleared by renders.
+    startTicker() {
+      if (this._tick) return;
+      this._tick = setInterval(() => {
+        if (!this.state.running || this.paused || this.state.paused) return;
+        this.paintPill();
+      }, 1000);
     },
   };
 
@@ -457,7 +472,7 @@
       <h2>${esc(t.title || 'task')}</h2>
       ${ctx}
       <div class="timer">
-        <div class="t-read" id="t-read">00:00:00</div>
+        <div class="t-read" id="t-read" data-tid="${t.id}">00:00:00</div>
         <div class="t-ctrls">
           <button class="ghost" id="t-toggle">${running ? (Timer.paused ? 'resume' : 'pause') : 'start'}</button>
           <button class="ghost" id="t-stop">stop & log</button>
@@ -485,24 +500,22 @@
     const read = ov.querySelector('#t-read');
     const isThis = () => Timer.state.running && Timer.state.task_id === t.id;
     const paint = () => { read.textContent = Timer.fmt(isThis() ? Timer.elapsedSec() : 0); };
-    paint();
-    let localTick = (isThis() && !Timer.paused) ? setInterval(paint, 1000) : null;
-    const stopLocal = () => { if (localTick) { clearInterval(localTick); localTick = null; } };
+    paint();  // global ticker (Timer.startTicker) keeps it live while running
 
     const toggle = ov.querySelector('#t-toggle');
     toggle.onclick = async () => {
       if (!Timer.state.running || Timer.state.task_id !== t.id) {
         const ok = await Timer.start(t.id, t.title);
         if (!ok) return;
-        toggle.textContent = 'pause'; paint(); stopLocal(); localTick = setInterval(paint, 1000);
+        toggle.textContent = 'pause';
       } else if (Timer.paused) {
         await Timer.resume(); toggle.textContent = 'pause';
-        stopLocal(); localTick = setInterval(paint, 1000);
       } else {
-        await Timer.pause(); toggle.textContent = 'resume'; stopLocal(); paint();
+        await Timer.pause(); toggle.textContent = 'resume';
       }
+      paint();
     };
-    ov.querySelector('#t-stop').onclick = async () => { stopLocal(); await Timer.stop(); close(); };
+    ov.querySelector('#t-stop').onclick = async () => { await Timer.stop(); close(); };
     ov.querySelector('#t-logman').onclick = async () => {
       const m = parseInt(ov.querySelector('#t-mins').value || '0', 10) || 0;
       if (m > 0) { await Api.post(`/tasks/${t.id}/log?minutes=${m}`); await loadAll(); close(); toast(`logged ${m} min`); }

@@ -505,7 +505,7 @@ def _timer_payload(tm, session):
         "task_id": tm.task_id,
         "title": t.title if t else "task",
         "parent_id": t.parent_id if t else None,
-        "started_at": tm.started_at.isoformat(),
+        "started_at": _aware(tm.started_at).isoformat(),
         "accumulated_sec": tm.accumulated_sec,
         "paused": tm.paused,
         "running": True,

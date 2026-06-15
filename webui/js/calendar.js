@@ -9,7 +9,8 @@ const Cal = (() => {
   const pad = (n) => String(n).padStart(2, '0');
   const minToHM = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
   const fmtDur = (m) => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? pad(m % 60) : ''}` : `${m}m`;
-  const y = (min) => (min / 60) * HOUR + PAD;   // uniform top inset for all placement
+  const y = (min) => (min / 60) * HOUR + PAD;   // top position (with inset)
+  const hPx = (durMin) => (durMin / 60) * HOUR;  // height for a duration (no inset)
   const snap = (min, step = 15) => Math.round(min / step) * step;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
     (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -111,15 +112,15 @@ const Cal = (() => {
                     style="height:${24 * HOUR + PAD * 2}px">`;
       for (let h = 1; h < 24; h++) html += `<div class="hour-line" style="top:${y(h * 60)}px"></div>`;
       const [as, ae] = a.awake || [480, 1410];
-      html += `<div class="sleep" style="top:0;height:${y(as)}px"></div>`;
-      html += `<div class="sleep" style="top:${y(ae)}px;height:${y(1440 - ae)}px"></div>`;
-      html += `<div class="awake-tint" style="top:${y(as)}px;height:${y(ae - as)}px"></div>`;
+      html += `<div class="sleep" style="top:0;height:${hPx(as)}px"></div>`;
+      html += `<div class="sleep" style="top:${y(ae)}px;height:${hPx(1440 - ae)}px"></div>`;
+      html += `<div class="awake-tint" style="top:${y(as)}px;height:${hPx(ae - as)}px"></div>`;
 
       // activities for this weekday
       const wd = (d.getDay() + 6) % 7;
       for (const act of S.activities.filter((x) => x.weekday === wd)) {
         html += evHtml({
-          cls: 'activity', top: y(act.start_min), h: y(act.end_min - act.start_min),
+          cls: 'activity', top: y(act.start_min), h: hPx(act.end_min - act.start_min),
           color: act.color, title: act.title,
           sub: `${minToHM(act.start_min)}–${minToHM(act.end_min)}`,
         });
@@ -133,7 +134,7 @@ const Cal = (() => {
         const eMin = zoneMin(p.end_at, tz().home) || 1440;
         html += evHtml({
           cls: 'planned' + (p.completed ? ' done' : ''), id: p.id,
-          top: y(sMin), h: y(eMin - sMin), color: c?.color || '#8A7F73',
+          top: y(sMin), h: hPx(eMin - sMin), color: c?.color || '#8A7F73',
           title: t.title || '?', sub: `${minToHM(sMin)}–${minToHM(eMin)}`,
           resize: !p.completed,
         });
@@ -196,7 +197,7 @@ const Cal = (() => {
   }
   function minAt(col, clientY) {
     const r = col.el.getBoundingClientRect();
-    return Math.max(0, Math.min(1440, ((clientY - r.top) / HOUR) * 60));
+    return Math.max(0, Math.min(1440, ((clientY - r.top - PAD) / HOUR) * 60));
   }
 
   // ---------- drag-to-plan (HTML5 DnD from panel cards) ----------
@@ -213,7 +214,7 @@ const Cal = (() => {
         if (!ghost) { ghost = document.createElement('div'); ghost.className = 'drop-ghost'; }
         if (ghost.parentNode !== el) el.appendChild(ghost);
         ghost.style.top = y(start) + 'px';
-        ghost.style.height = y(dur) + 'px';
+        ghost.style.height = hPx(dur) + 'px';
         ghost.textContent = `${minToHM(start)} · ${fmtDur(dur)}`;
         ghost.dataset.start = start;
       });
@@ -227,7 +228,13 @@ const Cal = (() => {
         if (tid) H.onPlan(tid, el.dataset.date, start, planDuration(tid));
       });
     }
-    root.addEventListener('dragend', () => { if (ghost) { ghost.remove(); ghost = null; } });
+    const cleanup = () => {
+      if (ghost) { ghost.remove(); ghost = null; }
+      for (const { el } of colRects) el.classList.remove('droptarget');
+    };
+    root.addEventListener('dragend', cleanup);
+    document.addEventListener('dragend', cleanup);
+    document.addEventListener('drop', cleanup);
   }
   function planDuration(taskId) {
     const t = taskOf(taskId);
@@ -273,7 +280,7 @@ const Cal = (() => {
         if (col.el !== el.parentNode) col.el.appendChild(el);
       }
       el.style.top = y(cur.s) + 'px';
-      el.style.height = y(cur.e - cur.s) + 'px';
+      el.style.height = hPx(cur.e - cur.s) + 'px';
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
