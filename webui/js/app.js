@@ -1302,7 +1302,7 @@
     const insights = name === 'insights';
     $('analytics').classList.toggle('hidden', !insights);
     $('calendar').classList.toggle('hidden', insights);
-    const tb = $('tb-toolbar'); if (tb) tb.classList.toggle('hidden', insights);
+    const bar = document.querySelector('.topbar'); if (bar) bar.classList.toggle('hidden', insights);
     const panel = $('panel'); if (panel) panel.classList.toggle('hidden', insights);
     if (insights) renderAnalytics();
   }
