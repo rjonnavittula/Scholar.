@@ -906,7 +906,7 @@
             <div class="rctl"><select id="m-defview">${['week', 'day', 'month'].map((v) => `<option value="${v}" ${(S.settings.default_view || 'week') === v ? 'selected' : ''}>${v}</option>`).join('')}</select></div></div>
         </div>
         <div class="set-grouphdr">awake time — study can only be scheduled inside</div>
-        <div class="set-group awake-group">
+        <div class="set-group awake-group single">
           <div class="awake-wrap" id="awake-wrap">
             <div class="awake-default">
               <span class="muted small">usually awake</span>
@@ -959,7 +959,7 @@
       <section class="set-sec hidden" data-pane="notif">
         <h3>Notifications</h3>
         <p class="set-sub">Browser notifications aren't wired yet — these are placeholders for the next phase. <span class="soon-badge">coming soon</span></p>
-        <div class="set-group">
+        <div class="set-group single">
           <div class="row"><div><div class="rlabel">should be working on</div>
             <div class="rhint">nudge me about what's next</div></div>
             <div class="rctl"><input type="checkbox" disabled /></div></div>

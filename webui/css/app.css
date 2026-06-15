@@ -471,10 +471,16 @@ textarea:focus { outline:none; border-color:var(--accent); }
   margin:0 0 4px; letter-spacing:.3px; }
 .set-sub { color:var(--muted); font-size:0.8rem; margin:0 0 22px; }
 .set-group { background:var(--input); border:1px solid var(--line);
-  border-radius:14px; padding:4px 16px; margin:0 0 22px; }
+  border-radius:14px; padding:14px 16px; margin:0 0 22px;
+  display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));
+  gap:6px 22px; align-content:start; }
 .set-group > .row { display:flex; align-items:center; justify-content:space-between;
-  gap:16px; padding:14px 0; border-bottom:1px solid var(--line); min-height:30px; }
-.set-group > .row:last-child { border-bottom:none; }
+  gap:16px; padding:12px 4px; min-height:30px;
+  border-bottom:1px solid var(--line); }
+/* in a multi-col grid, the bottom border on the last visual row looks odd; soften */
+.set-group.single > .row { border-bottom:1px solid var(--line); }
+.set-group.single { grid-template-columns:1fr; }
+.set-group.single > .row:last-child { border-bottom:none; }
 .set-group > .row .rlabel { color:var(--fg); font-size:0.9rem; }
 .set-group > .row .rhint { color:var(--muted); font-size:0.75rem; margin-top:2px; }
 .set-group > .row .rctl { display:flex; align-items:center; gap:8px; flex-shrink:0; }
@@ -505,3 +511,40 @@ textarea:focus { outline:none; border-color:var(--accent); }
 
 /* settings morph-open (scale from center, gentle overshoot) */
 @keyframes morphIn { from { opacity:0; transform:scale(.9); } to { opacity:1; transform:scale(1); } }
+
+/* === FullCalendar themed into ma. === */
+#calendar { height:100%; }
+.fc {
+  --fc-border-color: var(--line);
+  --fc-page-bg-color: transparent;
+  --fc-neutral-bg-color: var(--input);
+  --fc-today-bg-color: rgba(138,127,115,.06);
+  --fc-now-indicator-color: var(--accent);
+  --fc-event-border-color: transparent;
+  --fc-list-event-hover-bg-color: var(--elev);
+  font-family: var(--sans);
+  color: var(--fg);
+}
+.fc .fc-timegrid-slot, .fc .fc-daygrid-day { border-color: var(--line); }
+.fc .fc-col-header-cell-cushion,
+.fc .fc-timegrid-axis-cushion,
+.fc .fc-timegrid-slot-label-cushion { color: var(--muted); font-size:.72rem; text-decoration:none; }
+.fc .fc-col-header-cell { border-color: var(--line); padding:6px 0; }
+.fc .fc-col-header-cell-cushion { font-family:var(--serif); font-size:.9rem; color:var(--fg); }
+.fc-theme-standard td, .fc-theme-standard th { border-color: var(--line); }
+.fc-theme-standard .fc-scrollgrid { border-color: var(--line); }
+.fc .fc-timegrid-now-indicator-line { border-color: var(--accent); }
+.fc .fc-timegrid-now-indicator-arrow { border-color: var(--accent); background:var(--accent); }
+/* events */
+.fc .fc-event { border-radius:8px; padding:1px 4px; font-size:.74rem; cursor:grab; }
+.fc .fc-event.plan-ev.done { opacity:.55; }
+.fc .fc-event.passed { opacity:.45; filter:saturate(.6); }
+.fc .fc-event.due-ev { background:transparent !important; border:none !important;
+  font-weight:500; font-size:.7rem; }
+.fc .fc-event.due-ev.red { color:#C66 !important; }
+/* month view */
+.fc .fc-daygrid-day-number { color:var(--muted); font-size:.78rem; }
+.fc .fc-daygrid-day.fc-day-today { background:var(--fc-today-bg-color); }
+/* scrollbars/space */
+.fc .fc-scroller { scrollbar-width:thin; }
+.cal-fallback { padding:40px; text-align:center; color:var(--muted); }
