@@ -194,6 +194,22 @@
     $('nav-prev').onclick = () => { navBy(-1); };
     $('nav-next').onclick = () => { navBy(1); };
     $('btn-add-task').onclick = () => taskModal();
+
+    // task panel: sort popover + calculate-cushion button
+    const sortBtn = $('btn-sort'), sortPop = $('sort-pop');
+    if (sortBtn) sortBtn.onclick = (e) => { e.stopPropagation(); sortPop.classList.toggle('hidden'); };
+    document.addEventListener('click', (e) => {
+      if (sortPop && !sortPop.classList.contains('hidden')
+          && !sortPop.contains(e.target) && e.target !== sortBtn) sortPop.classList.add('hidden');
+    });
+    for (const b of document.querySelectorAll('#sort-pop .sk')) b.onclick = () => {
+      document.querySelectorAll('#sort-pop .sk').forEach((x) => x.classList.toggle('on', x === b));
+      Panel.setSort(b.dataset.sk, null);
+    };
+    for (const r of document.querySelectorAll('#sort-pop input[name=sdir]'))
+      r.onchange = () => Panel.setSort(null, r.value);
+    const cushBtn = $('btn-cushion');
+    if (cushBtn) cushBtn.onclick = recalcCushion;
     $('btn-add-course').onclick = () => courseModal();
     $('btn-add-activity').onclick = () => activityModal();
     $('btn-canvas-cfg').onclick = () => canvasModal();
@@ -357,6 +373,23 @@
   function onTaskEdit(taskId) {
     const t = S.tasks.find((x) => x.id === taskId);
     if (t) taskModal(t);
+  }
+
+  async function recalcCushion() {
+    const btn = $('btn-cushion');
+    if (btn) { btn.classList.add('busy'); btn.disabled = true; }
+    try {
+      const weekIso = isoOf(S.weekStart);
+      const [cushion, avail] = await Promise.all([
+        Api.get('/cushion'),
+        Api.get(`/cushion/availability?start=${weekIso}&days=7`),
+      ]);
+      S.cushion = cushion; S.availability = avail;
+      S.cushionByTask = Object.fromEntries((cushion.per_task || []).map((c) => [c.task_id, c]));
+      renderTop(); Panel.render();
+      toast('cushion recalculated');
+    } catch (e) { toast('cushion calc failed'); }
+    finally { if (btn) { btn.classList.remove('busy'); btn.disabled = false; } }
   }
 
   async function onPlanQuick(taskId) {

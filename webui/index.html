@@ -6,7 +6,7 @@
 <title>scholar.</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="css/app.css?v=1781536380" />
+<link rel="stylesheet" href="css/app.css?v=1781564122" />
 </head>
 <body>
 
@@ -88,17 +88,36 @@
 
   <button class="collapse-tab right" id="collapse-right" title="hide tasks">›</button>
     <aside class="panel" id="panel">
-    <input id="task-search" placeholder="search tasks…" />
+    <div class="panel-bar">
+      <input id="task-search" placeholder="search tasks…" />
+      <div class="panel-tools">
+        <button id="btn-sort" class="ptool" title="sort tasks">⇅</button>
+        <button id="btn-cushion" class="ptool" title="calculate cushion">◷</button>
+      </div>
+      <div id="sort-pop" class="ppop hidden">
+        <div class="pp-sec">
+          <label><input type="radio" name="sdir" value="asc" checked> Soonest first</label>
+          <label><input type="radio" name="sdir" value="desc"> Latest first</label>
+        </div>
+        <div class="pp-sec pp-keys">
+          <button data-sk="due" class="sk on">Due date</button>
+          <button data-sk="estimate" class="sk">Total estimate</button>
+          <button data-sk="need" class="sk">Time still needed</button>
+          <button data-sk="plan" class="sk">Time left to plan</button>
+          <button data-sk="priority" class="sk">Priority</button>
+        </div>
+      </div>
+    </div>
     <div id="task-groups"></div>
   </aside>
 </div>
 
 <div id="modal-root"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.20/index.global.min.js?v=1781536380"></script>
-<script src="js/api.js?v=1781536380"></script>
-<script src="js/calendar.js?v=1781536380"></script>
-<script src="js/panel.js?v=1781536380"></script>
-<script src="js/app.js?v=1781536380"></script>
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.20/index.global.min.js?v=1781564122"></script>
+<script src="js/api.js?v=1781564122"></script>
+<script src="js/calendar.js?v=1781564122"></script>
+<script src="js/panel.js?v=1781564122"></script>
+<script src="js/app.js?v=1781564122"></script>
 </body>
 </html>

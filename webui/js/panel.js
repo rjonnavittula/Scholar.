@@ -2,6 +2,8 @@
 function SCHOOL_TZ() { return (window.__S && window.__S.settings && window.__S.settings.school_tz) || 'America/New_York'; }
 const Panel = (() => {
   let root, S, H, query = '';
+  let sortKey = 'due', sortDir = 'asc';
+  const collapsed = new Set();
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
     (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -46,14 +48,40 @@ const Panel = (() => {
     for (const [lab, items] of Object.entries(byLabel)) groups.push({ name: lab, items });
     if (noDue.length) groups.push({ name: 'No due date', items: noDue });
 
-    root.innerHTML = groups.map((g) => `
-      <div class="tgroup">
-        <div class="tgroup-head ${g.cls || ''}">${g.name}
+    root.innerHTML = groups.map((g) => {
+      const isC = collapsed.has(g.name);
+      return `<div class="tgroup">
+        <div class="tgroup-head ${g.cls || ''}" data-group="${esc(g.name)}">
+          <span class="tg-chev">${isC ? '\u25b8' : '\u25be'}</span>
+          <span class="tg-name">${g.name}</span>
           <span class="ct">${g.items.length}</span></div>
-        ${g.items.map(card).join('')}
-      </div>`).join('') || '<p class="muted small">no tasks — add one, or sync Canvas.</p>';
+        <div class="tg-items"${isC ? ' hidden' : ''}>${sortItems(g.items).map(card).join('')}</div>
+      </div>`;
+    }).join('') || '<p class="muted small">no tasks — add one, or sync Canvas.</p>';
 
     wire();
+  }
+
+  function sortItems(items) {
+    const need = (t) => Math.max(0, (t.time_needed_min || 0) - (t.time_spent_min || 0));
+    const plannedOf = (t) => (S.planned || []).filter((b) => b.task_id === t.id)
+      .reduce((a, b) => a + Math.round((new Date(b.end_at) - new Date(b.start_at)) / 60000), 0);
+    const keyer = {
+      due: (t) => (t.due_at ? new Date(t.due_at).getTime() : Infinity),
+      estimate: (t) => t.time_needed_min || 0,
+      need: (t) => need(t),
+      plan: (t) => Math.max(0, need(t) - plannedOf(t)),
+      priority: (t) => (t.priority_flag ? 0 : 1),
+    }[sortKey] || (() => 0);
+    const dir = sortDir === 'desc' ? -1 : 1;
+    return items.slice().sort((a, b) =>
+      (keyer(a) - keyer(b)) * dir || String(a.due_at || '').localeCompare(String(b.due_at || '')));
+  }
+
+  function setSort(key, dir) {
+    if (key) sortKey = key;
+    if (dir) sortDir = dir;
+    render();
   }
 
   function card(t) {
@@ -104,6 +132,13 @@ const Panel = (() => {
 
   function wire() {
     initDraggable();
+    for (const h of root.querySelectorAll('.tgroup-head')) {
+      h.addEventListener('click', () => {
+        const n = h.dataset.group;
+        if (collapsed.has(n)) collapsed.delete(n); else collapsed.add(n);
+        render();
+      });
+    }
     for (const el of root.querySelectorAll('.tcard')) {
       const tid = +el.dataset.tid;
       // FC Draggable is registered once on the container (see initDraggable)
@@ -126,5 +161,5 @@ const Panel = (() => {
     }
   }
 
-  return { mount, render };
+  return { mount, render, setSort };
 })();

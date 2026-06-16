@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="HIVE Scholar API", version="0.5.2", lifespan=lifespan)
+app = FastAPI(title="HIVE Scholar API", version="0.5.3", lifespan=lifespan)
 
 for r in (auth_router, courses_router, tasks_router, activities_router,
           planned_router, awake_router, config_router, cushion_router,
