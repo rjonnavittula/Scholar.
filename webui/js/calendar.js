@@ -25,7 +25,7 @@ const Cal = (() => {
   const mins = (d) => d.getHours() * 60 + d.getMinutes();
   const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
-  const VIEW_MAP = { day: 'timeGridDay', week: 'timeGridWeek', month: 'dayGridMonth', nextN: 'timeGrid' };
+  const VIEW_MAP = { day: 'timeGridDay', twoDay: 'timeGridTwoDay', week: 'timeGridWeek', month: 'dayGridMonth', nextN: 'timeGrid' };
   const fcView = () => VIEW_MAP[view] || 'timeGridWeek';
 
   function mount(el, state, handlers) { root = el; S = state; H = handlers; }
@@ -124,7 +124,8 @@ const Cal = (() => {
       eventResizableFromStart: true,
       droppable: true,
       dayMaxEvents: true,
-      views: { timeGrid: { type: 'timeGrid', duration: { days: nDays } } },
+      views: { timeGrid: { type: 'timeGrid', duration: { days: nDays } },
+               timeGridTwoDay: { type: 'timeGrid', duration: { days: 2 } } },
       events: events(),
       eventDrop: (info) => {
         const x = info.event.extendedProps;

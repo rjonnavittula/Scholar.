@@ -163,7 +163,7 @@
       const d = new Date(S.weekStart);
       S.weekStart = new Date(d.getFullYear(), d.getMonth() + dir, 1);
     } else {
-      const n = S.view === 'nextN' ? (S.viewN || 7) : 7;
+      const n = S.view === 'nextN' ? (S.viewN || 7) : S.view === 'twoDay' ? 2 : 7;
       S.weekStart = addDays(S.weekStart, dir * n);
     }
     loadAll();
@@ -171,6 +171,7 @@
 
   function setCalView(view) {
     S.view = view;
+    if (view === 'twoDay') { const t = new Date(); S.weekStart = new Date(t.getFullYear(), t.getMonth(), t.getDate()); }
     for (const b of document.querySelectorAll('#viewtabs [data-view]'))
       b.classList.toggle('active', b.dataset.view === view);
     if (view !== 'nextN') document.getElementById('view-n').value = '';
