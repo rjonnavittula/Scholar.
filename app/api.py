@@ -115,7 +115,7 @@ def update_course(cid: int, body: dict, session: Session = Depends(get_session))
     c = session.get(Course, cid)
     if not c:
         raise HTTPException(404)
-    for k in ("name", "color"):
+    for k in ("name", "color", "instructor", "url", "notes", "credits"):
         if k in body:
             setattr(c, k, body[k])
     session.add(c); session.commit(); session.refresh(c)

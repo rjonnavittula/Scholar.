@@ -33,6 +33,10 @@ class Course(SQLModel, table=True):
     color: str = "#8A7F73"
     source: Source = Source.manual
     external_id: Optional[str] = Field(default=None, index=True)
+    instructor: str = ""
+    url: str = ""
+    notes: str = ""
+    credits: Optional[float] = None
     created_at: datetime = Field(default_factory=datetime.now)
 
 

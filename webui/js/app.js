@@ -98,6 +98,7 @@
   function renderAll() {
     applyTheme();
     renderSidebar(); renderTop(); renderStreak(); Cal.render(); Panel.render();
+    if ($('courses') && !$('courses').classList.contains('hidden')) renderCoursesHub();
     const list = document.getElementById('tasklist');
     if (list && !list.classList.contains('hidden')) renderTaskList(list);
   }
@@ -232,6 +233,8 @@
     }
     document.querySelector('[data-view="insights"]').onclick = (e) => showView('insights', e.currentTarget);
     document.querySelector('[data-view="home"]').onclick = (e) => showView('home', e.currentTarget);
+    const cvBtn = document.querySelector('[data-view="courses"]');
+    if (cvBtn) cvBtn.onclick = (e) => showView('courses', e.currentTarget);
     wireTabs();
   }
 
@@ -1446,7 +1449,11 @@
     modal(`
       <h2>${course ? 'edit course' : 'new course'}</h2>
       <div class="frow"><label>name</label><input id="m-name" value="${esc(course?.name || '')}" placeholder="CMPEN 331" /></div>
+      <div class="frow"><label>instructor</label><input id="m-inst" value="${esc(course?.instructor || '')}" placeholder="Prof. Ada Lovelace" /></div>
+      <div class="frow"><label>link</label><input id="m-url" value="${esc(course?.url || '')}" placeholder="course page or syllabus URL" /></div>
+      <div class="frow"><label>credits</label><input id="m-cr" type="number" min="0" max="12" step="0.5" value="${course?.credits ?? ''}" placeholder="3" /></div>
       <div class="frow"><label>color</label>${swatchHtml(sel)}</div>
+      <div class="frow"><label>notes</label><textarea id="m-notes" rows="3" placeholder="office hours, policies, reading sources…">${esc(course?.notes || '')}</textarea></div>
       ${course ? '<div class="actions left"><button class="ghost danger-btn" data-m="del">delete</button></div>' : ''}
       ${ACTIONS(course ? 'save' : 'add')}`,
       async (act, ov) => {
@@ -1454,8 +1461,16 @@
         if (act !== 'save') return;
         const nm = ov.querySelector('#m-name').value.trim() || 'course';
         const color = ov.querySelector('.swatch.sel')?.dataset.c || PALETTE[0];
-        if (course) await Api.patch('/courses/' + course.id, { name: nm, color });
-        else await Api.post('/courses', { name: nm, color });
+        const crv = ov.querySelector('#m-cr').value.trim();
+        const body = {
+          name: nm, color,
+          instructor: ov.querySelector('#m-inst').value.trim(),
+          url: ov.querySelector('#m-url').value.trim(),
+          notes: ov.querySelector('#m-notes').value,
+          credits: crv === '' ? null : Number(crv),
+        };
+        if (course) await Api.patch('/courses/' + course.id, body);
+        else await Api.post('/courses', body);
         await loadAll();
         toast(`${course ? 'updated' : 'added'} course \u00b7 ${nm}`);
       });
@@ -1564,11 +1579,36 @@
   function showView(name, btn, tab) {
     for (const b of document.querySelectorAll('.rail-btn[data-view]')) b.classList.toggle('active', b === btn);
     const insights = name === 'insights';
+    const courses = name === 'courses';
+    const home = !insights && !courses;
     $('analytics').classList.toggle('hidden', !insights);
-    $('calendar').classList.toggle('hidden', insights);
-    const bar = document.querySelector('.topbar'); if (bar) bar.classList.toggle('hidden', insights);
-    const panel = $('panel'); if (panel) panel.classList.toggle('hidden', insights);
+    const cv = $('courses'); if (cv) cv.classList.toggle('hidden', !courses);
+    $('calendar').classList.toggle('hidden', !home);
+    const bar = document.querySelector('.topbar'); if (bar) bar.classList.toggle('hidden', !home);
+    const panel = $('panel'); if (panel) panel.classList.toggle('hidden', !home);
     if (insights) renderAnalytics(tab);
+    if (courses) renderCoursesHub();
+  }
+
+  function renderCoursesHub() {
+    const el = $('courses'); if (!el) return;
+    const openCount = (cid) => S.tasks.filter((t) => t.course_id === cid && t.status !== 'done').length;
+    const cards = (S.courses || []).map((c) => `
+      <button class="ch-card" data-cid="${c.id}" style="--cc:${c.color}">
+        <span class="ch-top"><span class="ch-dot"></span><span class="ch-name">${esc(c.name)}</span></span>
+        ${c.instructor ? `<span class="ch-inst">${esc(c.instructor)}</span>` : '<span class="ch-inst muted">no instructor</span>'}
+        <span class="ch-meta">${openCount(c.id)} open \u00b7 ${c.source === 'canvas' ? 'Canvas' : 'manual'}${c.credits ? ' \u00b7 ' + c.credits + ' cr' : ''}</span>
+      </button>`).join('');
+    el.innerHTML = `
+      <div class="ch-head"><h2>Courses</h2>
+        <div class="ch-actions">
+          <button class="ghost" id="ch-import">import</button>
+          <button class="primary" id="ch-add">+ course</button></div></div>
+      <div class="ch-grid">${cards || '<p class="muted small">no courses yet \u2014 add one, or import from Canvas / a syllabus.</p>'}</div>`;
+    el.querySelector('#ch-add').onclick = () => courseModal();
+    el.querySelector('#ch-import').onclick = () => canvasModal();
+    for (const card of el.querySelectorAll('.ch-card'))
+      card.onclick = () => { const c = S.courses.find((x) => x.id === +card.dataset.cid); if (c) courseModal(c); };
   }
 
   let anTab = 'analytics';
