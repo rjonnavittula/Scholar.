@@ -1923,11 +1923,12 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
   function canvasModal() {
     const BM = "javascript:(async()=>{try{var b=location.origin;var J=async u=>{var r=await fetch(b+u,{headers:{Accept:'application/json'}});return r.json()};var cs=[],p=1;while(p<6){var x=await J('/api/v1/courses?enrollment_state=active&per_page=100&page='+p);if(!x.length)break;cs=cs.concat(x);if(x.length<100)break;p++}var A=[];for(var c of cs){try{var as=await J('/api/v1/courses/'+c.id+'/assignments?per_page=100&bucket=upcoming');for(var a of as)A.push({id:a.id,name:a.name,due_at:a.due_at,course_id:c.id,html_url:a.html_url})}catch(e){}}await navigator.clipboard.writeText(JSON.stringify({courses:cs.map(c=>({id:c.id,name:c.name})),assignments:A}));alert('scholar: copied '+A.length+' assignments from '+cs.length+' courses. Paste into scholar.')}catch(e){alert('scholar failed: '+e)}})();";
     const { ov, close } = modal(`
-      <h2>canvas</h2>
+      <h2>import</h2>
       <div class="seg cv-seg">
-        <span data-tab="token" class="on">Access token</span>
+        <span data-tab="token" class="on">Canvas token</span>
         <span data-tab="ics">Calendar feed</span>
         <span data-tab="script">Quick script</span>
+        <span data-tab="syllabus">Syllabus PDF</span>
       </div>
 
       <div class="cv-panel" data-panel="token">
@@ -1961,6 +1962,20 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
         <label style="margin-top:14px">2 · run it on Canvas, then paste what it copied</label>
         <textarea id="cv-paste" class="cv-code" rows="3" placeholder="paste the copied data here…"></textarea>
         <button class="primary" id="cv-import">import pasted data</button>
+      </div>
+
+      <div class="cv-panel" data-panel="syllabus" hidden>
+        <p class="muted small">No Canvas? Upload a syllabus (PDF or .txt) and scholar pulls out the dated
+          assignments for you to review before anything is added. Reads US and international date formats.</p>
+        <div class="frow"><label>syllabus file</label>
+          <input id="syl-file" type="file" accept=".pdf,.txt,text/plain,application/pdf" /></div>
+        <div class="syl-opts">
+          <label>course (optional)<input id="syl-course" placeholder="e.g. CMPSC 465" /></label>
+          <label>term year<input id="syl-year" type="number" value="${new Date().getFullYear()}" /></label>
+          <label class="syl-df"><input id="syl-dayfirst" type="checkbox" /> day-first dates (13/09)</label>
+        </div>
+        <button class="primary" id="syl-parse">read syllabus</button>
+        <div id="syl-results" style="margin-top:14px"></div>
       </div>
 
       <div class="actions"><span class="spacer"></span><button class="ghost" data-m="cancel">close</button></div>`,
@@ -2002,6 +2017,62 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
       try { const r = await Api.post('/integrations/canvas/import', data);
         toast(`imported: ${r.created} new, ${r.updated} updated`); close(); }
       catch (e) { toast('import failed'); }
+    };
+
+    // --- syllabus PDF: read -> review -> import ---
+    let sylItems = [];
+    const readB64 = (file) => new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).split(',')[1] || '');
+      r.onerror = rej; r.readAsDataURL(file);
+    });
+    const doImport = async () => {
+      const items = [...ov.querySelectorAll('.syl-row')]
+        .filter((r) => r.querySelector('.syl-ck').checked)
+        .map((r) => ({ title: r.querySelector('.syl-t').value.trim(),
+                       due_date: r.querySelector('.syl-d').value || null,
+                       category: r.querySelector('.syl-c').value.trim() }))
+        .filter((x) => x.title);
+      if (!items.length) { toast('nothing selected'); return; }
+      try {
+        const r = await Api.post('/integrations/syllabus/import',
+          { course_name: ov.querySelector('#syl-course').value.trim() || null, items });
+        toast(`imported ${r.created} task${r.created === 1 ? '' : 's'}${r.course ? ' \u2192 ' + r.course : ''}`);
+        await loadAll(); close();
+      } catch (e) { toast('import failed'); }
+    };
+    const renderSyl = (r) => {
+      const res = ov.querySelector('#syl-results');
+      if (!sylItems.length) {
+        res.innerHTML = `<p class="muted small">${esc(r.note || 'no dated assignments found \u2014 try the day-first toggle, or add them by hand.')}</p>`;
+        return;
+      }
+      res.innerHTML = `<div class="syl-head">${sylItems.length} found \u00b7 uncheck any you don\u2019t want, edit titles/dates inline</div>
+        <div class="syl-rows">${sylItems.map((it, i) => `
+          <div class="syl-row">
+            <input type="checkbox" class="syl-ck" data-i="${i}" checked />
+            <input class="syl-t" value="${esc(it.title)}" />
+            <input class="syl-d" type="date" value="${it.due_date}" />
+            <input class="syl-c" value="${esc(it.category)}" placeholder="category" />
+          </div>`).join('')}</div>
+        <button class="primary" id="syl-import" style="margin-top:12px">import selected</button>`;
+      res.querySelector('#syl-import').onclick = doImport;
+    };
+    ov.querySelector('#syl-parse').onclick = async () => {
+      const f = ov.querySelector('#syl-file').files[0];
+      if (!f) { toast('choose a PDF or text file first'); return; }
+      const res = ov.querySelector('#syl-results');
+      res.innerHTML = '<p class="muted small">reading\u2026</p>';
+      try {
+        const data_b64 = await readB64(f);
+        const r = await Api.post('/integrations/syllabus/parse', {
+          filename: f.name, data_b64,
+          year: +ov.querySelector('#syl-year').value || undefined,
+          dayfirst: ov.querySelector('#syl-dayfirst').checked,
+        });
+        sylItems = r.items || [];
+        renderSyl(r);
+      } catch (e) { res.innerHTML = '<p class="muted small">couldn\u2019t read that file</p>'; }
     };
   }
 

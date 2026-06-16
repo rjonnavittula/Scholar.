@@ -692,3 +692,34 @@ def canvas_import(payload: dict, session: Session = Depends(get_session)):
         return import_canvas_payload(session, st, payload)
     except Exception as e:
         raise HTTPException(502, f"import_failed: {e}")
+
+
+@integrations_router.post("/syllabus/parse", summary="Extract candidate tasks from a syllabus (PDF or text, base64)")
+def syllabus_parse(payload: dict, session: Session = Depends(get_session)):
+    import base64
+    from app.syllabus import extract_text, parse_syllabus
+    try:
+        data = base64.b64decode(payload.get("data_b64") or "")
+    except Exception:
+        raise HTTPException(400, "bad_file_data")
+    if len(data) > 8_000_000:
+        raise HTTPException(413, "file_too_large")
+    text = extract_text(data, payload.get("filename", "") or "")
+    if not text.strip():
+        return {"items": [], "chars": 0, "note": "no extractable text — is this a scanned PDF?"}
+    items = parse_syllabus(text, default_year=payload.get("year"),
+                           dayfirst=bool(payload.get("dayfirst")))
+    return {"items": items, "chars": len(text)}
+
+
+@integrations_router.post("/syllabus/import", summary="Create tasks from reviewed syllabus items")
+def syllabus_import(payload: dict, session: Session = Depends(get_session)):
+    from app.integrations import import_syllabus_tasks
+    st = session.get(Settings, 1) or Settings(id=1)
+    items = payload.get("items") or []
+    if not items:
+        raise HTTPException(400, "no_items")
+    try:
+        return import_syllabus_tasks(session, st, course_name=payload.get("course_name"), items=items)
+    except Exception as e:
+        raise HTTPException(502, f"import_failed: {e}")

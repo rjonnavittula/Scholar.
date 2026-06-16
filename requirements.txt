@@ -5,3 +5,4 @@ pydantic>=2.7
 psycopg[binary]>=3.2
 alembic>=1.13
 canvasapi>=3.2
+pypdf>=4.0

@@ -167,3 +167,51 @@ def import_canvas_payload(session: Session, st: Settings, payload: dict) -> dict
         updated += res == "updated"
     session.commit()
     return {"courses": len(cmap), "created": created, "updated": updated}
+
+
+# --- syllabus import (reviewed candidate tasks from a PDF/text upload) ------
+
+def import_syllabus_tasks(session: Session, st: Settings, *, course_name=None, items=None) -> dict:
+    """Create plain tasks from a reviewed syllabus list. Optionally group them
+    under a (new or existing) course. Due times land at 23:59 in the school zone."""
+    from zoneinfo import ZoneInfo
+    items = items or []
+    course = None
+    if course_name and course_name.strip():
+        name = course_name.strip()
+        course = session.exec(select(Course).where(Course.name == name)).first()
+        if not course:
+            idx = len(session.exec(select(Course)).all()) + 1
+            course = Course(name=name, source=Source.manual, color=PALETTE[idx % len(PALETTE)])
+            session.add(course); session.commit(); session.refresh(course)
+
+    school_tz = (st.school_tz if st else None) or "America/New_York"
+    try:
+        tz = ZoneInfo(school_tz)
+    except Exception:
+        tz = ZoneInfo("America/New_York")
+    ahead = (st.start_ahead_days if st else 3) or 3
+
+    created = 0
+    for it in items:
+        title = (it.get("title") or "").strip()
+        if not title:
+            continue
+        due = None
+        ds = it.get("due_date")
+        if ds:
+            try:
+                local = datetime.fromisoformat(ds + "T23:59:00").replace(tzinfo=tz)
+                due = local.astimezone(ZoneInfo("UTC"))
+            except Exception:
+                due = None
+        cat = it.get("category") or guess_category(title)
+        session.add(Task(
+            title=title[:200], course_id=(course.id if course else None), category=cat,
+            due_at=due, due_tz=school_tz if due else None,
+            start_date=(due.date() - timedelta(days=ahead)) if due else None,
+            time_needed_min=ESTIMATES.get(cat, 60), source=Source.manual,
+        ))
+        created += 1
+    session.commit()
+    return {"created": created, "course": course.name if course else None}
