@@ -66,3 +66,15 @@ def forward_weeks(today: date, n: int = 10):
     """List of (monday, label) for this week + the next n-1 weeks, soonest first."""
     mon = today - timedelta(days=today.weekday())
     return [(mon + timedelta(days=7 * i), week_label(mon + timedelta(days=7 * i))) for i in range(n)]
+
+
+def to_csv(headers, rows) -> str:
+    """Render a list-of-dicts as CSV text (RFC4180 quoting via stdlib csv)."""
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(headers)
+    for r in rows:
+        w.writerow([r.get(h, "") for h in headers])
+    return buf.getvalue()

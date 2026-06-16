@@ -187,3 +187,34 @@ def future_analytics(session: Session, cfg, activities, planned, term, holidays,
         "breakdown": {"activity_min": activity_min, "planned_min": planned_min, "free_min": avail_min},
         "by_week": by_week,
     }
+
+
+def timelog_export(session: Session, range_key: str = "all", today: date | None = None) -> dict:
+    """Flatten TimeLog (joined w/ task + course) to a CSV timesheet for a range."""
+    from app.analytics_util import range_bounds, to_csv
+
+    today = today or date.today()
+    s, e = range_bounds(range_key, today)
+    logs = sorted(session.exec(select(TimeLog)).all(), key=lambda g: g.logged_at)
+    tasks = {t.id: t for t in session.exec(select(Task)).all()}
+    courses = {c.id: c for c in session.exec(select(Course)).all()}
+
+    headers = ["date", "time", "task", "course", "category", "minutes", "source"]
+    rows = []
+    for g in logs:
+        d = _d(g.logged_at)
+        if (s and d < s) or (e and d > e):
+            continue
+        t = tasks.get(g.task_id)
+        c = courses.get(t.course_id) if t else None
+        rows.append({
+            "date": d.isoformat(),
+            "time": g.logged_at.strftime("%H:%M") if isinstance(g.logged_at, datetime) else "",
+            "task": t.title if t else f"task {g.task_id}",
+            "course": c.name if c else "",
+            "category": (t.category if t else "") or "",
+            "minutes": g.minutes,
+            "source": g.source,
+        })
+    return {"filename": f"scholar-timelog-{range_key}.csv",
+            "csv": to_csv(headers, rows), "count": len(rows)}

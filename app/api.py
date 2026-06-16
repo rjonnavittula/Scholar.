@@ -640,6 +640,12 @@ def analytics_future(range: str = "this_week", session: Session = Depends(get_se
     return future_analytics(session, cfg, activities, planned, term, holidays, range)
 
 
+@analytics_router.get("/export", summary="Export time logs as a CSV timesheet")
+def analytics_export(range: str = "all", session: Session = Depends(get_session)):
+    from app.analytics import timelog_export
+    return timelog_export(session, range)
+
+
 # ---- canvas integration ------------------------------------------------------------#
 integrations_router = APIRouter(prefix="/integrations", tags=["integrations"], dependencies=AUTH)
 

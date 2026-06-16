@@ -1340,6 +1340,15 @@
   // ============================================================
   let anRange = 'this_week';
   let anMode = 'past';
+
+  function downloadText(filename, text, mime) {
+    const blob = new Blob([text], { type: mime || 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
   const AN_RANGES = [
     ['today', 'Today'], ['yesterday', 'Yesterday'], ['this_week', 'This week'],
     ['last_week', 'Last week'], ['last_7', 'Last 7 days'], ['last_30', 'Last 30 days'],
@@ -1370,9 +1379,18 @@
       <div class="an-controls">
         <div class="seg an-pf"><span class="on" data-pf="past">Past</span><span data-pf="future">Future</span></div>
         <select class="an-range">${AN_RANGES.map(([k, l]) => `<option value="${k}" ${k === anRange ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <button class="an-export" id="an-export" title="export time logs as CSV">export</button>
       </div>
       <div class="an-body" id="an-body"><p class="muted small">loading\u2026</p></div>`;
     el.querySelector('.an-range').onchange = (e) => { anRange = e.target.value; if (anMode === 'future') loadFuture(); else loadPast(); };
+    const ex = el.querySelector('#an-export');
+    if (ex) ex.onclick = async () => {
+      try {
+        const r = await Api.get('/analytics/export?range=' + encodeURIComponent(anRange));
+        downloadText(r.filename, r.csv);
+        toast(`exported ${r.count} time-log rows`);
+      } catch (e) { toast('export failed'); }
+    };
     for (const sp of el.querySelectorAll('.an-pf span')) sp.onclick = () => {
       el.querySelectorAll('.an-pf span').forEach((x) => x.classList.toggle('on', x === sp));
       anMode = sp.dataset.pf; if (anMode === 'future') loadFuture(); else loadPast();

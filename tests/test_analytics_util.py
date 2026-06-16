@@ -1,6 +1,6 @@
 import unittest
 from datetime import date
-from app.analytics_util import range_bounds, week_label, recent_weeks, forward_weeks
+from app.analytics_util import range_bounds, week_label, recent_weeks, forward_weeks, to_csv
 
 
 class AnalyticsUtilTests(unittest.TestCase):
@@ -45,6 +45,18 @@ class AnalyticsUtilTests(unittest.TestCase):
         self.assertEqual(len(wk), 10)
         self.assertEqual(wk[0][1], "Jun 8 \u2013 14")            # this week first
         self.assertTrue(wk[0][0] < wk[1][0])                     # ascending
+
+    def test_to_csv_header_and_quoting(self):
+        out = to_csv(["task", "minutes"],
+                     [{"task": "PS4, part 1", "minutes": 45}, {"task": "Lab", "minutes": 30}])
+        lines = out.strip().splitlines()
+        self.assertEqual(lines[0], "task,minutes")
+        self.assertEqual(lines[1], '"PS4, part 1",45')          # comma triggers quoting
+        self.assertEqual(lines[2], "Lab,30")
+
+    def test_to_csv_missing_key_blank(self):
+        out = to_csv(["a", "b"], [{"a": 1}])
+        self.assertEqual(out.strip().splitlines()[1], "1,")
 
 
 if __name__ == "__main__":

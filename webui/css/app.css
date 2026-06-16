@@ -881,3 +881,9 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 .fc .activity-ev .fc-event-main { padding:1px 4px; }
 .fc .activity-ev .fc-event-title { font-weight:500; }
 .fc .activity-ev .fc-event-time { opacity:.85; font-weight:500; }
+
+/* === v5h: analytics export button === */
+.an-export { background:var(--input); border:1px solid var(--line); border-radius:10px;
+  padding:8px 14px; color:var(--muted); font-size:13px; cursor:pointer;
+  transition:background .15s ease, color .15s ease, border-color .15s ease; }
+.an-export:hover { color:var(--fg); border-color:var(--accent); }
