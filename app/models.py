@@ -157,3 +157,20 @@ class ApiKey(SQLModel, table=True):
     hashed_key: str = Field(index=True)
     created_at: datetime = Field(default_factory=datetime.now)
     revoked: bool = False
+
+
+class GradeCategory(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    course_id: int = Field(foreign_key="course.id", index=True)
+    name: str = ""
+    weight: float = 0.0
+    position: int = 0
+
+
+class GradeItem(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    category_id: int = Field(foreign_key="gradecategory.id", index=True)
+    course_id: int = Field(foreign_key="course.id", index=True)
+    title: str = ""
+    earned: float = 0.0
+    possible: float = 0.0

@@ -723,3 +723,77 @@ def syllabus_import(payload: dict, session: Session = Depends(get_session)):
         return import_syllabus_tasks(session, st, course_name=payload.get("course_name"), items=items)
     except Exception as e:
         raise HTTPException(502, f"import_failed: {e}")
+
+
+# ---- grades ----------------------------------------------------------------#
+grades_router = APIRouter(prefix="/grades", tags=["grades"], dependencies=AUTH)
+
+
+def _grade_structure(session, cid):
+    from app.models import GradeCategory, GradeItem
+    cats = session.exec(select(GradeCategory).where(GradeCategory.course_id == cid)
+                        .order_by(GradeCategory.position)).all()
+    items = session.exec(select(GradeItem).where(GradeItem.course_id == cid)).all()
+    by_cat = {}
+    for it in items:
+        by_cat.setdefault(it.category_id, []).append(
+            {"id": it.id, "title": it.title, "earned": it.earned, "possible": it.possible})
+    return [{"id": c.id, "name": c.name, "weight": c.weight, "items": by_cat.get(c.id, [])} for c in cats]
+
+
+@grades_router.get("/summary", summary="Current grade per course (for the hub)")
+def grades_summary(session: Session = Depends(get_session)):
+    from app.grades import compute_grade
+    from app.models import GradeCategory, GradeItem
+    cats = session.exec(select(GradeCategory)).all()
+    items = session.exec(select(GradeItem)).all()
+    items_by_cat = {}
+    for it in items:
+        items_by_cat.setdefault(it.category_id, []).append({"earned": it.earned, "possible": it.possible})
+    by_course = {}
+    for c in cats:
+        by_course.setdefault(c.course_id, []).append(
+            {"name": c.name, "weight": c.weight, "items": items_by_cat.get(c.id, [])})
+    out = {}
+    for cid, cl in by_course.items():
+        s = compute_grade(cl)
+        if s["percent"] is not None:
+            out[str(cid)] = {"percent": s["percent"], "letter": s["letter"]}
+    return out
+
+
+@grades_router.get("/{cid}", summary="Grade categories + items + summary for a course")
+def get_grades(cid: int, session: Session = Depends(get_session)):
+    from app.grades import compute_grade
+    cat_list = _grade_structure(session, cid)
+    return {"categories": cat_list, "summary": compute_grade(cat_list)}
+
+
+@grades_router.put("/{cid}", summary="Replace a course's grade structure")
+def put_grades(cid: int, body: dict, session: Session = Depends(get_session)):
+    from app.grades import compute_grade
+    from app.models import GradeCategory, GradeItem
+    if not session.get(Course, cid):
+        raise HTTPException(404)
+    for it in session.exec(select(GradeItem).where(GradeItem.course_id == cid)).all():
+        session.delete(it)
+    for c in session.exec(select(GradeCategory).where(GradeCategory.course_id == cid)).all():
+        session.delete(c)
+    session.commit()
+    cat_list = []
+    for pos, c in enumerate(body.get("categories") or []):
+        cat = GradeCategory(course_id=cid, name=(c.get("name") or "").strip(),
+                            weight=float(c.get("weight") or 0), position=pos)
+        session.add(cat); session.commit(); session.refresh(cat)
+        out_items = []
+        for it in (c.get("items") or []):
+            title = (it.get("title") or "").strip()
+            poss = float(it.get("possible") or 0)
+            earn = float(it.get("earned") or 0)
+            if not title and poss == 0 and earn == 0:
+                continue
+            session.add(GradeItem(category_id=cat.id, course_id=cid, title=title, earned=earn, possible=poss))
+            out_items.append({"title": title, "earned": earn, "possible": poss})
+        cat_list.append({"name": cat.name, "weight": cat.weight, "items": out_items})
+    session.commit()
+    return {"summary": compute_grade(cat_list)}

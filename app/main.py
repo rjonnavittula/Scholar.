@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api import (
     activities_router, analytics_router, auth_router, awake_router, config_router,
-    courses_router, cushion_router, integrations_router, planned_router,
+    courses_router, cushion_router, grades_router, integrations_router, planned_router,
     streak_router, tasks_router, timer_router,
 )
 from app.db import init_db
@@ -20,11 +20,12 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="HIVE Scholar API", version="0.5.9", lifespan=lifespan)
+app = FastAPI(title="HIVE Scholar API", version="0.5.10", lifespan=lifespan)
 
 for r in (auth_router, courses_router, tasks_router, activities_router,
           planned_router, awake_router, config_router, cushion_router,
-          streak_router, timer_router, integrations_router, analytics_router):
+          streak_router, timer_router, integrations_router, analytics_router,
+          grades_router):
     app.include_router(r)
 
 

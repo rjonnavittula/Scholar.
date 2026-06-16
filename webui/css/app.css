@@ -981,3 +981,25 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 .ch-inst.muted { color:var(--faint); font-style:italic; }
 .ch-meta { font-size:11px; color:var(--faint); }
 @media (max-width:760px) { .ch-grid { grid-template-columns:1fr 1fr; } }
+
+/* === v5m: grades === */
+.ch-grade { margin-left:auto; font-size:12px; color:var(--accent); font-variant-numeric:tabular-nums; }
+.gr-summary { display:flex; align-items:baseline; gap:10px; justify-content:center; margin:6px 0 16px; min-height:46px; }
+.gr-letter { font-family:var(--serif); font-size:42px; line-height:1; color:var(--accent); }
+.gr-pct { font-size:18px; color:var(--muted); }
+.gr-none { color:var(--faint); font-style:italic; }
+.gr-cat { border:1px solid var(--line); border-radius:var(--r); padding:10px 12px; margin-bottom:10px; }
+.gr-cat-head { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.gr-cat-head .gr-cname { flex:1; font-family:var(--serif); }
+.gr-cat-head .gr-cweight { width:58px; }
+.gr-wpct { color:var(--faint); font-size:12px; margin-left:-4px; }
+.gr-items { display:flex; flex-direction:column; gap:6px; }
+.gr-item { display:flex; align-items:center; gap:6px; }
+.gr-item .gr-title { flex:1; font-size:13px; }
+.gr-item .gr-earned, .gr-item .gr-possible { width:64px; font-size:13px; }
+.gr-sl { color:var(--faint); }
+.gr-x { background:none; border:none; color:var(--faint); cursor:pointer; font-size:13px; padding:2px 4px; }
+.gr-x:hover { color:var(--red); }
+.gr-additem { background:none; border:1px dashed var(--line); color:var(--muted); border-radius:8px;
+  padding:5px 10px; font-size:12px; cursor:pointer; align-self:flex-start; }
+.gr-additem:hover { border-color:var(--accent); color:var(--fg); }

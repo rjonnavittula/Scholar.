@@ -1446,7 +1446,7 @@
 
   function courseModal(course) {
     const sel = course?.color || PALETTE[S.courses.length % PALETTE.length];
-    modal(`
+    const m = modal(`
       <h2>${course ? 'edit course' : 'new course'}</h2>
       <div class="frow"><label>name</label><input id="m-name" value="${esc(course?.name || '')}" placeholder="CMPEN 331" /></div>
       <div class="frow"><label>instructor</label><input id="m-inst" value="${esc(course?.instructor || '')}" placeholder="Prof. Ada Lovelace" /></div>
@@ -1454,7 +1454,7 @@
       <div class="frow"><label>credits</label><input id="m-cr" type="number" min="0" max="12" step="0.5" value="${course?.credits ?? ''}" placeholder="3" /></div>
       <div class="frow"><label>color</label>${swatchHtml(sel)}</div>
       <div class="frow"><label>notes</label><textarea id="m-notes" rows="3" placeholder="office hours, policies, reading sources…">${esc(course?.notes || '')}</textarea></div>
-      ${course ? '<div class="actions left"><button class="ghost danger-btn" data-m="del">delete</button></div>' : ''}
+      ${course ? '<div class="actions left"><button class="ghost danger-btn" data-m="del">delete</button><button class="ghost" id="m-grades" type="button">grades…</button></div>' : ''}
       ${ACTIONS(course ? 'save' : 'add')}`,
       async (act, ov) => {
         if (act === 'del') { await Api.del('/courses/' + course.id); await loadAll(); return toast('course deleted'); }
@@ -1474,7 +1474,93 @@
         await loadAll();
         toast(`${course ? 'updated' : 'added'} course \u00b7 ${nm}`);
       });
+    const gb = m.ov.querySelector('#m-grades');
+    if (gb) gb.onclick = () => gradesModal(course);
     wireSwatches($('modal-root'));
+  }
+
+  // ----- grades -----
+  function gradeLetter(p) {
+    if (p === null || p === undefined) return '';
+    for (const [f, l] of [[93, 'A'], [90, 'A-'], [87, 'B+'], [83, 'B'], [80, 'B-'],
+      [77, 'C+'], [73, 'C'], [70, 'C-'], [67, 'D+'], [60, 'D'], [0, 'F']]) if (p >= f) return l;
+    return 'F';
+  }
+  function gradeCalc(cats) {
+    const graded = [];
+    for (const c of cats) {
+      const its = (c.items || []).filter((i) => (+i.possible || 0) > 0);
+      const e = its.reduce((a, i) => a + (+i.earned || 0), 0);
+      const p = its.reduce((a, i) => a + (+i.possible || 0), 0);
+      if (p > 0 && (+c.weight || 0) > 0) graded.push({ w: +c.weight, pct: e / p * 100 });
+    }
+    const ws = graded.reduce((a, b) => a + b.w, 0);
+    const overall = ws > 0 ? graded.reduce((a, b) => a + b.pct * b.w, 0) / ws : null;
+    return { percent: overall === null ? null : Math.round(overall * 10) / 10, letter: gradeLetter(overall) };
+  }
+
+  async function gradesModal(course) {
+    let data; try { data = await Api.get('/grades/' + course.id); } catch (e) { data = { categories: [] }; }
+    const state = (data.categories || []).map((c) => ({
+      name: c.name, weight: c.weight,
+      items: (c.items || []).map((i) => ({ title: i.title, earned: i.earned, possible: i.possible })),
+    }));
+    if (!state.length) state.push({ name: '', weight: 0, items: [] });
+
+    const { ov, close } = modal(`<h2>grades \u00b7 ${esc(course.name)}</h2>
+      <div class="gr-summary" id="gr-sum"></div>
+      <div id="gr-body"></div>
+      <button class="ghost" id="gr-addcat" type="button" style="margin-top:10px">+ category</button>
+      <p class="muted small" style="margin-top:8px">Weights are normalized across categories that have grades, so empty ones don\u2019t count yet.</p>
+      <div class="actions"><span class="spacer"></span>
+        <button class="ghost" data-m="cancel">cancel</button>
+        <button class="primary" id="gr-save" type="button">save</button></div>`);
+
+    const paintSum = () => {
+      const s = gradeCalc(state);
+      ov.querySelector('#gr-sum').innerHTML = s.percent === null
+        ? '<span class="gr-none">no grades entered yet</span>'
+        : `<span class="gr-letter">${s.letter}</span><span class="gr-pct">${s.percent}%</span>`;
+    };
+    const render = () => {
+      ov.querySelector('#gr-body').innerHTML = state.map((c, ci) => `
+        <div class="gr-cat">
+          <div class="gr-cat-head">
+            <input class="gr-cname" data-ci="${ci}" value="${esc(c.name)}" placeholder="category (e.g. Homework)" />
+            <input class="gr-cweight" data-ci="${ci}" type="number" min="0" max="100" value="${c.weight || ''}" placeholder="wt" /><span class="gr-wpct">%</span>
+            <button class="gr-x gr-del-cat" data-ci="${ci}" type="button" title="remove category">\u2715</button>
+          </div>
+          <div class="gr-items">
+            ${(c.items || []).map((it, ii) => `<div class="gr-item">
+              <input class="gr-title" data-ci="${ci}" data-ii="${ii}" value="${esc(it.title)}" placeholder="item" />
+              <input class="gr-earned" data-ci="${ci}" data-ii="${ii}" type="number" step="0.1" value="${it.earned || ''}" placeholder="got" />
+              <span class="gr-sl">/</span>
+              <input class="gr-possible" data-ci="${ci}" data-ii="${ii}" type="number" step="0.1" value="${it.possible || ''}" placeholder="max" />
+              <button class="gr-x gr-del-item" data-ci="${ci}" data-ii="${ii}" type="button" title="remove">\u2715</button>
+            </div>`).join('')}
+            <button class="gr-additem" data-ci="${ci}" type="button">+ item</button>
+          </div>
+        </div>`).join('');
+
+      ov.querySelectorAll('.gr-cname').forEach((el) => { el.oninput = () => { state[+el.dataset.ci].name = el.value; }; });
+      ov.querySelectorAll('.gr-cweight').forEach((el) => { el.oninput = () => { state[+el.dataset.ci].weight = +el.value || 0; paintSum(); }; });
+      ov.querySelectorAll('.gr-title').forEach((el) => { el.oninput = () => { state[+el.dataset.ci].items[+el.dataset.ii].title = el.value; }; });
+      ov.querySelectorAll('.gr-earned').forEach((el) => { el.oninput = () => { state[+el.dataset.ci].items[+el.dataset.ii].earned = +el.value || 0; paintSum(); }; });
+      ov.querySelectorAll('.gr-possible').forEach((el) => { el.oninput = () => { state[+el.dataset.ci].items[+el.dataset.ii].possible = +el.value || 0; paintSum(); }; });
+      ov.querySelectorAll('.gr-additem').forEach((el) => { el.onclick = () => { state[+el.dataset.ci].items.push({ title: '', earned: 0, possible: 0 }); render(); }; });
+      ov.querySelectorAll('.gr-del-item').forEach((el) => { el.onclick = () => { state[+el.dataset.ci].items.splice(+el.dataset.ii, 1); render(); }; });
+      ov.querySelectorAll('.gr-del-cat').forEach((el) => { el.onclick = () => { state.splice(+el.dataset.ci, 1); if (!state.length) state.push({ name: '', weight: 0, items: [] }); render(); }; });
+      paintSum();
+    };
+    ov.querySelector('#gr-addcat').onclick = () => { state.push({ name: '', weight: 0, items: [] }); render(); };
+    ov.querySelector('#gr-save').onclick = async () => {
+      try {
+        await Api.put('/grades/' + course.id, { categories: state });
+        toast('grades saved'); close();
+        if ($('courses') && !$('courses').classList.contains('hidden')) renderCoursesHub();
+      } catch (e) { toast('save failed'); }
+    };
+    render();
   }
 
   function activityModal(existing) {
@@ -1590,15 +1676,19 @@
     if (courses) renderCoursesHub();
   }
 
-  function renderCoursesHub() {
+  async function renderCoursesHub() {
     const el = $('courses'); if (!el) return;
+    let gsum = {}; try { gsum = await Api.get('/grades/summary'); } catch (e) { /* ignore */ }
     const openCount = (cid) => S.tasks.filter((t) => t.course_id === cid && t.status !== 'done').length;
-    const cards = (S.courses || []).map((c) => `
-      <button class="ch-card" data-cid="${c.id}" style="--cc:${c.color}">
-        <span class="ch-top"><span class="ch-dot"></span><span class="ch-name">${esc(c.name)}</span></span>
+    const cards = (S.courses || []).map((c) => {
+      const g = gsum[String(c.id)];
+      return `<button class="ch-card" data-cid="${c.id}" style="--cc:${c.color}">
+        <span class="ch-top"><span class="ch-dot"></span><span class="ch-name">${esc(c.name)}</span>
+          ${g ? `<span class="ch-grade">${g.letter} \u00b7 ${g.percent}%</span>` : ''}</span>
         ${c.instructor ? `<span class="ch-inst">${esc(c.instructor)}</span>` : '<span class="ch-inst muted">no instructor</span>'}
         <span class="ch-meta">${openCount(c.id)} open \u00b7 ${c.source === 'canvas' ? 'Canvas' : 'manual'}${c.credits ? ' \u00b7 ' + c.credits + ' cr' : ''}</span>
-      </button>`).join('');
+      </button>`;
+    }).join('');
     el.innerHTML = `
       <div class="ch-head"><h2>Courses</h2>
         <div class="ch-actions">
