@@ -21,6 +21,8 @@ name: hive-tasks
 
 services:
   hive-api:
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
     volumes:
       - ./app:/app/app
       - ./alembic:/app/alembic
