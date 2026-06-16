@@ -49,6 +49,7 @@
     Panel.mount($('task-groups'), S, { onTaskAction, onPlanQuick, onTaskEdit });
     wireChrome();
     await loadAll();
+    Pomo.restore();
     initTopbarResize();
     showGreeting();
   }
@@ -195,6 +196,8 @@
     $('nav-prev').onclick = () => { navBy(-1); };
     $('nav-next').onclick = () => { navBy(1); };
     $('btn-add-task').onclick = () => taskModal();
+    const pomoBtn = $('btn-pomodoro');
+    if (pomoBtn) pomoBtn.onclick = () => pomodoroModal();
 
     // task panel: sort popover + calculate-cushion button
     const sortBtn = $('btn-sort'), sortPop = $('sort-pop');
@@ -558,6 +561,209 @@
       }, 1000);
     },
   };
+
+  // ---------- Pomodoro ----------
+  // A focus/break cycler layered on real logging: each completed (or stopped)
+  // focus phase logs its elapsed minutes to the task via /tasks/{id}/log. Runs
+  // on its own ticker independent of the modal, and resumes across reloads.
+  const Pomo = {
+    cfg: { work: 25, shortBreak: 5, longBreak: 15, cycles: 4, autostart: true },
+    st: { phase: 'idle', taskId: null, taskTitle: '', endsAt: 0, remaining: 0, paused: false, cycle: 0 },
+    _tick: null, _ac: null,
+
+    loadCfg() {
+      try { Object.assign(this.cfg, JSON.parse(localStorage.getItem('scholar_pomo_cfg') || '{}')); } catch (e) { /* defaults */ }
+    },
+    saveCfg() { localStorage.setItem('scholar_pomo_cfg', JSON.stringify(this.cfg)); },
+    save() { localStorage.setItem('scholar_pomo', JSON.stringify(this.st)); },
+    restore() {
+      this.loadCfg();
+      try {
+        const s = JSON.parse(localStorage.getItem('scholar_pomo') || 'null');
+        if (s && s.phase && s.phase !== 'idle') {
+          this.st = s;
+          if (!s.paused && s.endsAt) { if (Date.now() >= s.endsAt) this._end(); else this._ensureTicker(); }
+        }
+      } catch (e) { /* ignore */ }
+      this._paintBtn();
+    },
+
+    dur(phase) { return ({ work: this.cfg.work, break: this.cfg.shortBreak, long: this.cfg.longBreak }[phase] || 0) * 60000; },
+    label(phase) { return ({ work: 'Focus', break: 'Short break', long: 'Long break', idle: 'Ready' }[phase || this.st.phase]); },
+    running() { return this.st.phase !== 'idle'; },
+    remainingMs() {
+      if (this.st.phase === 'idle') return 0;
+      return this.st.paused ? this.st.remaining : Math.max(0, this.st.endsAt - Date.now());
+    },
+    fmt(ms) {
+      const s = Math.max(0, Math.round(ms / 1000));
+      return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+    },
+
+    start(taskId, taskTitle) {
+      if (!taskId) { toast('pick a task to focus on', true); return; }
+      this.loadCfg();
+      this.st = { phase: 'work', taskId, taskTitle: taskTitle || '', endsAt: 0, remaining: 0, paused: false, cycle: 0 };
+      this._reqNotify();
+      this._begin('work', true);
+    },
+    _begin(phase, fresh) {
+      this.st.phase = phase;
+      this.st.endsAt = Date.now() + this.dur(phase);
+      this.st.paused = false; this.st.remaining = 0;
+      this.save(); this._ensureTicker(); this.render();
+      if (!fresh) this._notify(phase === 'work' ? 'Back to focus \u2014 ' + (this.st.taskTitle || 'study')
+                                                : (phase === 'long' ? 'Long break \u2014 step away' : 'Break time \u2014 rest a bit'));
+    },
+    _arm(phase) {                       // next phase ready but waiting (autostart off)
+      this.st.phase = phase; this.st.paused = true;
+      this.st.remaining = this.dur(phase); this.st.endsAt = 0;
+      this.save(); this.render();
+      this._notify(phase === 'work' ? 'Ready to focus when you are' : 'Time for a break');
+    },
+    _ensureTicker() {
+      if (this._tick) return;
+      this._tick = setInterval(() => {
+        if (this.st.phase === 'idle') return this._stopTicker();
+        if (!this.st.paused && Date.now() >= this.st.endsAt) this._end(); else this.render();
+      }, 250);
+    },
+    _stopTicker() { if (this._tick) { clearInterval(this._tick); this._tick = null; } },
+
+    async _logWork(elapsedMs) {
+      const m = Math.round(elapsedMs / 60000);
+      if (m < 1 || !this.st.taskId) return;
+      try { await Api.post(`/tasks/${this.st.taskId}/log?minutes=${m}`); await loadAll(); } catch (e) { /* keep cycling */ }
+    },
+    _end() {
+      if (this.st.phase === 'work') {
+        this._logWork(this.dur('work'));
+        this.st.cycle += 1;
+        const next = (this.st.cycle % this.cfg.cycles) === 0 ? 'long' : 'break';
+        if (this.cfg.autostart) this._begin(next, false); else this._arm(next);
+      } else {
+        if (this.cfg.autostart) this._begin('work', false); else this._arm('work');
+      }
+    },
+    pauseToggle() {
+      if (this.st.phase === 'idle') return;
+      if (this.st.paused) {
+        this.st.endsAt = Date.now() + (this.st.remaining || this.dur(this.st.phase));
+        this.st.remaining = 0; this.st.paused = false; this._ensureTicker();
+      } else { this.st.remaining = this.remainingMs(); this.st.paused = true; }
+      this.save(); this.render();
+    },
+    skip() {
+      if (this.st.phase === 'idle') return;
+      if (this.st.phase === 'work') this._logWork(this.dur('work') - this.remainingMs());
+      if (this.st.phase === 'work') {
+        this.st.cycle += 1;
+        const next = (this.st.cycle % this.cfg.cycles) === 0 ? 'long' : 'break';
+        if (this.cfg.autostart) this._begin(next, false); else this._arm(next);
+      } else if (this.cfg.autostart) this._begin('work', false); else this._arm('work');
+    },
+    stop() {
+      if (this.st.phase === 'work') this._logWork(this.dur('work') - this.remainingMs());
+      this.st = { phase: 'idle', taskId: null, taskTitle: '', endsAt: 0, remaining: 0, paused: false, cycle: 0 };
+      this._stopTicker(); this.save(); this.render();
+    },
+
+    _reqNotify() { try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) { /* */ } },
+    _notify(msg) {
+      toast(msg);
+      try { if ('Notification' in window && Notification.permission === 'granted') new Notification('scholar', { body: msg }); } catch (e) { /* */ }
+      this._beep();
+    },
+    _beep() {
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+        const ac = this._ac || (this._ac = new AC());
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.type = 'sine'; o.frequency.value = 660; g.gain.value = 0.06;
+        o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.18);
+      } catch (e) { /* ignore */ }
+    },
+
+    _paintBtn() { const b = $('btn-pomodoro'); if (b) b.classList.toggle('on', this.running()); },
+    render() {
+      this._paintBtn();
+      const clock = $('pomo-clock'); if (!clock) return;     // modal not open
+      const phase = this.st.phase;
+      const ph = $('pomo-phase'); ph.textContent = this.label(); ph.className = 'pomo-phase ' + phase;
+      clock.textContent = phase === 'idle' ? this.fmt(this.dur('work')) : this.fmt(this.remainingMs());
+      clock.classList.toggle('paused', this.st.paused && phase !== 'idle');
+      const dots = $('pomo-dots');
+      if (dots) {
+        const done = this.st.cycle % this.cfg.cycles;
+        dots.innerHTML = Array.from({ length: this.cfg.cycles }, (_, i) =>
+          `<span class="pdot ${i < done ? 'on' : ''} ${(phase === 'work' && i === done) ? 'live' : ''}"></span>`).join('');
+      }
+      const wrap = $('pomo-controls');
+      if (wrap) {
+        const idle = phase === 'idle';
+        wrap.querySelector('#pm-start').style.display = idle ? '' : 'none';
+        wrap.querySelector('#pm-pause').style.display = idle ? 'none' : '';
+        wrap.querySelector('#pm-skip').style.display = idle ? 'none' : '';
+        wrap.querySelector('#pm-stop').style.display = idle ? 'none' : '';
+        wrap.querySelector('#pm-pause').textContent = this.st.paused ? 'resume' : 'pause';
+      }
+      const picker = $('pomo-task'); if (picker) picker.disabled = !idle;
+    },
+  };
+
+  function clampInt(v, lo, hi, dflt) { v = parseInt(v, 10); if (isNaN(v)) return dflt; return Math.max(lo, Math.min(hi, v)); }
+
+  function pomodoroModal() {
+    Pomo.loadCfg();
+    const open = S.tasks.filter((t) => t.status !== 'done');
+    const curId = Pomo.st.taskId || (Timer.state && Timer.state.running ? Timer.state.task_id : null) || (open[0] && open[0].id);
+    const taskOpts = open.map((t) => `<option value="${t.id}" ${t.id === curId ? 'selected' : ''}>${esc(t.title)}</option>`).join('');
+    const c = Pomo.cfg;
+    const html = `
+      <div class="pomo">
+        <div class="pomo-phase ${Pomo.st.phase}" id="pomo-phase">${Pomo.label()}</div>
+        <div class="pomo-clock" id="pomo-clock">${Pomo.fmt(Pomo.running() ? Pomo.remainingMs() : Pomo.dur('work'))}</div>
+        <div class="pomo-dots" id="pomo-dots"></div>
+        <label class="pomo-task-row">focus on
+          <select id="pomo-task">${taskOpts || '<option value="">no open tasks</option>'}</select>
+        </label>
+        <div class="pomo-controls" id="pomo-controls">
+          <button class="primary" id="pm-start">start</button>
+          <button id="pm-pause">pause</button>
+          <button id="pm-skip">skip</button>
+          <button id="pm-stop" class="danger">stop</button>
+        </div>
+        <details class="pomo-settings">
+          <summary>settings</summary>
+          <div class="pomo-grid">
+            <label>focus<input type="number" min="1" max="180" id="ps-work" value="${c.work}"></label>
+            <label>short break<input type="number" min="1" max="60" id="ps-short" value="${c.shortBreak}"></label>
+            <label>long break<input type="number" min="1" max="90" id="ps-long" value="${c.longBreak}"></label>
+            <label>cycles<input type="number" min="1" max="12" id="ps-cycles" value="${c.cycles}"></label>
+          </div>
+          <label class="pomo-auto"><input type="checkbox" id="ps-auto" ${c.autostart ? 'checked' : ''}> auto-start next phase</label>
+        </details>
+      </div>`;
+    const { ov } = modal(html);
+    ov.querySelector('#pm-start').onclick = () => {
+      const sel = ov.querySelector('#pomo-task');
+      Pomo.start(+(sel && sel.value), sel && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : '');
+    };
+    ov.querySelector('#pm-pause').onclick = () => Pomo.pauseToggle();
+    ov.querySelector('#pm-skip').onclick = () => Pomo.skip();
+    ov.querySelector('#pm-stop').onclick = () => Pomo.stop();
+    const saveCfg = () => {
+      Pomo.cfg.work = clampInt(ov.querySelector('#ps-work').value, 1, 180, 25);
+      Pomo.cfg.shortBreak = clampInt(ov.querySelector('#ps-short').value, 1, 60, 5);
+      Pomo.cfg.longBreak = clampInt(ov.querySelector('#ps-long').value, 1, 90, 15);
+      Pomo.cfg.cycles = clampInt(ov.querySelector('#ps-cycles').value, 1, 12, 4);
+      Pomo.cfg.autostart = ov.querySelector('#ps-auto').checked;
+      Pomo.saveCfg();
+      if (!Pomo.running()) Pomo.render();
+    };
+    for (const el of ov.querySelectorAll('.pomo-settings input')) el.onchange = saveCfg;
+    Pomo.render();
+  }
 
   function onBlockMenu(block) {
     const t = S.tasks.find((x) => x.id === block.task_id) || {};
