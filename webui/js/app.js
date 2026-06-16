@@ -2080,6 +2080,11 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
           <input id="m-ics" placeholder="https://psu.instructure.com/feeds/calendars/user_….ics" /></div>
         <div class="btns"><button class="ghost" id="cv-save-ics">save</button>
           <button class="primary" id="cv-sync-ics">save &amp; sync now</button></div>
+        <div class="cv-auto">
+          <label class="cv-auto-row"><input type="checkbox" id="cv-autosync" /> auto-sync in the background</label>
+          <label class="cv-auto-hours">every <input id="cv-autohours" type="number" min="1" max="168" value="12" /> hours</label>
+          <div class="muted small" id="cv-lastsync"></div>
+        </div>
       </div>
 
       <div class="cv-panel" data-panel="script" hidden>
@@ -2137,8 +2142,25 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
         toast(`feed: ${r.created} new, ${r.updated} updated (${r.events} events)`); close(); }
       catch (e) { toast('feed sync failed — check the URL'); }
     };
-    ov.querySelector('#cv-copy-bm').onclick = async () => {
-      try { await navigator.clipboard.writeText(ov.querySelector('#cv-bm').value); toast('script copied'); }
+    const auto = ov.querySelector('#cv-autosync');
+    if (auto) {
+      const hrs = ov.querySelector('#cv-autohours');
+      const lastEl = ov.querySelector('#cv-lastsync');
+      auto.checked = !!S.canvas.autosync;
+      hrs.value = S.canvas.sync_hours || 12;
+      lastEl.textContent = S.canvas.last_sync
+        ? 'last auto-sync: ' + new Date(S.canvas.last_sync).toLocaleString()
+        : 'never auto-synced yet';
+      const saveAuto = async () => {
+        const hours = +hrs.value || 12;
+        await Api.put('/config/settings', { canvas_autosync: auto.checked, canvas_sync_hours: hours });
+        S.canvas.autosync = auto.checked; S.canvas.sync_hours = hours;
+        toast(auto.checked ? `auto-sync on \u00b7 every ${hours}h` : 'auto-sync off');
+      };
+      auto.onchange = saveAuto;
+      hrs.onchange = () => { if (auto.checked) saveAuto(); };
+    }
+    ov.querySelector('#cv-copy-bm').onclick = async () => {      try { await navigator.clipboard.writeText(ov.querySelector('#cv-bm').value); toast('script copied'); }
       catch (e) { ov.querySelector('#cv-bm').select(); toast('press ⌘/Ctrl-C to copy'); }
     };
     ov.querySelector('#cv-import').onclick = async () => {

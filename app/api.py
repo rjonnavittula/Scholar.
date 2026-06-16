@@ -425,7 +425,7 @@ def put_settings(body: dict, session: Session = Depends(get_session)):
               "day_start_min", "canvas_base_url", "canvas_token", "canvas_ics_url",
               "home_tz", "school_tz", "week_start", "country", "onboarded",
               "theme", "accent", "density", "fontscale", "default_view",
-              "display_name"):
+              "display_name", "canvas_autosync", "canvas_sync_hours"):
         if k in body and body[k] is not None:
             setattr(st, k, body[k])
     session.add(st); session.commit()
@@ -655,7 +655,10 @@ def canvas_status(session: Session = Depends(get_session)):
     st = session.get(Settings, 1) or Settings(id=1)
     return {"configured": bool(st.canvas_base_url and st.canvas_token),
             "base_url": st.canvas_base_url,
-            "ics_configured": bool(st.canvas_ics_url)}
+            "ics_configured": bool(st.canvas_ics_url),
+            "autosync": bool(getattr(st, "canvas_autosync", False)),
+            "sync_hours": getattr(st, "canvas_sync_hours", 12) or 12,
+            "last_sync": st.canvas_last_sync.isoformat() if getattr(st, "canvas_last_sync", None) else None}
 
 
 @integrations_router.post("/canvas/sync")

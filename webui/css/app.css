@@ -1003,3 +1003,11 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 .gr-additem { background:none; border:1px dashed var(--line); color:var(--muted); border-radius:8px;
   padding:5px 10px; font-size:12px; cursor:pointer; align-self:flex-start; }
 .gr-additem:hover { border-color:var(--accent); color:var(--fg); }
+
+/* === v5n: canvas auto-sync === */
+.cv-auto { margin-top:14px; padding-top:12px; border-top:1px solid var(--line);
+  display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; }
+.cv-auto-row { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--fg); }
+.cv-auto-hours { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
+.cv-auto-hours input { width:56px; }
+.cv-auto #cv-lastsync { flex-basis:100%; }

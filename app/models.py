@@ -131,6 +131,9 @@ class Settings(SQLModel, table=True):
     canvas_base_url: str = ""
     canvas_token: str = ""
     canvas_ics_url: str = ""
+    canvas_autosync: bool = False
+    canvas_sync_hours: int = 12
+    canvas_last_sync: Optional[datetime] = None
 
 
 class TimeLog(SQLModel, table=True):
