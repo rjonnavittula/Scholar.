@@ -1579,8 +1579,8 @@
       <div class="an-tabs">
         <span class="an-tab" data-tab="analytics">Analytics</span>
         <span class="an-tab" data-tab="streak">Streak</span>
-        <span class="an-tab soon" title="coming next">Cushion</span>
-        <span class="an-tab soon" title="coming next">Timeline</span>
+        <span class="an-tab" data-tab="cushion">Cushion</span>
+        <span class="an-tab" data-tab="timeline">Timeline</span>
       </div>
       <div class="an-controls">
         <div class="seg an-pf"><span class="on" data-pf="past">Past</span><span data-pf="future">Future</span></div>
@@ -1611,6 +1611,8 @@
     el.querySelectorAll('.an-tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === name));
     const controls = el.querySelector('.an-controls');
     if (name === 'streak') { controls.classList.add('hidden'); loadStreak(); }
+    else if (name === 'cushion') { controls.classList.add('hidden'); loadCushion(); }
+    else if (name === 'timeline') { controls.classList.add('hidden'); loadTimeline(); }
     else { controls.classList.remove('hidden'); if (anMode === 'future') loadFuture(); else loadPast(); }
   }
 
@@ -1811,6 +1813,111 @@
     return `<div class="mcal"><div class="mcal-h">${t.toLocaleString('en', { month: 'long' })} ${y}</div>
       <div class="mcal-dows">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => `<span>${x}</span>`).join('')}</div>
       <div class="mcal-grid">${arr.map(cell).join('')}</div></div>`;
+  }
+
+  // ---- Cushion sub-tab (feasibility snapshot) ----------------------------
+  async function loadCushion() {
+    const body = $('an-body'); if (!body) return;
+    body.innerHTML = '<p class="muted small">loading\u2026</p>';
+    try {
+      const today = isoOf(new Date());
+      const [cu, avail] = await Promise.all([
+        Api.get('/cushion'),
+        Api.get(`/cushion/availability?start=${today}&days=14`),
+      ]);
+      body.innerHTML = anCushionHtml(cu, avail);
+    } catch (e) { body.innerHTML = '<p class="muted small">couldn\u2019t load cushion</p>'; }
+  }
+
+  const _cuAvail = (avail) => {
+    if (!avail || !avail.length) return '<p class="muted small">no availability.</p>';
+    const max = Math.max(1, ...avail.map((d) => d.free_min));
+    return `<div class="an-weekbars cu-avail">${avail.map((d) => {
+      const dt = new Date(d.date + 'T00:00');
+      const lab = dt.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2) + ' ' + dt.getDate();
+      return `<div class="an-wcol"><span class="an-wb" style="height:${(d.free_min / max * 100).toFixed(1)}%" title="${d.date} \u00b7 free ${fmtDur(d.free_min)}${d.due_count ? ' \u00b7 ' + d.due_count + ' due' : ''}"></span>
+        <i class="cu-duedot ${d.due_count ? 'on' : ''}"></i>
+        <span class="an-wlabel">${lab}</span></div>`;
+    }).join('')}</div>
+      <div class="an-legend"><span><i class="cu-duedot on" style="position:static"></i>task due</span></div>`;
+  };
+
+  function anCushionHtml(cu, avail) {
+    const ok = cu.feasible;
+    const head = `<div class="cu-head ${ok ? 'ok' : 'bad'}">
+      <div class="cu-head-lab">${ok ? 'On track' : 'Behind'}</div>
+      <div class="cu-head-num">${ok ? '+' : '\u2212'}${cu.total_cushion_human.replace(' short', '')}</div>
+      <div class="cu-head-sub">${ok ? 'total cushion across all your due dates'
+        : 'short across your due dates \u2014 plan more time or trim scope'}</div></div>`;
+    const rows = (cu.per_task || []).slice().sort((a, b) => a.cushion_min - b.cushion_min);
+    const maxAbs = Math.max(60, ...rows.map((r) => Math.abs(r.cushion_min)));
+    const taskRows = rows.length ? rows.map((r) => {
+      const neg = r.cushion_min < 0;
+      const w = (Math.abs(r.cushion_min) / maxAbs * 100).toFixed(1);
+      const due = r.due_at ? new Date(r.due_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+      return `<div class="cu-row">
+        <span class="cu-tlabel">${esc(r.title)}<i class="cu-due">${due} \u00b7 need ${fmtDur(r.remaining_min)}</i></span>
+        <span class="cu-bar"><span class="cu-fill ${r.level}" style="width:${w}%"></span></span>
+        <span class="cu-val ${r.level}">${neg ? '\u2212' : '+'}${fmtDur(r.cushion_min)}</span></div>`;
+    }).join('') : '<p class="muted small">no scheduled tasks with due dates.</p>';
+    const uns = (cu.unscheduled_task_ids || []).length;
+    return `
+      <section class="an-sec">${head}</section>
+      <section class="an-sec"><h3>Cushion by task <span class="muted small">(tightest first)</span></h3>
+        <div class="an-card">${taskRows}
+          ${uns ? `<p class="muted small" style="margin-top:10px">${uns} task${uns === 1 ? '' : 's'} with no due date \u2014 not counted.</p>` : ''}</div></section>
+      <section class="an-sec"><h3>Free study time ahead <span class="muted small">(next 14 days)</span></h3>
+        <div class="an-card">${_cuAvail(avail)}</div></section>`;
+  }
+
+  // ---- Timeline sub-tab (cushion over time, by due date) -----------------
+  async function loadTimeline() {
+    const body = $('an-body'); if (!body) return;
+    body.innerHTML = '<p class="muted small">loading\u2026</p>';
+    try { body.innerHTML = anTimelineHtml(await Api.get('/cushion')); }
+    catch (e) { body.innerHTML = '<p class="muted small">couldn\u2019t load timeline</p>'; }
+  }
+
+  function anTimelineHtml(cu) {
+    const pts = (cu.per_task || []).map((r) => ({
+      title: r.title, due: r.due_at, demand: r.cumulative_needed_min,
+      capacity: r.free_until_due_min, cushion: r.cushion_min, level: r.level,
+    }));
+    const bad = pts.find((p) => p.cushion < 0);
+    const note = !pts.length ? ''
+      : bad ? `<p class="muted small" style="margin-top:8px">First crunch: <strong>${esc(bad.title)}</strong>${bad.due ? ' \u00b7 ' + new Date(bad.due).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''} \u2014 cumulative work outruns free time by ${fmtDur(bad.cushion)}.</p>`
+        : '<p class="muted small" style="margin-top:8px">Cumulative work stays under your available time at every due date \u2014 you\u2019re feasible.</p>';
+    return `<section class="an-sec"><h3>Cushion over time <span class="muted small">(work due vs free time, by due date)</span></h3>
+      <div class="an-card">${_cuTimeline(pts)}${note}</div></section>`;
+  }
+
+  function _cuTimeline(pts) {
+    if (!pts.length) return '<p class="muted small">no scheduled tasks with due dates.</p>';
+    const W = 640, H = 240, L = 50, R = 14, T = 14, B = 32;
+    const n = pts.length;
+    const maxY = Math.max(1, ...pts.map((p) => Math.max(p.demand, p.capacity)));
+    const X = (i) => L + (n === 1 ? (W - L - R) / 2 : i * (W - L - R) / (n - 1));
+    const Y = (v) => T + (1 - v / maxY) * (H - T - B);
+    const poly = (key) => pts.map((p, i) => `${X(i).toFixed(1)},${Y(p[key]).toFixed(1)}`).join(' ');
+    const demArea = `${X(0).toFixed(1)},${Y(0).toFixed(1)} ${poly('demand')} ${X(n - 1).toFixed(1)},${Y(0).toFixed(1)}`;
+    const dots = pts.map((p, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.demand).toFixed(1)}" r="3.5" class="cu-dot ${p.level}"><title>${esc(p.title)}${p.due ? ' \u00b7 ' + new Date(p.due).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}
+need (cumulative): ${fmtDur(p.demand)} \u00b7 free: ${fmtDur(p.capacity)}
+cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`).join('');
+    const idxs = n <= 6 ? pts.map((_, i) => i) : [0, Math.round(n / 3), Math.round(2 * n / 3), n - 1];
+    const xlabs = [...new Set(idxs)].map((i) => {
+      const d = pts[i].due ? new Date(pts[i].due) : null;
+      return `<text x="${X(i).toFixed(1)}" y="${H - 10}" class="cu-xlab">${d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</text>`;
+    }).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" class="cu-svg" preserveAspectRatio="xMidYMid meet">
+      <line x1="${L}" y1="${Y(0).toFixed(1)}" x2="${W - R}" y2="${Y(0).toFixed(1)}" class="cu-axis"/>
+      <text x="6" y="${(Y(maxY) + 4).toFixed(1)}" class="cu-ylab">${fmtDur(maxY)}</text>
+      <text x="6" y="${(Y(0) + 4).toFixed(1)}" class="cu-ylab">0</text>
+      <polygon points="${demArea}" class="cu-demarea"/>
+      <polyline points="${poly('capacity')}" class="cu-cap"/>
+      <polyline points="${poly('demand')}" class="cu-dem"/>
+      ${dots}${xlabs}
+    </svg>
+    <div class="an-legend" style="margin-top:8px"><span><i style="background:var(--accent)"></i>free time available</span><span><i style="background:#C58A77"></i>work due (cumulative)</span></div>`;
   }
 
   function canvasModal() {

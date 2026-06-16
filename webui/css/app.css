@@ -921,3 +921,35 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 .pomo-grid label { display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--faint); }
 .pomo-grid input { width:100%; }
 .pomo-auto { display:flex; gap:8px; align-items:center; font-size:12px; color:var(--muted); }
+
+/* === v5j: Cushion + Timeline insights === */
+.cu-head { text-align:center; padding:18px 16px; border-radius:var(--r); border:1px solid var(--line); }
+.cu-head.ok  { background:rgba(95,107,90,.12);  border-color:rgba(95,107,90,.42); }
+.cu-head.bad { background:rgba(150,80,70,.12);   border-color:rgba(150,80,70,.42); }
+.cu-head-lab { font-size:11px; text-transform:uppercase; letter-spacing:.09em; color:var(--muted); }
+.cu-head-num { font-family:var(--serif); font-size:46px; line-height:1.1; margin:4px 0; }
+.cu-head.ok .cu-head-num  { color:var(--green); }
+.cu-head.bad .cu-head-num { color:var(--red); }
+.cu-head-sub { font-size:12px; color:var(--faint); }
+.cu-row { display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line); }
+.cu-row:last-child { border-bottom:0; }
+.cu-tlabel { flex:0 0 44%; font-size:13px; display:flex; flex-direction:column; min-width:0; }
+.cu-tlabel { overflow:hidden; }
+.cu-due { font-style:normal; font-size:11px; color:var(--faint); margin-top:2px; }
+.cu-bar { flex:1; height:8px; background:var(--input); border-radius:5px; position:relative; overflow:hidden; }
+.cu-fill { position:absolute; left:0; top:0; bottom:0; border-radius:5px; }
+.cu-fill.green { background:var(--green); } .cu-fill.yellow { background:var(--yellow); } .cu-fill.red { background:var(--red); }
+.cu-val { flex:0 0 auto; min-width:68px; text-align:right; font-size:12px; font-variant-numeric:tabular-nums; }
+.cu-val.green { color:var(--green); } .cu-val.yellow { color:var(--yellow); } .cu-val.red { color:var(--red); }
+.cu-avail .an-wcol { position:relative; }
+.cu-duedot { width:5px; height:5px; border-radius:50%; background:transparent; margin:3px auto 0; }
+.cu-duedot.on { background:var(--accent); }
+.cu-svg { width:100%; height:auto; display:block; }
+.cu-axis { stroke:var(--line); stroke-width:1; }
+.cu-ylab, .cu-xlab { fill:var(--faint); font-size:10px; font-family:var(--sans); }
+.cu-xlab { text-anchor:middle; }
+.cu-cap { fill:none; stroke:var(--accent); stroke-width:2; stroke-linejoin:round; }
+.cu-dem { fill:none; stroke:#C58A77; stroke-width:2; stroke-linejoin:round; }
+.cu-demarea { fill:rgba(197,138,119,.12); stroke:none; }
+.cu-dot { stroke:var(--bg); stroke-width:1.5; }
+.cu-dot.green { fill:var(--green); } .cu-dot.yellow { fill:var(--yellow); } .cu-dot.red { fill:var(--red); }
