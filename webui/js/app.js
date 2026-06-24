@@ -99,6 +99,7 @@
     applyTheme();
     renderSidebar(); renderTop(); renderStreak(); Cal.render(); Panel.render();
     if ($('courses') && !$('courses').classList.contains('hidden')) renderCoursesHub();
+    if ($('learn') && !$('learn').classList.contains('hidden')) renderHiveCourses();
     const list = document.getElementById('tasklist');
     if (list && !list.classList.contains('hidden')) renderTaskList(list);
   }
@@ -235,6 +236,8 @@
     document.querySelector('[data-view="home"]').onclick = (e) => showView('home', e.currentTarget);
     const cvBtn = document.querySelector('[data-view="courses"]');
     if (cvBtn) cvBtn.onclick = (e) => showView('courses', e.currentTarget);
+    const learnBtn = document.querySelector('[data-view="learn"]');
+    if (learnBtn) learnBtn.onclick = (e) => showView('learn', e.currentTarget);
     wireTabs();
   }
 
@@ -1558,6 +1561,7 @@
         await Api.put('/grades/' + course.id, { categories: state });
         toast('grades saved'); close();
         if ($('courses') && !$('courses').classList.contains('hidden')) renderCoursesHub();
+    if ($('learn') && !$('learn').classList.contains('hidden')) renderHiveCourses();
       } catch (e) { toast('save failed'); }
     };
     render();
@@ -1666,14 +1670,23 @@
     for (const b of document.querySelectorAll('.rail-btn[data-view]')) b.classList.toggle('active', b === btn);
     const insights = name === 'insights';
     const courses = name === 'courses';
-    const home = !insights && !courses;
+    const learn = name === 'learn';
+    const home = !insights && !courses && !learn;
     $('analytics').classList.toggle('hidden', !insights);
     const cv = $('courses'); if (cv) cv.classList.toggle('hidden', !courses);
+    const lv = $('learn'); if (lv) lv.classList.toggle('hidden', !learn);
     $('calendar').classList.toggle('hidden', !home);
     const bar = document.querySelector('.topbar'); if (bar) bar.classList.toggle('hidden', !home);
     const panel = $('panel'); if (panel) panel.classList.toggle('hidden', !home);
     if (insights) renderAnalytics(tab);
     if (courses) renderCoursesHub();
+    if (learn) renderHiveCourses();
+  }
+
+  function renderHiveCourses() {
+    const el = $('learn');
+    if (!el || !window.HiveCourses) return;
+    window.HiveCourses.render(el, S, Api);
   }
 
   async function renderCoursesHub() {
