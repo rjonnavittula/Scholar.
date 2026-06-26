@@ -1,250 +1,355 @@
-/* learn.js — HIVE-Courses v1.1.
-   Brilliant-style focus + Boot.dev-style map + Shovel-style academic signals.
-   Frontend-only: derives course missions from existing Scholar state. */
+/* learn.js — HIVE-Courses Forge replacement.
+   Scholar Forge UI transplanted into Scholar's existing vanilla frontend.
+   No React CDN/Babel/Tailwind. No model-generated HTML/JS nodes. */
 window.HiveCourses = (() => {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  const fmtDur = (mins) => {
-    const m = Math.max(0, Math.round(Number(mins) || 0));
-    const h = Math.floor(m / 60);
-    const r = m % 60;
-    return h && r ? `${h}h ${r}m` : h ? `${h}h` : `${r}m`;
+  const STORE = 'hive_courses_forge_v1';
+  let state = null;
+  let activeCategory = null;
+  let activeCourseId = null;
+  let activeLesson = null;
+
+  const icons = {
+    anatomy: '◇', biology: '◇', cell: '◇', neuro: '◇', chemistry: '△', law: '⚖', history: '▥',
+    art: '✧', design: '✧', security: '▣', ai: '◌', neural: '◌', data: '▦', math: '∞',
+    hardware: '◎', circuit: '◎', code: '</>', exam: '◆', default: '◈'
   };
 
-  const parseDate = (iso) => {
-    if (!iso) return null;
-    return new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z');
-  };
+  function loadStore() {
+    try { return JSON.parse(localStorage.getItem(STORE) || '{}'); } catch { return {}; }
+  }
+  function saveStore() { localStorage.setItem(STORE, JSON.stringify(state)); }
 
-  const daysUntil = (iso) => {
-    const d = parseDate(iso);
-    if (!d || Number.isNaN(d.getTime())) return null;
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const due = new Date(d); due.setHours(0, 0, 0, 0);
-    return Math.round((due - today) / 86400000);
-  };
-
-  const nodeMeta = (category) => ({
-    Exam: ['Boss fight', 'Prove mastery under pressure', '◆'],
-    Quiz: ['Checkpoint', 'Fast recall and concept precision', '◇'],
-    Homework: ['Practice set', 'Build fluency through reps', '▣'],
-    Lab: ['Lab node', 'Hands-on application', '⬢'],
-    Project: ['Build node', 'Ship a larger artifact', '⬡'],
-    Reading: ['Lore node', 'Turn material into usable concepts', '◌'],
-    Discussion: ['Comms node', 'Explain your thinking clearly', '✦'],
-    Other: ['Side quest', 'Finish the academic objective', '•'],
-    '': ['Mission', 'Clarify and complete the next step', '•'],
-  }[category || ''] || ['Side quest', 'Finish the academic objective', '•']);
-
-  function tasksFor(S, course, includeDone = false) {
-    const rows = (S.tasks || []).filter((t) => t.course_id === course.id);
-    return includeDone ? rows : rows.filter((t) => t.status !== 'done');
+  function uid(prefix = 'f') {
+    return prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
   }
 
-  function sortedOpenTasks(S, course) {
-    return tasksFor(S, course).slice().sort((a, b) => {
-      const ad = a.due_at || '9999';
-      const bd = b.due_at || '9999';
-      if (ad !== bd) return ad.localeCompare(bd);
-      if (!!a.priority_flag !== !!b.priority_flag) return a.priority_flag ? -1 : 1;
-      return String(a.title || '').localeCompare(String(b.title || ''));
-    });
+  function iconFor(title) {
+    const t = String(title || '').toLowerCase();
+    for (const [k, v] of Object.entries(icons)) if (t.includes(k)) return v;
+    return icons.default;
   }
 
-  function courseSummary(S, course) {
-    const all = tasksFor(S, course, true);
-    const open = all.filter((t) => t.status !== 'done');
-    const done = all.length - open.length;
-    const dueSoon = open.filter((t) => {
-      const d = daysUntil(t.due_at);
-      return d != null && d >= 0 && d <= 7;
-    });
-    const overdue = open.filter((t) => {
-      const d = daysUntil(t.due_at);
-      return d != null && d < 0;
-    });
-    const workload = open.reduce((sum, t) => sum + Math.max(0, (t.time_needed_min || 0) - (t.time_spent_min || 0)), 0);
-    const canvasTasks = open.filter((t) => t.source === 'canvas').length;
-    const structuredCats = new Set(['Reading', 'Exam', 'Quiz', 'Homework', 'Project', 'Lab', 'Discussion']);
-    const syllabusSignals = open.filter((t) => t.source !== 'canvas' && structuredCats.has(t.category || '')).length;
-    const activities = (S.activities || []).filter((a) => a.course_id === course.id).length;
-    const mastery = all.length ? Math.round((done / all.length) * 100) : 0;
-    const pressure = overdue.length ? 'danger' : dueSoon.length ? 'hot' : open.length ? 'live' : 'calm';
-    return { all, open, done, dueSoon, overdue, workload, canvasTasks, syllabusSignals, activities, mastery, pressure };
+  function xpFor(i, title) {
+    const t = String(title || '').toLowerCase();
+    if (t.includes('exam') || t.includes('mastery') || t.includes('clinical')) return 160;
+    if (t.includes('case') || t.includes('lab') || t.includes('project')) return 120;
+    return 80 + (i % 3) * 20;
   }
 
-  function statusForCourse(S, course) {
-    const s = courseSummary(S, course);
-    if (s.overdue.length) return ['danger', `${s.overdue.length} late`];
-    if (s.dueSoon.length) return ['hot', `${s.dueSoon.length} due soon`];
-    if (s.open.length) return ['live', `${s.open.length} open`];
-    return ['calm', 'clear'];
+  function normalizeTitle(s) {
+    return String(s || '').replace(/^[-*#\s]+/, '').replace(/[:：]\s*$/, '').trim();
   }
 
-  function renderRoadmap(S) {
-    const courses = S.courses || [];
-    if (!courses.length) {
-      return '<div class="learn-empty"><h3>No course paths yet.</h3><p class="muted">Add courses or import Canvas first. HIVE-Courses turns them into playable learning paths.</p></div>';
+  function classifyInput(text) {
+    const t = String(text || '');
+    const hits = [
+      /system prompt/i, /^#\s*system prompt/im, /##\s*role/im, /##\s*teaching style/im,
+      /##\s*output format/im, /##\s*quiz mode/im, /core teaching philosophy/i,
+      /interaction rules/i, /curriculum/i
+    ].filter((rx) => rx.test(t)).length;
+    return hits >= 2 ? 'system_prompt' : 'source_text';
+  }
+
+  function titleFromPrompt(text, category) {
+    const lines = String(text || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+    const role = lines.find((l) => /^#+\s*system prompt\s*:/i.test(l));
+    if (role) return normalizeTitle(role.replace(/^#+\s*system prompt\s*:\s*/i, '')).replace(/^The\s+/i, '');
+    const named = lines.find((l) => /^#\s+/.test(l));
+    if (named) return normalizeTitle(named.replace(/^#+\s*/, '')).replace(/^System Prompt:\s*/i, '');
+    const anatomy = lines.find((l) => /anatom/i.test(l));
+    if (anatomy) return 'Anatomy Track';
+    return `${category || 'Scholar'} Forge Track`;
+  }
+
+  function extractModules(text) {
+    const src = String(text || '').replace(/\r/g, '');
+    const lines = src.split('\n');
+    const modules = [];
+    const seen = new Set();
+    const add = (title, source = '') => {
+      title = normalizeTitle(title);
+      title = title.replace(/^module\s*\d+\s*[:.)-]?\s*/i, '')
+        .replace(/^chapter\s*\d+\s*[:.)-]?\s*/i, '')
+        .replace(/^unit\s*\d+\s*[:.)-]?\s*/i, '')
+        .replace(/^phase\s*\d+\s*[:.)-]?\s*/i, '');
+      if (!title || title.length < 3) return;
+      const key = title.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      modules.push({ id: uid('node'), title, exp: xpFor(modules.length, title), locked: modules.length > 0, completed: false, source });
+    };
+
+    for (const line of lines) {
+      let m = line.match(/^\s*(?:#{1,3}\s*)?(?:module|chapter|unit|phase)\s+(\d+|[ivx]+)\s*[:.)-]\s*(.+)$/i);
+      if (m) { add(m[2], line); continue; }
+      m = line.match(/^\s*[-*]\s*(?:module|chapter|unit)\s+(\d+|[ivx]+)\s*[:.)-]\s*(.+)$/i);
+      if (m) { add(m[2], line); continue; }
     }
-    return courses.map((c, i) => {
-      const [tone, label] = statusForCourse(S, c);
-      const s = courseSummary(S, c);
-      return `<button class="learn-path ${tone}" data-learn-course="${c.id}" style="--cc:${esc(c.color || '#8A7F73')}">
-        <span class="lp-num">${String(i + 1).padStart(2, '0')}</span>
-        <span class="lp-body"><b>${esc(c.name)}</b><em>${esc(label)} · ${fmtDur(s.workload)} workload</em></span>
-        <span class="lp-ring"></span>
-      </button>`;
-    }).join('');
-  }
 
-  function missionNodes(S, course) {
-    const tasks = sortedOpenTasks(S, course);
-    if (!tasks.length) {
-      return [
-        { state: 'done', icon: '✓', label: 'Course created', sub: 'Ready for enrichment' },
-        { state: 'current', icon: '✦', label: 'Generate path', sub: 'Local AI next patch' },
-        { state: 'locked', icon: '◆', label: 'Boss quiz', sub: 'Unlock after lessons' },
-      ];
+    if (modules.length < 3) {
+      for (const line of lines) {
+        const m = line.match(/^\s*[-*]\s+([A-Za-z][A-Za-z0-9 ,/&()'-]{8,80})\s*$/);
+        if (m && !/^(do not|never|always|when|use|ask|give|avoid)\b/i.test(m[1])) add(m[1], line);
+        if (modules.length >= 10) break;
+      }
     }
-    const nodes = tasks.slice(0, 6).map((t, i) => {
-      const d = daysUntil(t.due_at);
-      const meta = nodeMeta(t.category);
-      const late = d != null && d < 0;
-      const urgent = d != null && d <= 2;
-      return {
-        task: t,
-        state: late ? 'danger' : i === 0 ? 'current' : urgent ? 'hot' : 'open',
-        icon: meta[2],
-        label: t.title,
-        sub: `${t.category || 'Task'} · ${d == null ? 'unscheduled' : d < 0 ? `${Math.abs(d)}d late` : d === 0 ? 'today' : `${d}d`}`,
-      };
-    });
-    nodes.push({ state: 'locked', icon: '◆', label: 'Mastery check', sub: 'AI-generated boss node' });
-    return nodes;
+
+    if (!modules.length) {
+      ['Orientation', 'Core Concepts', 'Spatial Map', 'Guided Practice', 'Clinical/Application Check', 'Mastery Review']
+        .forEach((x) => add(x, 'fallback'));
+    }
+
+    return modules.slice(0, 12).map((m, i) => ({ ...m, locked: i > 0 }));
   }
 
-  function nodeMapHtml(S, course) {
-    return `<div class="learn-map" style="--cc:${esc(course.color || '#8A7F73')}">
-      ${missionNodes(S, course).map((n, i) => `<button class="lm-node ${n.state}" data-node-idx="${i}" ${n.task ? `data-task-id="${n.task.id}"` : ''}>
-        <span class="lm-glyph">${esc(n.icon)}</span>
-        <span class="lm-copy"><b>${esc(n.label)}</b><em>${esc(n.sub)}</em></span>
-      </button>`).join('')}
-    </div>`;
+  function buildCourseFromText(text, category) {
+    const inputType = classifyInput(text);
+    const title = titleFromPrompt(text, category);
+    const modules = extractModules(text);
+    return {
+      id: uid('course'),
+      title,
+      category,
+      inputType,
+      rawPrompt: String(text || ''),
+      createdAt: new Date().toISOString(),
+      modules,
+      mastery: 0,
+    };
   }
 
-  function learningSourcesHtml(S, course) {
-    const s = courseSummary(S, course);
-    const canvasLinked = course.source === 'canvas' || s.canvasTasks > 0 || (S.canvas && (S.canvas.configured || S.canvas.ics_configured));
-    const items = [
-      ['Canvas', canvasLinked ? `${s.canvasTasks || 0} task signal${s.canvasTasks === 1 ? '' : 's'}` : 'not linked yet', canvasLinked],
-      ['Syllabus', s.syllabusSignals ? `${s.syllabusSignals} structured deadline${s.syllabusSignals === 1 ? '' : 's'}` : 'import PDF/text', !!s.syllabusSignals],
-      ['Lecture rhythm', s.activities ? `${s.activities} class block${s.activities === 1 ? '' : 's'}` : 'add lecture activities', !!s.activities],
-      ['Slides/notes', 'next: upload lecture material', false],
-    ];
-    return `<div class="mission-sources">${items.map(([k, v, on]) => `<span class="ms-item ${on ? 'on' : ''}"><b>${esc(k)}</b><em>${esc(v)}</em></span>`).join('')}</div>`;
+  function initState(S) {
+    const stored = loadStore();
+    state = stored.categories ? stored : { categories: ['ANATOMY'], courses: { ANATOMY: [] } };
+    for (const c of (S.courses || [])) {
+      const cat = 'SCHOLAR';
+      if (!state.categories.includes(cat)) state.categories.push(cat);
+      if (!state.courses[cat]) state.courses[cat] = [];
+      if (!state.courses[cat].some((x) => x.scholarCourseId === c.id)) {
+        state.courses[cat].push({
+          id: uid('course'), scholarCourseId: c.id, title: c.name, category: cat, inputType: 'scholar_course',
+          createdAt: new Date().toISOString(), rawPrompt: c.notes || '', mastery: 0,
+          modules: forgeModulesFromScholar(S, c),
+        });
+      }
+    }
+    activeCategory = activeCategory && state.categories.includes(activeCategory) ? activeCategory : state.categories[0];
+    saveStore();
   }
 
-  function missionPanelHtml(S, Api, course) {
-    const s = courseSummary(S, course);
-    const next = sortedOpenTasks(S, course)[0];
-    const meta = next ? nodeMeta(next.category) : nodeMeta('');
-    const schoolTz = (S.settings && S.settings.school_tz) || 'America/New_York';
-    const due = next && next.due_at ? Api.dayInZone(next.due_at, schoolTz) : 'no due date';
-    return `<aside class="mission-panel">
-      <div class="mission-kicker">next mission</div>
-      <h3>${next ? esc(next.title) : 'Build this path'}</h3>
-      <p>${next ? esc(meta[1]) : 'This course has no open tasks. Add Canvas work, syllabus deadlines, or slides to generate lessons.'}</p>
-      <div class="mission-facts">
-        <span><b>${next ? esc(next.category || 'Task') : 'Path'}</b><em>type</em></span>
-        <span><b>${next ? esc(due) : 'ready'}</b><em>deadline</em></span>
-        <span><b>${next ? fmtDur(Math.max(0, (next.time_needed_min || 0) - (next.time_spent_min || 0))) : fmtDur(s.workload)}</b><em>remaining</em></span>
-      </div>
-      ${learningSourcesHtml(S, course)}
-      <button class="learn-start" disabled>Start interactive lesson · next patch</button>
-      <p class="learn-note">v1.1 is visual only. v2 wires local Ollama to turn Canvas tasks, syllabus items, and lecture slides into playable lessons.</p>
-    </aside>`;
+  function forgeModulesFromScholar(S, c) {
+    const tasks = (S.tasks || []).filter((t) => t.course_id === c.id).slice(0, 10);
+    const base = tasks.length ? tasks.map((t, i) => ({
+      id: uid('node'), title: t.title || `Mission ${i + 1}`, exp: xpFor(i, t.title), locked: i > 0, completed: t.status === 'done', source: t.category || 'Scholar task'
+    })) : ['Course Orientation', 'Next Mission', 'Practice Node', 'Mastery Check'].map((x, i) => ({ id: uid('node'), title: x, exp: xpFor(i, x), locked: i > 0, completed: false, source: 'Scholar' }));
+    return base;
   }
 
-  function heroHtml(S, course) {
-    const s = courseSummary(S, course);
-    const [tone, label] = statusForCourse(S, course);
-    return `<section class="course-hero ${tone}" style="--cc:${esc(course.color || '#8A7F73')}">
-      <div class="course-orbit"><span>✦</span><i></i><i></i><i></i></div>
-      <div class="course-copy">
-        <div class="lesson-kicker">${esc(course.source === 'canvas' ? 'Canvas path' : 'Scholar path')} · ${esc(label)}</div>
-        <h2>${esc(course.name)}</h2>
-        <p>${course.notes ? esc(course.notes) : 'A playable learning route generated from the academic signals Scholar already tracks.'}</p>
-      </div>
-      <div class="mastery-ring" style="--pct:${s.mastery * 3.6}deg"><b>${s.mastery}%</b><em>task mastery</em></div>
-    </section>`;
-  }
-
-  function statHudHtml(S) {
-    const courses = S.courses || [];
-    const open = (S.tasks || []).filter((t) => t.status !== 'done');
-    const totalWork = open.reduce((sum, t) => sum + Math.max(0, (t.time_needed_min || 0) - (t.time_spent_min || 0)), 0);
-    const dueSoon = open.filter((t) => { const d = daysUntil(t.due_at); return d != null && d >= 0 && d <= 7; }).length;
-    const streak = S.streak && (S.streak.current || S.streak.current_days || S.streak.streak || 0);
-    const xp = Math.max(0, ((S.tasks || []).filter((t) => t.status === 'done').length * 25) + ((S.planned || []).filter((p) => p.completed).length * 10));
-    return `<div class="learn-stats game-hud">
-      <span><b>${courses.length}</b><em>paths</em></span>
-      <span><b>${dueSoon}</b><em>due soon</em></span>
-      <span><b>${fmtDur(totalWork)}</b><em>workload</em></span>
-      <span><b>${xp}</b><em>scholar xp</em></span>
-      <span><b>${streak || 0}</b><em>streak</em></span>
-    </div>`;
-  }
-
-  function emptyCanvas() {
-    return `<section class="lesson-canvas idle">
-      <div class="lesson-orb">✦</div>
-      <h2>Pick a course path.</h2>
-      <p class="muted">The learning map will convert Canvas deadlines, syllabus items, lecture rhythms, and later slide uploads into playable missions.</p>
-    </section>`;
-  }
-
-  function lessonCanvas(S, Api, course) {
-    if (!course) return emptyCanvas();
-    return `<section class="lesson-canvas v11" style="--cc:${esc(course.color || '#8A7F73')}">
-      ${heroHtml(S, course)}
-      <div class="learn-playfield">
-        <div class="map-wrap">
-          <div class="map-title"><span>learning map</span><em>from Scholar signals</em></div>
-          ${nodeMapHtml(S, course)}
-        </div>
-        ${missionPanelHtml(S, Api, course)}
-      </div>
-    </section>`;
-  }
+  function currentCourses() { return (state.courses[activeCategory] || []); }
 
   function render(el, S, Api) {
-    const courses = S.courses || [];
-    const selectedId = Number(localStorage.getItem('hive_courses_selected') || (courses[0] && courses[0].id) || 0);
-    const selected = courses.find((c) => c.id === selectedId) || courses[0] || null;
+    initState(S || {});
+    if (activeLesson) return renderLesson(el, activeLesson, S, Api);
+    if (activeCourseId) return renderTopology(el, activeCourse(), S, Api);
+    renderDashboard(el, S, Api);
+  }
 
-    el.innerHTML = `<div class="learn-shell v11-shell">
-      <header class="learn-head v11-head">
-        <div><div class="learn-eyebrow">local-first learning layer</div><h1>HIVE-Courses</h1>
-          <p>Brilliant-style focus. Boot.dev-style path progression. Shovel-style academic planning underneath.</p></div>
-        ${statHudHtml(S)}
-      </header>
-      <div class="learn-body v11-body">
-        <aside class="learn-roadmap">
-          <div class="learn-rh"><span>Course paths</span><em>Canvas · syllabus · manual</em></div>
-          ${renderRoadmap(S)}
-        </aside>
-        <div class="learn-main">${lessonCanvas(S, Api, selected)}</div>
-      </div>
-    </div>`;
-
-    for (const b of el.querySelectorAll('[data-learn-course]')) {
-      b.classList.toggle('active', selected && +b.dataset.learnCourse === selected.id);
-      b.onclick = () => {
-        localStorage.setItem('hive_courses_selected', b.dataset.learnCourse);
-        render(el, S, Api);
-      };
+  function activeCourse() {
+    for (const cat of state.categories) {
+      const c = (state.courses[cat] || []).find((x) => x.id === activeCourseId);
+      if (c) return c;
     }
+    return null;
+  }
+
+  function renderDashboard(el, S, Api) {
+    const cats = state.categories;
+    const courses = currentCourses();
+    el.innerHTML = `<div class="forge-shell">
+      <aside class="forge-sidebar">
+        <div class="forge-mark"><span>S.</span></div>
+        <h1>Neural<br>Archives</h1>
+        <p class="forge-kicker">Core Disciplines</p>
+        <nav class="forge-disciplines">
+          ${cats.map((cat) => `<button data-forge-cat="${esc(cat)}" class="${cat === activeCategory ? 'active' : ''}">${esc(cat)}</button>`).join('')}
+        </nav>
+        <button class="forge-new-discipline" data-forge-new-discipline>+ New Discipline</button>
+      </aside>
+      <main class="forge-dashboard">
+        <header class="forge-dash-head">
+          <div><p>Category</p><h2>${esc(activeCategory)} Topology</h2></div>
+          <div class="forge-actions">
+            <button data-forge-text-node>+ Text Node</button>
+            <button data-forge-reset>Reset Local Forge</button>
+          </div>
+        </header>
+        ${courses.length ? renderCourseCards(courses) : renderEmptyArchive()}
+      </main>
+      <div class="forge-modal-host"></div>
+    </div>`;
+    wireDashboard(el, S, Api);
+  }
+
+  function renderEmptyArchive() {
+    return `<section class="forge-empty fade-in">
+      <div class="forge-mark big"><span>S.</span></div>
+      <h3>Neural Archives Uninitialized</h3>
+      <p>The topology is empty. Paste a syllabus, notes, or a complete system prompt to establish this domain of study.</p>
+      <button data-forge-text-node>Initialize Canvas</button>
+    </section>`;
+  }
+
+  function renderCourseCards(courses) {
+    return `<div class="forge-course-grid">
+      ${courses.map((course, idx) => `<article class="forge-course-card" data-forge-course="${esc(course.id)}" style="--delay:${idx * 80}ms">
+        <div><p>${esc(course.inputType === 'system_prompt' ? 'System Prompt Track' : course.inputType === 'scholar_course' ? 'Scholar Course' : 'Text Node')}</p>
+        <h3>${esc(course.title)}</h3></div>
+        <footer><span>${course.modules.length} modules</span><span>${course.mastery || 0}% mastery</span></footer>
+      </article>`).join('')}
+    </div>`;
+  }
+
+  function wireDashboard(el, S, Api) {
+    el.querySelectorAll('[data-forge-cat]').forEach((b) => b.onclick = () => { activeCategory = b.dataset.forgeCat; activeCourseId = null; render(el, S, Api); });
+    el.querySelectorAll('[data-forge-course]').forEach((b) => b.onclick = () => { activeCourseId = b.dataset.forgeCourse; render(el, S, Api); });
+    el.querySelectorAll('[data-forge-text-node]').forEach((b) => b.onclick = () => openTextModal(el, S, Api));
+    const nd = el.querySelector('[data-forge-new-discipline]');
+    if (nd) nd.onclick = () => openDisciplineModal(el, S, Api);
+    const reset = el.querySelector('[data-forge-reset]');
+    if (reset) reset.onclick = () => { if (confirm('Reset local Forge tracks? Scholar courses remain in Scholar.')) { localStorage.removeItem(STORE); state = null; activeCategory = null; activeCourseId = null; render(el, S, Api); } };
+  }
+
+  function modalHost(el) { return el.querySelector('.forge-modal-host') || el; }
+
+  function openDisciplineModal(el, S, Api) {
+    modalHost(el).innerHTML = `<div class="forge-modal modal-overlay fade-in"><div class="forge-modal-card small">
+      <h2>Define New Discipline</h2>
+      <input data-discipline-input placeholder="e.g., PHYSIOLOGY" autofocus>
+      <div class="forge-modal-actions"><button data-close>Abort</button><button data-save>Establish</button></div>
+    </div></div>`;
+    const host = modalHost(el);
+    host.querySelector('[data-close]').onclick = () => { host.innerHTML = ''; };
+    host.querySelector('[data-save]').onclick = () => {
+      const val = (host.querySelector('[data-discipline-input]').value || '').trim().toUpperCase();
+      if (!val) return;
+      if (!state.categories.includes(val)) state.categories.push(val);
+      state.courses[val] ||= [];
+      activeCategory = val;
+      saveStore(); render(el, S, Api);
+    };
+  }
+
+  function openTextModal(el, S, Api) {
+    modalHost(el).innerHTML = `<div class="forge-modal modal-overlay fade-in"><div class="forge-modal-card">
+      <h2>Text Ingestion Node</h2>
+      <p>Paste syllabus text, notes, or a complete system prompt. Forge will parse the topology deterministically.</p>
+      <textarea data-prompt-input placeholder="Paste Anatomy system prompt here..."></textarea>
+      <div class="forge-modal-actions"><button data-close>Abort</button><button data-save>Synthesize</button></div>
+    </div></div>`;
+    const host = modalHost(el);
+    host.querySelector('[data-close]').onclick = () => { host.innerHTML = ''; };
+    host.querySelector('[data-save]').onclick = () => {
+      const text = host.querySelector('[data-prompt-input]').value || '';
+      if (!text.trim()) return;
+      const course = buildCourseFromText(text, activeCategory);
+      state.courses[activeCategory] ||= [];
+      state.courses[activeCategory].push(course);
+      activeCourseId = course.id;
+      saveStore(); render(el, S, Api);
+    };
+  }
+
+  function renderTopology(el, course, S, Api) {
+    if (!course) { activeCourseId = null; return renderDashboard(el, S, Api); }
+    const nodes = course.modules || [];
+    el.innerHTML = `<div class="forge-shell forge-map-shell">
+      <aside class="forge-sidebar">
+        <button class="forge-back" data-forge-back>← Archives</button>
+        <div class="forge-mark"><span>S.</span></div>
+        <h1>${esc(course.title)}</h1>
+        <p class="forge-course-meta">${esc(course.inputType.replace('_', ' '))} · ${nodes.length} modules</p>
+        <div class="forge-mastery"><span>${course.mastery || 0}%</span><em>mastery</em></div>
+      </aside>
+      <main class="forge-topology">
+        <header class="forge-map-head"><p>${esc(course.category)}</p><h2>Course Topography</h2></header>
+        <div class="forge-map-stage">
+          ${constellationSvg(nodes)}
+          ${nodes.map((node, i) => renderNode(node, i)).join('')}
+        </div>
+      </main>
+    </div>`;
+    el.querySelector('[data-forge-back]').onclick = () => { activeCourseId = null; render(el, S, Api); };
+    el.querySelectorAll('[data-node]').forEach((b) => b.onclick = () => {
+      const node = nodes.find((n) => n.id === b.dataset.node);
+      if (!node || node.locked) return;
+      activeLesson = { courseId: course.id, nodeId: node.id };
+      render(el, S, Api);
+    });
+  }
+
+  function constellationSvg(nodes) {
+    if (nodes.length < 2) return '';
+    let d = 'M 220 42 ';
+    for (let i = 1; i < nodes.length; i++) {
+      if (nodes[i].locked) break;
+      const px = 220 + Math.sin((i - 1) * 1.5) * 92;
+      const py = (i - 1) * 162 + 42;
+      const cx = 220 + Math.sin(i * 1.5) * 92;
+      const cy = i * 162 + 42;
+      const my = py + (cy - py) / 2;
+      d += ` C ${px} ${my}, ${cx} ${my}, ${cx} ${cy}`;
+    }
+    return `<svg class="forge-winding" style="height:${Math.max(260, nodes.length * 162)}px" viewBox="0 0 440 ${Math.max(260, nodes.length * 162)}" preserveAspectRatio="xMidYMin meet"><path d="${d}" /></svg>`;
+  }
+
+  function renderNode(node, i) {
+    const x = Math.sin(i * 1.5) * 92;
+    const state = node.completed ? 'completed' : node.locked ? 'locked' : 'active';
+    return `<button class="forge-node-row ${state}" data-node="${esc(node.id)}" style="--x:${x}px; --delay:${i * 90}ms">
+      <span class="forge-node-orb"><i>${esc(iconFor(node.title))}</i></span>
+      <span class="forge-node-card"><em>Module ${i + 1}</em><b>${esc(node.title)}</b><small>${node.locked ? 'LOCKED' : node.completed ? 'COMPLETED' : 'ACTIVE'} · +${node.exp} EXP</small></span>
+    </button>`;
+  }
+
+  function renderLesson(el, lessonRef, S, Api) {
+    const course = activeCourse();
+    const node = course && course.modules.find((n) => n.id === lessonRef.nodeId);
+    if (!course || !node) { activeLesson = null; return render(el, S, Api); }
+    const blocks = lessonBlocks(course, node);
+    el.innerHTML = `<div class="forge-lesson fade-in">
+      <aside class="forge-lesson-side"><button data-exit>← Exit Lesson</button><p>Active Node</p><h1>${esc(node.title)}</h1><div class="forge-scanner"><span></span></div></aside>
+      <main class="forge-lesson-main">
+        ${blocks.map((b, i) => renderBlock(b, i)).join('')}
+        <div class="forge-complete"><h2>Node Ready</h2><p>Complete this module to unlock the next branch in the topology.</p><button data-complete>Synchronize & Return</button></div>
+      </main>
+    </div>`;
+    el.querySelector('[data-exit]').onclick = () => { activeLesson = null; render(el, S, Api); };
+    el.querySelector('[data-complete]').onclick = () => {
+      node.completed = true;
+      const idx = course.modules.findIndex((n) => n.id === node.id);
+      if (course.modules[idx + 1]) course.modules[idx + 1].locked = false;
+      const done = course.modules.filter((n) => n.completed).length;
+      course.mastery = Math.round((done / course.modules.length) * 100);
+      activeLesson = null; saveStore(); render(el, S, Api);
+    };
+  }
+
+  function lessonBlocks(course, node) {
+    const system = course.inputType === 'system_prompt';
+    return [
+      { type: 'text', title: 'Orientation', body: system ? `Use the track rules from the pasted system prompt. Start by orienting ${node.title} before memorizing details.` : `Build a first-principles model of ${node.title}.` },
+      { type: 'diagram', title: 'Spatial Reconstruction', items: ['Where is it?', 'What is superficial/deep?', 'What is medial/lateral?', 'What passes through or around it?'] },
+      { type: 'quiz', title: 'Recall Gate', question: `Explain ${node.title} in one clean mental model before moving on.`, options: ['Orientation first', 'Random memorization', 'Skip relations'], answer: 0 }
+    ];
+  }
+
+  function renderBlock(b, i) {
+    if (b.type === 'diagram') return `<section class="forge-block slide-up" style="--delay:${i * 120}ms"><p>Diagram Node</p><h2>${esc(b.title)}</h2><div class="forge-safe-diagram">${b.items.map((x) => `<span>${esc(x)}</span>`).join('')}</div></section>`;
+    if (b.type === 'quiz') return `<section class="forge-block slide-up" style="--delay:${i * 120}ms"><p>Misconception Check</p><h2>${esc(b.title)}</h2><h3>${esc(b.question)}</h3><div class="forge-options">${b.options.map((o, j) => `<button data-answer="${j}">${esc(o)}</button>`).join('')}</div></section>`;
+    return `<section class="forge-block slide-up" style="--delay:${i * 120}ms"><p>Lesson Block</p><h2>${esc(b.title)}</h2><div class="forge-prose">${esc(b.body)}</div></section>`;
   }
 
   return { render };
