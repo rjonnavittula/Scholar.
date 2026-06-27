@@ -216,3 +216,27 @@ class LearningNode(SQLModel, table=True):
     completed: bool = False
     mastery: float = 0.0
     created_at: datetime = Field(default_factory=datetime.now)
+
+
+class LearningLesson(SQLModel, table=True):
+    """A saved lesson attached to a Forge node. Content lives in ordered blocks."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    node_id: int = Field(foreign_key="learningnode.id", index=True)
+    title: str
+    status: str = "draft"   # draft | generated | reviewed | archived
+    estimated_min: int = 10
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class LearningBlock(SQLModel, table=True):
+    """A safe lesson block payload. No raw generated HTML/JS belongs here."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lesson_id: int = Field(foreign_key="learninglesson.id", index=True)
+    position: int = Field(index=True)
+    block_type: str = "text"
+    title: str = ""
+    payload_json: str = "{}"
+    source_refs_json: str = "[]"
+    confidence: float = 0.0
+    created_at: datetime = Field(default_factory=datetime.now)

@@ -15,7 +15,10 @@ from zoneinfo import ZoneInfo
 from app.cushion import EngineConfig, availability_days, compute_cushion
 from app.rollup import roll_up
 from app.learn_parser import parse_source
-from app.learn_store import create_track_from_spec, get_track_tree, list_tracks
+from app.learn_store import (
+    add_lesson_block, create_track_from_spec, get_lesson_tree, get_or_create_lesson_for_node,
+    get_track_tree, list_tracks,
+)
 
 
 def _due_to_utc(due, school_tz: str):
@@ -112,6 +115,14 @@ class ForgeTrackIn(BaseModel):
     source_hash: str = ""
 
 
+class LessonBlockIn(BaseModel):
+    block_type: str
+    title: str = ""
+    payload: dict = PydanticField(default_factory=dict)
+    source_refs: list[str] = PydanticField(default_factory=list)
+    confidence: float = 0.0
+
+
 learn_router = APIRouter(prefix="/learn", tags=["learn"], dependencies=AUTH)
 
 
@@ -145,6 +156,33 @@ def read_learning_track(track_id: int, session: Session = Depends(get_session)):
     if not track:
         raise HTTPException(404, "track_not_found")
     return track
+
+
+@learn_router.get("/nodes/{node_id}/lesson")
+def read_or_create_node_lesson(node_id: int, session: Session = Depends(get_session)):
+    lesson = get_or_create_lesson_for_node(session, node_id)
+    if not lesson:
+        raise HTTPException(404, "node_not_found")
+    return lesson
+
+
+@learn_router.get("/lessons/{lesson_id}")
+def read_learning_lesson(lesson_id: int, session: Session = Depends(get_session)):
+    lesson = get_lesson_tree(session, lesson_id)
+    if not lesson:
+        raise HTTPException(404, "lesson_not_found")
+    return lesson
+
+
+@learn_router.post("/lessons/{lesson_id}/blocks", status_code=201)
+def create_learning_block(lesson_id: int, payload: LessonBlockIn, session: Session = Depends(get_session)):
+    try:
+        lesson = add_lesson_block(session, lesson_id, payload.dict())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not lesson:
+        raise HTTPException(404, "lesson_not_found")
+    return lesson
 
 
 # ---- engine context helper -------------------------------------------------- #

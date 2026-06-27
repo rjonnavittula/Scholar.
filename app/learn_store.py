@@ -6,11 +6,12 @@ tracks -> modules -> nodes. Generation/RAG comes later.
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from typing import Any
 
 from sqlmodel import Session, select
 
-from app.models import LearningModule, LearningNode, LearningTrack
+from app.models import LearningBlock, LearningLesson, LearningModule, LearningNode, LearningTrack
 
 
 def _clean_title(value: object, fallback: str) -> str:
@@ -146,3 +147,143 @@ def create_track_from_spec(session: Session, spec: dict[str, Any]) -> dict[str, 
 
     session.commit()
     return get_track_tree(session, track.id)  # type: ignore[arg-type]
+
+
+ALLOWED_BLOCK_TYPES = {
+    "text",
+    "definition",
+    "recall_prompt",
+    "quiz",
+    "ordered_relation",
+    "case",
+    "source_quote",
+    "diagram",
+    "code",
+}
+
+
+def _json_dump(value: Any, fallback: Any) -> str:
+    try:
+        return json.dumps(value if value is not None else fallback, ensure_ascii=False)
+    except TypeError:
+        return json.dumps(fallback, ensure_ascii=False)
+
+
+def _json_load(value: str, fallback: Any) -> Any:
+    try:
+        return json.loads(value or "")
+    except Exception:
+        return fallback
+
+
+def _block_to_dict(block: LearningBlock) -> dict[str, Any]:
+    return {
+        "id": block.id,
+        "position": block.position,
+        "block_type": block.block_type,
+        "title": block.title,
+        "payload": _json_load(block.payload_json, {}),
+        "source_refs": _json_load(block.source_refs_json, []),
+        "confidence": block.confidence,
+    }
+
+
+def get_lesson_tree(session: Session, lesson_id: int) -> dict[str, Any] | None:
+    lesson = session.get(LearningLesson, lesson_id)
+    if not lesson:
+        return None
+    blocks = session.exec(
+        select(LearningBlock)
+        .where(LearningBlock.lesson_id == lesson.id)
+        .order_by(LearningBlock.position)
+    ).all()
+    return {
+        "id": lesson.id,
+        "node_id": lesson.node_id,
+        "title": lesson.title,
+        "status": lesson.status,
+        "estimated_min": lesson.estimated_min,
+        "created_at": lesson.created_at.isoformat(),
+        "updated_at": lesson.updated_at.isoformat(),
+        "blocks": [_block_to_dict(b) for b in blocks],
+    }
+
+
+def get_or_create_lesson_for_node(session: Session, node_id: int) -> dict[str, Any] | None:
+    node = session.get(LearningNode, node_id)
+    if not node:
+        return None
+
+    lesson = session.exec(
+        select(LearningLesson).where(LearningLesson.node_id == node.id)
+    ).first()
+    if lesson:
+        return get_lesson_tree(session, lesson.id)  # type: ignore[arg-type]
+
+    now = datetime.now()
+    lesson = LearningLesson(
+        node_id=node.id,  # type: ignore[arg-type]
+        title=node.title,
+        status="draft",
+        estimated_min=10,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(lesson)
+    session.commit()
+    session.refresh(lesson)
+
+    starter_blocks = [
+        {
+            "block_type": "text",
+            "title": "Mission brief",
+            "payload": {
+                "body": f"This is the lesson shell for {node.title}. Source-grounded content comes next."
+            },
+        },
+        {
+            "block_type": "recall_prompt",
+            "title": "Recall before reveal",
+            "payload": {
+                "prompt": f"Before studying, write what you already know about {node.title}."
+            },
+        },
+    ]
+    for idx, block in enumerate(starter_blocks, start=1):
+        session.add(LearningBlock(
+            lesson_id=lesson.id,  # type: ignore[arg-type]
+            position=idx,
+            block_type=block["block_type"],
+            title=block["title"],
+            payload_json=_json_dump(block.get("payload"), {}),
+            source_refs_json="[]",
+            confidence=0.0,
+        ))
+    session.commit()
+    return get_lesson_tree(session, lesson.id)  # type: ignore[arg-type]
+
+
+def add_lesson_block(session: Session, lesson_id: int, spec: dict[str, Any]) -> dict[str, Any] | None:
+    lesson = session.get(LearningLesson, lesson_id)
+    if not lesson:
+        return None
+
+    block_type = str(spec.get("block_type") or "text").strip()
+    if block_type not in ALLOWED_BLOCK_TYPES:
+        raise ValueError("invalid_block_type")
+
+    existing = session.exec(select(LearningBlock).where(LearningBlock.lesson_id == lesson.id)).all()
+    block = LearningBlock(
+        lesson_id=lesson.id,  # type: ignore[arg-type]
+        position=len(existing) + 1,
+        block_type=block_type,
+        title=str(spec.get("title") or "").strip(),
+        payload_json=_json_dump(spec.get("payload"), {}),
+        source_refs_json=_json_dump(spec.get("source_refs"), []),
+        confidence=float(spec.get("confidence") or 0.0),
+    )
+    session.add(block)
+    lesson.updated_at = datetime.now()
+    session.add(lesson)
+    session.commit()
+    return get_lesson_tree(session, lesson.id)  # type: ignore[arg-type]

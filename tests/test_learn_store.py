@@ -2,7 +2,10 @@ import unittest
 
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.learn_store import create_track_from_spec, get_track_tree, list_tracks
+from app.learn_store import (
+    add_lesson_block, create_track_from_spec, get_lesson_tree, get_or_create_lesson_for_node,
+    get_track_tree, list_tracks,
+)
 
 
 class TestLearnStore(unittest.TestCase):
@@ -45,6 +48,45 @@ class TestLearnStore(unittest.TestCase):
         self.assertEqual(len(summaries), 1)
         self.assertEqual(summaries[0]["title"], "Python")
         self.assertEqual(fetched["modules"][0]["title"], "Variables")
+
+    def test_get_or_create_lesson_for_node_builds_starter_blocks(self):
+        tree = create_track_from_spec(self.session, {
+            "track_title": "Anatomy",
+            "modules": ["Upper Limb"],
+        })
+        node_id = tree["modules"][0]["nodes"][0]["id"]
+
+        lesson = get_or_create_lesson_for_node(self.session, node_id)
+
+        self.assertEqual(lesson["node_id"], node_id)
+        self.assertEqual(lesson["title"], "Upper Limb Overview")
+        self.assertEqual([b["block_type"] for b in lesson["blocks"]], ["text", "recall_prompt"])
+
+    def test_add_lesson_block_appends_safe_payload(self):
+        tree = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Variables"]})
+        node_id = tree["modules"][0]["nodes"][0]["id"]
+        lesson = get_or_create_lesson_for_node(self.session, node_id)
+
+        updated = add_lesson_block(self.session, lesson["id"], {
+            "block_type": "definition",
+            "title": "Variable",
+            "payload": {"term": "variable", "body": "A named reference to a value."},
+            "source_refs": ["manual:1"],
+            "confidence": 0.9,
+        })
+
+        self.assertEqual(len(updated["blocks"]), 3)
+        self.assertEqual(updated["blocks"][-1]["block_type"], "definition")
+        self.assertEqual(updated["blocks"][-1]["payload"]["term"], "variable")
+        self.assertEqual(get_lesson_tree(self.session, lesson["id"])["blocks"][-1]["source_refs"], ["manual:1"])
+
+    def test_add_lesson_block_rejects_unknown_type(self):
+        tree = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Variables"]})
+        node_id = tree["modules"][0]["nodes"][0]["id"]
+        lesson = get_or_create_lesson_for_node(self.session, node_id)
+
+        with self.assertRaises(ValueError):
+            add_lesson_block(self.session, lesson["id"], {"block_type": "raw_html", "payload": {}})
 
 
 if __name__ == "__main__":
