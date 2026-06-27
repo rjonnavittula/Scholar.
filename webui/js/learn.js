@@ -12,10 +12,22 @@ window.HiveCourses = (() => {
   let activeLessonRef = null;
   let activeLesson = null;
 
+  function activateCourseWorkspace(el) {
+    if (el) el.classList.add('forge-active');
+    const body = document.body;
+    const rightToggle = document.getElementById('collapse-right');
+    if (body && !body.classList.contains('no-right')) {
+      body.classList.add('no-right');
+      if (rightToggle) rightToggle.textContent = '‹';
+      window.dispatchEvent(new Event('resize'));
+    }
+  }
+
   const icons = {
-    python: '</>', code: '</>', programming: '</>', cs: '</>', algorithm: '▦', data: '▦',
-    ai: '◌', neural: '◌', math: '∞', hardware: '◎', circuit: '◎', exam: '◆',
-    anatomy: '◇', biology: '◇', chemistry: '△', default: '◈'
+    python: 'Py', javascript: 'JS', typescript: 'TS', react: '⚛', node: 'JS',
+    code: '</>', programming: '</>', cs: '</>', algorithm: 'ALG', data: 'DB',
+    ai: 'AI', neural: 'AI', math: '∞', hardware: 'HW', circuit: '⚡', exam: '◆',
+    anatomy: 'AN', biology: 'BIO', chemistry: 'CH', default: '◈'
   };
 
   function iconFor(title) {
@@ -80,6 +92,7 @@ window.HiveCourses = (() => {
   }
 
   async function render(el, S, Api) {
+    activateCourseWorkspace(el);
     try {
       if (!state) {
         setLoading(el);
@@ -119,7 +132,7 @@ window.HiveCourses = (() => {
     const tracks = currentTracks();
     el.innerHTML = `<div class="forge-shell">
       <aside class="forge-sidebar">
-        <div class="forge-mark"><span>S.</span></div>
+        <div class="forge-context-mark"><span>☰</span></div>
         <h1>Course<br>Library</h1>
         <p class="forge-kicker">Saved Courses</p>
         <nav class="forge-disciplines">
@@ -154,11 +167,19 @@ window.HiveCourses = (() => {
 
   function renderTrackCards(tracks) {
     return `<div class="forge-course-grid">
-      ${tracks.map((track, idx) => `<article class="forge-course-card" data-forge-track="${esc(track.id)}" style="--delay:${idx * 80}ms">
-        <div><p>${esc(inputLabel(track))}</p><h3>${esc(track.title)}</h3></div>
-        <div class="forge-card-modules">${modulePreview(track)}</div>
-        <footer><span>${track.module_count ?? (track.modules || []).length} modules</span><span>${esc(track.status || 'draft')}</span></footer>
-      </article>`).join('')}
+      ${tracks.map((track, idx) => {
+        const total = track.module_count ?? (track.modules || []).length;
+        const done = track.completed_module_count ?? 0;
+        const mastery = Math.round((track.mastery || 0) * 100);
+        return `<article class="forge-course-card" data-forge-track="${esc(track.id)}" style="--delay:${idx * 80}ms">
+          <div class="forge-card-top"><span class="forge-course-glyph">${esc(iconFor(track.title + ' ' + (track.role || '')))}</span><p>${esc(inputLabel(track))}</p></div>
+          <h3>${esc(track.title)}</h3>
+          <div class="forge-card-modules">${modulePreview(track)}</div>
+          ${track.next_module_title ? `<small class="forge-next-course">Next: ${esc(track.next_module_title)}</small>` : '<small class="forge-next-course">Course complete</small>'}
+          <div class="forge-course-progress" aria-label="${mastery}% mastery"><i style="width:${mastery}%"></i></div>
+          <footer><span>${done}/${total} modules</span><span>${mastery}% mastery</span></footer>
+        </article>`;
+      }).join('')}
     </div>`;
   }
 
@@ -228,10 +249,13 @@ Module 4: Async Programming"></textarea>
     el.innerHTML = `<div class="forge-shell forge-map-shell">
       <aside class="forge-sidebar">
         <button class="forge-back" data-forge-back>← Courses</button>
-        <div class="forge-mark"><span>S.</span></div>
+        <div class="forge-context-mark course"><span>${esc(iconFor(track.title + ' ' + (track.role || '')))}</span></div>
         <h1>${esc(track.title)}</h1>
         <p class="forge-course-meta">${esc(inputLabel(track))} · ${modules.length} modules · ${esc(track.status || 'draft')}</p>
         <div class="forge-mastery"><span>${masteryForTrack(track)}%</span><em>mastery</em></div>
+        <div class="forge-side-actions">
+          <button data-forge-delete class="forge-danger">Delete Course</button>
+        </div>
       </aside>
       <main class="forge-topology">
         <header class="forge-map-head"><p>${esc(categoryFor(track))}</p><h2>Course Map</h2></header>
@@ -242,6 +266,20 @@ Module 4: Async Programming"></textarea>
       </main>
     </div>`;
     el.querySelector('[data-forge-back]').onclick = () => { activeTrackId = null; activeTrack = null; render(el, S, Api); };
+    const del = el.querySelector('[data-forge-delete]');
+    if (del) del.onclick = async () => {
+      if (!confirm(`Delete ${track.title}? This removes the saved course map and lesson drafts.`)) return;
+      del.disabled = true; del.textContent = 'Deleting…';
+      try {
+        await Api.del(`/learn/tracks/${track.id}`);
+        activeTrackId = null; activeTrack = null; activeLessonRef = null; activeLesson = null; state = null;
+        await loadTracks(Api);
+        render(el, S, Api);
+      } catch (e) {
+        del.disabled = false; del.textContent = 'Delete Course';
+        alert(e.message || e);
+      }
+    };
     el.querySelectorAll('[data-node]').forEach((b) => b.onclick = () => {
       const nodeId = b.dataset.node;
       const mod = modules.find((m) => (m.nodes || []).some((n) => String(n.id) === String(nodeId)));
@@ -260,19 +298,35 @@ Module 4: Async Programming"></textarea>
     return Math.round((done / mods.length) * 100);
   }
 
+  function moduleOffset(i) {
+    return Math.round(Math.sin(i * 1.35) * 86);
+  }
+
+  function moduleY(i) {
+    return 72 + i * 188;
+  }
+
+  function pathForPoints(points) {
+    if (!points.length) return '';
+    let d = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 1; i < points.length; i++) {
+      const prev = points[i - 1];
+      const cur = points[i];
+      const mid = prev.y + (cur.y - prev.y) / 2;
+      d += ` C ${prev.x} ${mid}, ${cur.x} ${mid}, ${cur.x} ${cur.y}`;
+    }
+    return d;
+  }
+
   function constellationSvg(modules) {
     if (modules.length < 2) return '';
-    let d = 'M 220 42 ';
-    for (let i = 1; i < modules.length; i++) {
-      if (modules[i].locked) break;
-      const px = 220 + Math.sin((i - 1) * 1.5) * 92;
-      const py = (i - 1) * 162 + 42;
-      const cx = 220 + Math.sin(i * 1.5) * 92;
-      const cy = i * 162 + 42;
-      const my = py + (cy - py) / 2;
-      d += ` C ${px} ${my}, ${cx} ${my}, ${cx} ${cy}`;
-    }
-    return `<svg class="forge-winding" style="height:${Math.max(260, modules.length * 162)}px" viewBox="0 0 440 ${Math.max(260, modules.length * 162)}" preserveAspectRatio="xMidYMin meet"><path d="${d}" /></svg>`;
+    const h = Math.max(320, modules.length * 188 + 90);
+    const points = modules.map((_, i) => ({ x: 220 + moduleOffset(i), y: moduleY(i) }));
+    const active = points.filter((_, i) => !modules[i].locked || i === 0);
+    return `<svg class="forge-winding" style="height:${h}px" viewBox="0 0 440 ${h}" preserveAspectRatio="xMidYMin meet">
+      <path class="ghost" d="${pathForPoints(points)}" />
+      <path class="live" d="${pathForPoints(active)}" />
+    </svg>`;
   }
 
   function renderModuleNode(mod, i) {
@@ -282,10 +336,12 @@ Module 4: Async Programming"></textarea>
     const nodeId = firstNode ? firstNode.id : '';
     const exp = firstNode?.exp ?? mod.exp ?? 50;
     const title = firstNode?.title || `${mod.title} Overview`;
-    const x = Math.sin(i * 1.5) * 92;
-    return `<button class="forge-node-row ${stateName}" data-node="${esc(nodeId)}" style="--x:${x}px; --delay:${i * 90}ms">
+    const x = moduleOffset(i);
+    const locked = stateName === 'locked';
+    const hint = locked ? 'Complete previous module' : stateName === 'completed' ? 'Completed' : 'Ready to study';
+    return `<button class="forge-node-row ${stateName}" data-node="${esc(nodeId)}" style="--x:${x}px; --delay:${i * 90}ms" ${locked ? 'disabled aria-disabled="true"' : ''}>
       <span class="forge-node-orb"><i>${esc(iconFor(mod.title))}</i></span>
-      <span class="forge-node-card"><em>Module ${i + 1}</em><b>${esc(mod.title)}</b><small>${stateName.toUpperCase()} · ${esc(title)} · ${Math.round((firstNode?.mastery || mod.mastery || 0) * 100)}% mastery · +${exp} EXP</small></span>
+      <span class="forge-node-card"><em>Module ${i + 1} · ${esc(hint)}</em><b>${esc(mod.title)}</b><small>${stateName.toUpperCase()} · ${esc(title)} · ${Math.round((firstNode?.mastery || mod.mastery || 0) * 100)}% mastery · +${exp} EXP</small></span>
     </button>`;
   }
 
@@ -293,7 +349,7 @@ Module 4: Async Programming"></textarea>
     if (!lesson) { activeLessonRef = null; return render(el, S, Api); }
     const completed = lesson.status === 'completed';
     el.innerHTML = `<div class="forge-lesson fade-in">
-      <aside class="forge-lesson-side"><button data-exit>← Exit Lesson</button><p>${completed ? 'Completed Lesson' : 'Lesson Draft'}</p><h1>${esc(lesson.title)}</h1><div class="forge-scanner"><span></span></div></aside>
+      <aside class="forge-lesson-side"><button data-exit>← Exit Lesson</button><p>${completed ? 'Completed Lesson' : 'Lesson Draft'}</p><h1>${esc(lesson.title)}</h1><div class="forge-lesson-mini"><span>${completed ? 'Saved' : 'Interactive shell'}</span><em>${esc(lesson.estimated_min || 10)} min</em></div></aside>
       <main class="forge-lesson-main">
         ${(lesson.blocks || []).map((b, i) => renderBlock(b, i)).join('')}
         <div class="forge-complete"><h2>${completed ? 'Lesson Complete' : 'Mark Progress'}</h2><p>${completed ? 'This lesson is completed and saved to Postgres.' : 'Mark this lesson complete to update mastery, unlock the next module, and return to the course map.'}</p><button data-complete>${completed ? 'Return to Course Map' : 'Complete Lesson'}</button></div>
@@ -326,7 +382,7 @@ Module 4: Async Programming"></textarea>
       return `<section class="forge-block slide-up" style="${delay}"><p>Definition</p><h2>${esc(title)}</h2><div class="forge-prose"><b>${esc(payload.term || title)}</b><br>${esc(payload.definition || payload.body || '')}</div></section>`;
     }
     if (type === 'recall_prompt') {
-      return `<section class="forge-block slide-up" style="${delay}"><p>Recall Gate</p><h2>${esc(title)}</h2><div class="forge-prose">${esc(payload.prompt || payload.body || '')}</div></section>`;
+      return `<section class="forge-block interactive slide-up" style="${delay}"><p>Recall Gate</p><h2>${esc(title)}</h2><div class="forge-prose">${esc(payload.prompt || payload.body || '')}</div><textarea class="forge-recall-input" placeholder="Type your recall here before revealing the explanation. Persistence comes in the interaction phase."></textarea></section>`;
     }
     if (type === 'quiz') {
       const options = payload.options || [];

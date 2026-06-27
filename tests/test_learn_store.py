@@ -3,8 +3,9 @@ import unittest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.learn_store import (
-    add_lesson_block, complete_learning_node, create_track_from_spec, get_lesson_tree,
-    get_or_create_lesson_for_node, get_track_tree, list_tracks, start_learning_node,
+    add_lesson_block, complete_learning_node, create_track_from_spec, delete_track,
+    get_lesson_tree, get_or_create_lesson_for_node, get_track_tree, list_tracks,
+    start_learning_node,
 )
 
 
@@ -16,6 +17,7 @@ class TestLearnStore(unittest.TestCase):
 
     def tearDown(self):
         self.session.close()
+        self.engine.dispose()
 
     def test_create_track_from_spec_builds_modules_and_nodes(self):
         tree = create_track_from_spec(self.session, {
@@ -49,6 +51,33 @@ class TestLearnStore(unittest.TestCase):
         self.assertEqual(summaries[0]["title"], "Python")
         self.assertEqual(summaries[0]["module_titles"], ["Variables"])
         self.assertEqual(fetched["modules"][0]["title"], "Variables")
+
+
+    def test_list_tracks_includes_progress_summary(self):
+        tree = create_track_from_spec(self.session, {
+            "track_title": "Python",
+            "modules": ["Basics", "Functions"],
+        })
+        node_id = tree["modules"][0]["nodes"][0]["id"]
+
+        complete_learning_node(self.session, node_id, mastery=1.0)
+        summary = list_tracks(self.session)[0]
+
+        self.assertEqual(summary["module_count"], 2)
+        self.assertEqual(summary["completed_module_count"], 1)
+        self.assertAlmostEqual(summary["mastery"], 0.5)
+        self.assertEqual(summary["next_module_title"], "Functions")
+
+    def test_delete_track_removes_learning_tree(self):
+        tree = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})
+        node_id = tree["modules"][0]["nodes"][0]["id"]
+        lesson = get_or_create_lesson_for_node(self.session, node_id)
+        add_lesson_block(self.session, lesson["id"], {"block_type": "definition", "payload": {"body": "x"}})
+
+        self.assertTrue(delete_track(self.session, tree["id"]))
+        self.assertIsNone(get_track_tree(self.session, tree["id"]))
+        self.assertEqual(list_tracks(self.session), [])
+        self.assertFalse(delete_track(self.session, tree["id"]))
 
     def test_get_or_create_lesson_for_node_builds_starter_blocks(self):
         tree = create_track_from_spec(self.session, {

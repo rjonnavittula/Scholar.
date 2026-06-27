@@ -16,8 +16,9 @@ from app.cushion import EngineConfig, availability_days, compute_cushion
 from app.rollup import roll_up
 from app.learn_parser import parse_source
 from app.learn_store import (
-    add_lesson_block, complete_learning_node, create_track_from_spec, get_lesson_tree,
-    get_or_create_lesson_for_node, get_track_tree, list_tracks, start_learning_node,
+    add_lesson_block, complete_learning_node, create_track_from_spec, delete_track,
+    get_lesson_tree, get_or_create_lesson_for_node, get_track_tree, list_tracks,
+    start_learning_node,
 )
 
 
@@ -160,6 +161,13 @@ def read_learning_track(track_id: int, session: Session = Depends(get_session)):
     if not track:
         raise HTTPException(404, "track_not_found")
     return track
+
+
+@learn_router.delete("/tracks/{track_id}", status_code=204)
+def delete_learning_track(track_id: int, session: Session = Depends(get_session)):
+    if not delete_track(session, track_id):
+        raise HTTPException(404, "track_not_found")
+    return None
 
 
 @learn_router.get("/nodes/{node_id}/lesson")

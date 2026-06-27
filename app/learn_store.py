@@ -9,6 +9,7 @@ from datetime import datetime
 import json
 from typing import Any
 
+from sqlalchemy import delete
 from sqlmodel import Session, select
 
 from app.models import LearningBlock, LearningLesson, LearningModule, LearningNode, LearningTrack
@@ -84,6 +85,7 @@ def get_track_tree(session: Session, track_id: int) -> dict[str, Any] | None:
         "role": track.role or None,
         "source_hash": track.source_hash,
         "status": track.status,
+        **_progress_from_modules(modules),
         "created_at": track.created_at.isoformat(),
         "updated_at": track.updated_at.isoformat(),
         "modules": out_modules,
@@ -106,7 +108,7 @@ def list_tracks(session: Session) -> list[dict[str, Any]]:
             "role": track.role or None,
             "source_hash": track.source_hash,
             "status": track.status,
-            "module_count": len(modules),
+            **_progress_from_modules(modules),
             "module_titles": [module.title for module in modules[:4]],
             "created_at": track.created_at.isoformat(),
             "updated_at": track.updated_at.isoformat(),
@@ -176,6 +178,53 @@ def _track_modules(session: Session, track_id: int) -> list[LearningModule]:
         .where(LearningModule.track_id == track_id)
         .order_by(LearningModule.position)
     ).all()
+
+
+def _progress_from_modules(modules: list[LearningModule]) -> dict[str, Any]:
+    module_count = len(modules)
+    completed_count = sum(1 for module in modules if module.completed)
+    mastery = round(sum(float(module.mastery or 0.0) for module in modules) / module_count, 3) if module_count else 0.0
+    next_module = next((module for module in modules if not module.completed and not module.locked), None)
+    return {
+        "mastery": mastery,
+        "module_count": module_count,
+        "completed_module_count": completed_count,
+        "next_module_title": next_module.title if next_module else None,
+    }
+
+
+def delete_track(session: Session, track_id: int) -> bool:
+    track = session.get(LearningTrack, track_id)
+    if not track:
+        return False
+
+    modules = _track_modules(session, track_id)
+    module_ids = [module.id for module in modules if module.id is not None]
+    node_ids: list[int] = []
+    lesson_ids: list[int] = []
+
+    for module_id in module_ids:
+        node_ids.extend(node.id for node in _module_nodes(session, module_id) if node.id is not None)
+
+    if node_ids:
+        lessons = session.exec(
+            select(LearningLesson).where(LearningLesson.node_id.in_(node_ids))
+        ).all()
+        lesson_ids = [lesson.id for lesson in lessons if lesson.id is not None]
+
+    if lesson_ids:
+        session.exec(delete(LearningBlock).where(LearningBlock.lesson_id.in_(lesson_ids)))
+        session.exec(delete(LearningLesson).where(LearningLesson.id.in_(lesson_ids)))
+
+    if node_ids:
+        session.exec(delete(LearningNode).where(LearningNode.id.in_(node_ids)))
+
+    if module_ids:
+        session.exec(delete(LearningModule).where(LearningModule.id.in_(module_ids)))
+
+    session.delete(track)
+    session.commit()
+    return True
 
 
 def _add_starter_blocks(session: Session, lesson: LearningLesson, node: LearningNode) -> None:
