@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from app.cushion import EngineConfig, availability_days, compute_cushion
 from app.rollup import roll_up
+from app.learn_parser import parse_source
 
 
 def _due_to_utc(due, school_tz: str):
@@ -79,6 +80,33 @@ def create_key(label: str = Query(...), session: Session = Depends(get_session))
 
 
 AUTH = [Depends(require_api_key)]
+
+
+# ---- learn / forge --------------------------------------------------------- #
+class ParseSourceIn(BaseModel):
+    text: str
+
+
+class ParseSourceOut(BaseModel):
+    input_type: str
+    track_title: str
+    role: Optional[str] = None
+    modules: list[str]
+    teaching_rules: list[str]
+    assessment_rules: list[str]
+    visual_rules: list[str]
+    constraints: list[str]
+    source_hash: str
+
+
+learn_router = APIRouter(prefix="/learn", tags=["learn"], dependencies=AUTH)
+
+
+@learn_router.post("/parse-source", response_model=ParseSourceOut)
+def parse_learn_source(payload: ParseSourceIn):
+    if not payload.text.strip():
+        raise HTTPException(400, "text_required")
+    return parse_source(payload.text)
 
 
 # ---- engine context helper -------------------------------------------------- #
