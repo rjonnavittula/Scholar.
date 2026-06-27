@@ -47,6 +47,7 @@ class TestLearnStore(unittest.TestCase):
 
         self.assertEqual(len(summaries), 1)
         self.assertEqual(summaries[0]["title"], "Python")
+        self.assertEqual(summaries[0]["module_titles"], ["Variables"])
         self.assertEqual(fetched["modules"][0]["title"], "Variables")
 
     def test_get_or_create_lesson_for_node_builds_starter_blocks(self):
@@ -61,6 +62,7 @@ class TestLearnStore(unittest.TestCase):
         self.assertEqual(lesson["node_id"], node_id)
         self.assertEqual(lesson["title"], "Upper Limb Overview")
         self.assertEqual([b["block_type"] for b in lesson["blocks"]], ["text", "recall_prompt"])
+        self.assertIn("Start here", lesson["blocks"][0]["payload"]["body"])
 
     def test_add_lesson_block_appends_safe_payload(self):
         tree = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Variables"]})

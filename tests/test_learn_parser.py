@@ -1,6 +1,6 @@
 import unittest
 
-from app.learn_parser import classify_input, extract_modules, parse_source
+from app.learn_parser import classify_input, extract_modules, extract_track_title, parse_source
 
 
 class LearnParserTests(unittest.TestCase):
@@ -16,10 +16,22 @@ class LearnParserTests(unittest.TestCase):
         text = "Module 1: Upper Limb\nChapter 2: Thorax\nUnit 3: Abdomen"
         self.assertEqual(extract_modules(text), ["Upper Limb", "Thorax", "Abdomen"])
 
-    def test_parse_source_has_hash_and_modules(self):
+    def test_parse_source_has_hash_modules_and_course_title(self):
         out = parse_source("Module 1: Python Basics")
+        self.assertEqual(out["track_title"], "Python Course")
         self.assertEqual(out["modules"], ["Python Basics"])
         self.assertEqual(len(out["source_hash"]), 16)
+
+    def test_extract_track_title_ignores_system_prompt_heading(self):
+        text = """
+System Prompt
+Role & Persona
+You are the Python Mentor.
+
+Module 1: Python Basics
+Module 2: Functions
+"""
+        self.assertEqual(extract_track_title(text), "Python Course")
 
     def test_parse_source_buckets_rules(self):
         out = parse_source("""

@@ -58,12 +58,26 @@ def extract_modules(text: str) -> list[str]:
 
 
 def extract_track_title(text: str) -> str:
-    """Pick the first useful short line as a fallback track title."""
+    """Pick a useful user-facing course title from pasted material."""
+    explicit = re.search(r"^\s*(?:course|track|title|name)\s*[:.-]\s*(.+)$", text, flags=re.I | re.M)
+    if explicit:
+        candidate = _clean_line(explicit.group(1))
+        if candidate and not _is_generic_title(candidate):
+            return candidate[:80]
+
+    role_title = _title_from_role(extract_role(text))
+    if role_title:
+        return role_title
+
+    modules = extract_modules(text)
+    if modules:
+        return _title_from_module(modules[0])
+
     for line in text.splitlines():
         clean = _clean_line(line)
-        if clean and len(clean) <= 80:
+        if clean and len(clean) <= 80 and not _is_generic_title(clean):
             return clean
-    return "Untitled Track"
+    return "Untitled Course"
 
 
 def extract_role(text: str) -> str | None:
@@ -104,6 +118,35 @@ def parse_source(text: str) -> dict[str, Any]:
         "visual_rules": rules["visual_rules"],
         "constraints": rules["constraints"],
         "source_hash": source_hash(cleaned),
+    }
+
+
+def _title_from_role(role: str | None) -> str | None:
+    if not role:
+        return None
+    clean = _clean_line(role).rstrip(".")
+    clean = re.sub(r"^you\s+are\s+", "", clean, flags=re.I)
+    clean = re.sub(r"^(?:an?|the)\s+", "", clean, flags=re.I)
+    clean = re.sub(r"\b(?:mentor|tutor|teacher|instructor)\.?$", "", clean, flags=re.I).strip()
+    if clean and not _is_generic_title(clean):
+        return f"{clean} Course"[:80]
+    return None
+
+
+def _title_from_module(module: str) -> str:
+    clean = _clean_line(module)
+    clean = re.sub(r"\s+(?:basics|overview|fundamentals)$", "", clean, flags=re.I).strip() or clean
+    return f"{clean} Course"[:80]
+
+
+def _is_generic_title(value: str) -> bool:
+    return value.strip().lower() in {
+        "system prompt",
+        "role & persona",
+        "role and persona",
+        "prompt",
+        "course prompt",
+        "syllabus",
     }
 
 

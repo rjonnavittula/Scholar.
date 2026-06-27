@@ -94,7 +94,11 @@ def list_tracks(session: Session) -> list[dict[str, Any]]:
     tracks = session.exec(select(LearningTrack).order_by(LearningTrack.created_at.desc())).all()
     summaries: list[dict[str, Any]] = []
     for track in tracks:
-        modules = session.exec(select(LearningModule).where(LearningModule.track_id == track.id)).all()
+        modules = session.exec(
+            select(LearningModule)
+            .where(LearningModule.track_id == track.id)
+            .order_by(LearningModule.position)
+        ).all()
         summaries.append({
             "id": track.id,
             "title": track.title,
@@ -103,6 +107,7 @@ def list_tracks(session: Session) -> list[dict[str, Any]]:
             "source_hash": track.source_hash,
             "status": track.status,
             "module_count": len(modules),
+            "module_titles": [module.title for module in modules[:4]],
             "created_at": track.created_at.isoformat(),
             "updated_at": track.updated_at.isoformat(),
         })
@@ -238,7 +243,7 @@ def get_or_create_lesson_for_node(session: Session, node_id: int) -> dict[str, A
             "block_type": "text",
             "title": "Mission brief",
             "payload": {
-                "body": f"This is the lesson shell for {node.title}. Source-grounded content comes next."
+                "body": f"Start here. This draft lesson introduces {node.title}. Source-grounded explanations, examples, and checks come next."
             },
         },
         {

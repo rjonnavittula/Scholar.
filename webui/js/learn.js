@@ -1,12 +1,12 @@
-/* learn.js — Scholar Forge DB-backed UI.
-   Vanilla frontend. Backend owns tracks/modules/nodes/lessons.
+/* learn.js — Scholar Courses DB-backed UI.
+   Vanilla frontend. Backend owns courses/modules/nodes/lessons.
    No raw model-generated HTML/JS. */
 window.HiveCourses = (() => {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   let state = null;
-  let activeCategory = 'FORGE';
+  let activeCategory = 'ALL COURSES';
   let activeTrackId = null;
   let activeTrack = null;
   let activeLessonRef = null;
@@ -25,18 +25,21 @@ window.HiveCourses = (() => {
   }
 
   function inputLabel(track) {
-    return String(track?.input_type || 'source_text').replace(/_/g, ' ');
+    const value = String(track?.input_type || 'source_text');
+    if (value === 'system_prompt') return 'course prompt';
+    if (value === 'source_text') return 'source text';
+    return value.replace(/_/g, ' ');
   }
 
   function categoryFor(track) {
     const title = `${track?.title || ''} ${track?.role || ''}`.toLowerCase();
     if (/(python|code|programming|algorithm|software|developer|cs)/.test(title)) return 'PROGRAMMING';
     if (/(anatomy|medical|biology|physiology)/.test(title)) return 'MEDICAL';
-    return 'FORGE';
+    return 'GENERAL';
   }
 
   function categoriesFromTracks(tracks) {
-    const cats = ['FORGE'];
+    const cats = ['ALL COURSES'];
     for (const t of tracks || []) {
       const cat = categoryFor(t);
       if (!cats.includes(cat)) cats.push(cat);
@@ -46,21 +49,21 @@ window.HiveCourses = (() => {
 
   function currentTracks() {
     const tracks = state?.tracks || [];
-    if (activeCategory === 'FORGE') return tracks;
+    if (activeCategory === 'ALL COURSES') return tracks;
     return tracks.filter((t) => categoryFor(t) === activeCategory);
   }
 
-  function setLoading(el, message = 'Loading Forge topology…') {
+  function setLoading(el, message = 'Loading course library…') {
     el.innerHTML = `<div class="forge-shell"><main class="forge-dashboard"><section class="forge-empty fade-in">
       <div class="forge-mark big"><span>S.</span></div><h3>${esc(message)}</h3>
-      <p>Scholar is reading the DB-backed learning archive.</p>
+      <p>Scholar is reading your saved courses from Postgres.</p>
     </section></main></div>`;
   }
 
   async function loadTracks(Api) {
     const tracks = await Api.get('/learn/tracks');
     state = { tracks, categories: categoriesFromTracks(tracks), loaded: true };
-    if (!state.categories.includes(activeCategory)) activeCategory = 'FORGE';
+    if (!state.categories.includes(activeCategory)) activeCategory = 'ALL COURSES';
   }
 
   async function loadTrack(Api, trackId) {
@@ -82,14 +85,14 @@ window.HiveCourses = (() => {
       }
       if (activeLessonRef) {
         if (!activeLesson || String(activeLesson.node_id) !== String(activeLessonRef.nodeId)) {
-          setLoading(el, 'Opening lesson shell…');
+          setLoading(el, 'Opening lesson draft…');
           await loadLesson(Api, activeLessonRef.nodeId);
         }
         return renderLesson(el, activeLesson, S, Api);
       }
       if (activeTrackId) {
         if (!activeTrack || String(activeTrack.id) !== String(activeTrackId)) {
-          setLoading(el, 'Opening course topography…');
+          setLoading(el, 'Opening course map…');
           await loadTrack(Api, activeTrackId);
         }
         return renderTopology(el, activeTrack, S, Api);
@@ -102,7 +105,7 @@ window.HiveCourses = (() => {
 
   function renderError(el, e, S, Api) {
     el.innerHTML = `<div class="forge-shell"><main class="forge-dashboard"><section class="forge-empty fade-in">
-      <div class="forge-mark big"><span>!</span></div><h3>Forge sync failed</h3>
+      <div class="forge-mark big"><span>!</span></div><h3>Course sync failed</h3>
       <p>${esc(e.message || e)}</p><button data-retry>Retry</button>
     </section></main></div>`;
     const b = el.querySelector('[data-retry]');
@@ -110,22 +113,22 @@ window.HiveCourses = (() => {
   }
 
   function renderDashboard(el, S, Api) {
-    const cats = state.categories || ['FORGE'];
+    const cats = state.categories || ['ALL COURSES'];
     const tracks = currentTracks();
     el.innerHTML = `<div class="forge-shell">
       <aside class="forge-sidebar">
         <div class="forge-mark"><span>S.</span></div>
-        <h1>Neural<br>Archives</h1>
-        <p class="forge-kicker">DB-backed Disciplines</p>
+        <h1>Course<br>Library</h1>
+        <p class="forge-kicker">Saved Courses</p>
         <nav class="forge-disciplines">
           ${cats.map((cat) => `<button data-forge-cat="${esc(cat)}" class="${cat === activeCategory ? 'active' : ''}">${esc(cat)}</button>`).join('')}
         </nav>
-        <button class="forge-new-discipline" data-forge-refresh>Refresh Archive</button>
+        <button class="forge-new-discipline" data-forge-refresh>Refresh Library</button>
       </aside>
       <main class="forge-dashboard">
         <header class="forge-dash-head">
-          <div><p>Category</p><h2>${esc(activeCategory)} Topology</h2></div>
-          <div class="forge-actions"><button data-forge-text-node>+ Text Node</button></div>
+          <div><p>Library</p><h2>${esc(dashboardTitle())}</h2></div>
+          <div class="forge-actions"><button data-forge-text-node>+ Create Course</button></div>
         </header>
         ${tracks.length ? renderTrackCards(tracks) : renderEmptyArchive()}
       </main>
@@ -134,12 +137,16 @@ window.HiveCourses = (() => {
     wireDashboard(el, S, Api);
   }
 
+  function dashboardTitle() {
+    return activeCategory === 'ALL COURSES' ? 'Scholar Courses' : `${activeCategory} Courses`;
+  }
+
   function renderEmptyArchive() {
     return `<section class="forge-empty fade-in">
       <div class="forge-mark big"><span>S.</span></div>
-      <h3>Neural Archives Uninitialized</h3>
-      <p>Paste a programming course prompt, syllabus, or notes. Scholar will save the Forge topology in Postgres.</p>
-      <button data-forge-text-node>Initialize Canvas</button>
+      <h3>No Courses Yet</h3>
+      <p>Paste a programming course prompt, syllabus, or notes. Scholar will create a saved course map in Postgres.</p>
+      <button data-forge-text-node>Create Course</button>
     </section>`;
   }
 
@@ -147,9 +154,16 @@ window.HiveCourses = (() => {
     return `<div class="forge-course-grid">
       ${tracks.map((track, idx) => `<article class="forge-course-card" data-forge-track="${esc(track.id)}" style="--delay:${idx * 80}ms">
         <div><p>${esc(inputLabel(track))}</p><h3>${esc(track.title)}</h3></div>
+        <div class="forge-card-modules">${modulePreview(track)}</div>
         <footer><span>${track.module_count ?? (track.modules || []).length} modules</span><span>${esc(track.status || 'draft')}</span></footer>
       </article>`).join('')}
     </div>`;
+  }
+
+  function modulePreview(track) {
+    const titles = track.module_titles || (track.modules || []).map((m) => m.title);
+    if (!titles.length) return '<span>Course map pending</span>';
+    return titles.slice(0, 4).map((title) => `<span>${esc(title)}</span>`).join('');
   }
 
   function wireDashboard(el, S, Api) {
@@ -172,10 +186,17 @@ window.HiveCourses = (() => {
 
   function openTextModal(el, S, Api) {
     modalHost(el).innerHTML = `<div class="forge-modal modal-overlay fade-in"><div class="forge-modal-card">
-      <h2>Text Ingestion Node</h2>
-      <p>Paste a programming course prompt, syllabus text, notes, or transcript. Forge will parse and save it to the backend.</p>
-      <textarea data-prompt-input placeholder="System Prompt\nRole & Persona\nYou are the Python Mentor.\n\nModule 1: Python Basics\nModule 2: Functions\nModule 3: Files and Modules"></textarea>
-      <div class="forge-modal-actions"><button data-close>Abort</button><button data-save>Synthesize</button></div>
+      <h2>Create Course</h2>
+      <p>Paste a programming course prompt, syllabus text, notes, or transcript. Scholar will parse it into a saved course map.</p>
+      <textarea data-prompt-input placeholder="System Prompt
+Role & Persona
+You are the Python Mentor.
+
+Module 1: Python Basics
+Module 2: Functions
+Module 3: Files and Modules
+Module 4: Async Programming"></textarea>
+      <div class="forge-modal-actions"><button data-close>Cancel</button><button data-save>Create Course</button></div>
     </div></div>`;
     const host = modalHost(el);
     host.querySelector('[data-close]').onclick = () => { host.innerHTML = ''; };
@@ -183,7 +204,7 @@ window.HiveCourses = (() => {
       const text = host.querySelector('[data-prompt-input]').value || '';
       if (!text.trim()) return;
       const save = host.querySelector('[data-save]');
-      save.disabled = true; save.textContent = 'Saving…';
+      save.disabled = true; save.textContent = 'Creating…';
       try {
         const track = await Api.post('/learn/tracks/from-source', { text });
         await loadTracks(Api);
@@ -193,7 +214,7 @@ window.HiveCourses = (() => {
         activeLessonRef = null; activeLesson = null;
         render(el, S, Api);
       } catch (e) {
-        save.disabled = false; save.textContent = 'Synthesize';
+        save.disabled = false; save.textContent = 'Create Course';
         alert(e.message || e);
       }
     };
@@ -204,14 +225,14 @@ window.HiveCourses = (() => {
     const modules = track.modules || [];
     el.innerHTML = `<div class="forge-shell forge-map-shell">
       <aside class="forge-sidebar">
-        <button class="forge-back" data-forge-back>← Archives</button>
+        <button class="forge-back" data-forge-back>← Courses</button>
         <div class="forge-mark"><span>S.</span></div>
         <h1>${esc(track.title)}</h1>
         <p class="forge-course-meta">${esc(inputLabel(track))} · ${modules.length} modules · ${esc(track.status || 'draft')}</p>
         <div class="forge-mastery"><span>${masteryForTrack(track)}%</span><em>mastery</em></div>
       </aside>
       <main class="forge-topology">
-        <header class="forge-map-head"><p>${esc(categoryFor(track))}</p><h2>Course Topography</h2></header>
+        <header class="forge-map-head"><p>${esc(categoryFor(track))}</p><h2>Course Map</h2></header>
         <div class="forge-map-stage">
           ${constellationSvg(modules)}
           ${modules.map((mod, i) => renderModuleNode(mod, i)).join('')}
@@ -268,10 +289,10 @@ window.HiveCourses = (() => {
   function renderLesson(el, lesson, S, Api) {
     if (!lesson) { activeLessonRef = null; return render(el, S, Api); }
     el.innerHTML = `<div class="forge-lesson fade-in">
-      <aside class="forge-lesson-side"><button data-exit>← Exit Lesson</button><p>DB Lesson Shell</p><h1>${esc(lesson.title)}</h1><div class="forge-scanner"><span></span></div></aside>
+      <aside class="forge-lesson-side"><button data-exit>← Exit Lesson</button><p>Lesson Draft</p><h1>${esc(lesson.title)}</h1><div class="forge-scanner"><span></span></div></aside>
       <main class="forge-lesson-main">
         ${(lesson.blocks || []).map((b, i) => renderBlock(b, i)).join('')}
-        <div class="forge-complete"><h2>Lesson Stored</h2><p>This lesson is loaded from Postgres. Completion and mastery mutations come next.</p><button data-complete>Return to Topography</button></div>
+        <div class="forge-complete"><h2>Lesson Ready</h2><p>This draft is saved to Postgres. Completion, mastery, and source-grounded generation come next.</p><button data-complete>Return to Course Map</button></div>
       </main>
     </div>`;
     el.querySelector('[data-exit]').onclick = () => { activeLessonRef = null; activeLesson = null; render(el, S, Api); };
