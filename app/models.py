@@ -177,3 +177,42 @@ class GradeItem(SQLModel, table=True):
     title: str = ""
     earned: float = 0.0
     possible: float = 0.0
+
+
+class LearningTrack(SQLModel, table=True):
+    """A Forge learning path generated from a prompt/source and saved server-side."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(index=True)
+    input_type: str = "source_text"
+    role: str = ""
+    source_hash: str = Field(default="", index=True)
+    status: str = "draft"   # draft | active | archived
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class LearningModule(SQLModel, table=True):
+    """A major region/unit inside a Forge learning track."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    track_id: int = Field(foreign_key="learningtrack.id", index=True)
+    title: str
+    position: int = Field(index=True)
+    exp: int = 100
+    locked: bool = False
+    completed: bool = False
+    mastery: float = 0.0
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class LearningNode(SQLModel, table=True):
+    """A concrete mission/lesson node inside a module."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    module_id: int = Field(foreign_key="learningmodule.id", index=True)
+    title: str
+    position: int = Field(index=True)
+    node_type: str = "lesson"  # lesson | quiz | project | boss_fight
+    exp: int = 50
+    locked: bool = False
+    completed: bool = False
+    mastery: float = 0.0
+    created_at: datetime = Field(default_factory=datetime.now)

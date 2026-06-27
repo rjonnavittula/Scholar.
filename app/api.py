@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, select
 
 from zoneinfo import ZoneInfo
@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from app.cushion import EngineConfig, availability_days, compute_cushion
 from app.rollup import roll_up
 from app.learn_parser import parse_source
+from app.learn_store import create_track_from_spec, get_track_tree, list_tracks
 
 
 def _due_to_utc(due, school_tz: str):
@@ -99,6 +100,18 @@ class ParseSourceOut(BaseModel):
     source_hash: str
 
 
+class ForgeTrackIn(BaseModel):
+    track_title: str
+    input_type: str = "source_text"
+    role: Optional[str] = None
+    modules: list[str] = PydanticField(default_factory=list)
+    teaching_rules: list[str] = PydanticField(default_factory=list)
+    assessment_rules: list[str] = PydanticField(default_factory=list)
+    visual_rules: list[str] = PydanticField(default_factory=list)
+    constraints: list[str] = PydanticField(default_factory=list)
+    source_hash: str = ""
+
+
 learn_router = APIRouter(prefix="/learn", tags=["learn"], dependencies=AUTH)
 
 
@@ -107,6 +120,31 @@ def parse_learn_source(payload: ParseSourceIn):
     if not payload.text.strip():
         raise HTTPException(400, "text_required")
     return parse_source(payload.text)
+
+
+@learn_router.get("/tracks")
+def list_learning_tracks(session: Session = Depends(get_session)):
+    return list_tracks(session)
+
+
+@learn_router.post("/tracks", status_code=201)
+def create_learning_track(payload: ForgeTrackIn, session: Session = Depends(get_session)):
+    return create_track_from_spec(session, payload.dict())
+
+
+@learn_router.post("/tracks/from-source", status_code=201)
+def create_learning_track_from_source(payload: ParseSourceIn, session: Session = Depends(get_session)):
+    if not payload.text.strip():
+        raise HTTPException(400, "text_required")
+    return create_track_from_spec(session, parse_source(payload.text))
+
+
+@learn_router.get("/tracks/{track_id}")
+def read_learning_track(track_id: int, session: Session = Depends(get_session)):
+    track = get_track_tree(session, track_id)
+    if not track:
+        raise HTTPException(404, "track_not_found")
+    return track
 
 
 # ---- engine context helper -------------------------------------------------- #
