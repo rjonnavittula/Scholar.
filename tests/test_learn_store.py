@@ -3,8 +3,8 @@ import unittest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.learn_store import (
-    add_lesson_block, create_track_from_spec, get_lesson_tree, get_or_create_lesson_for_node,
-    get_track_tree, list_tracks,
+    add_lesson_block, complete_learning_node, create_track_from_spec, get_lesson_tree,
+    get_or_create_lesson_for_node, get_track_tree, list_tracks, start_learning_node,
 )
 
 
@@ -81,6 +81,44 @@ class TestLearnStore(unittest.TestCase):
         self.assertEqual(updated["blocks"][-1]["block_type"], "definition")
         self.assertEqual(updated["blocks"][-1]["payload"]["term"], "variable")
         self.assertEqual(get_lesson_tree(self.session, lesson["id"])["blocks"][-1]["source_refs"], ["manual:1"])
+
+
+    def test_start_learning_node_marks_lesson_and_track_active(self):
+        tree = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})
+        node_id = tree["modules"][0]["nodes"][0]["id"]
+
+        result = start_learning_node(self.session, node_id)
+
+        self.assertEqual(result["lesson"]["status"], "in_progress")
+        self.assertEqual(result["track"]["status"], "active")
+        self.assertFalse(result["track"]["modules"][0]["completed"])
+
+    def test_complete_learning_node_marks_progress_and_unlocks_next_module(self):
+        tree = create_track_from_spec(self.session, {
+            "track_title": "Python",
+            "modules": ["Basics", "Functions"],
+        })
+        node_id = tree["modules"][0]["nodes"][0]["id"]
+
+        result = complete_learning_node(self.session, node_id, mastery=0.8)
+
+        first = result["track"]["modules"][0]
+        second = result["track"]["modules"][1]
+        self.assertEqual(result["lesson"]["status"], "completed")
+        self.assertTrue(first["completed"])
+        self.assertAlmostEqual(first["mastery"], 0.8)
+        self.assertFalse(second["locked"])
+        self.assertFalse(second["nodes"][0]["locked"])
+        self.assertEqual(result["track"]["status"], "active")
+
+    def test_complete_learning_node_clamps_mastery(self):
+        tree = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})
+        node_id = tree["modules"][0]["nodes"][0]["id"]
+
+        result = complete_learning_node(self.session, node_id, mastery=3.5)
+
+        self.assertEqual(result["track"]["modules"][0]["nodes"][0]["mastery"], 1.0)
+        self.assertEqual(result["track"]["status"], "completed")
 
     def test_add_lesson_block_rejects_unknown_type(self):
         tree = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Variables"]})

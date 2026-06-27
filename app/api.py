@@ -16,8 +16,8 @@ from app.cushion import EngineConfig, availability_days, compute_cushion
 from app.rollup import roll_up
 from app.learn_parser import parse_source
 from app.learn_store import (
-    add_lesson_block, create_track_from_spec, get_lesson_tree, get_or_create_lesson_for_node,
-    get_track_tree, list_tracks,
+    add_lesson_block, complete_learning_node, create_track_from_spec, get_lesson_tree,
+    get_or_create_lesson_for_node, get_track_tree, list_tracks, start_learning_node,
 )
 
 
@@ -123,6 +123,10 @@ class LessonBlockIn(BaseModel):
     confidence: float = 0.0
 
 
+class NodeProgressIn(BaseModel):
+    mastery: float = 1.0
+
+
 learn_router = APIRouter(prefix="/learn", tags=["learn"], dependencies=AUTH)
 
 
@@ -164,6 +168,28 @@ def read_or_create_node_lesson(node_id: int, session: Session = Depends(get_sess
     if not lesson:
         raise HTTPException(404, "node_not_found")
     return lesson
+
+
+@learn_router.post("/nodes/{node_id}/start")
+def start_learning_lesson(node_id: int, session: Session = Depends(get_session)):
+    try:
+        result = start_learning_node(session, node_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not result:
+        raise HTTPException(404, "node_not_found")
+    return result
+
+
+@learn_router.post("/nodes/{node_id}/complete")
+def complete_learning_lesson(node_id: int, payload: NodeProgressIn, session: Session = Depends(get_session)):
+    try:
+        result = complete_learning_node(session, node_id, payload.mastery)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not result:
+        raise HTTPException(404, "node_not_found")
+    return result
 
 
 @learn_router.get("/lessons/{lesson_id}")

@@ -73,7 +73,9 @@ window.HiveCourses = (() => {
   }
 
   async function loadLesson(Api, nodeId) {
-    activeLesson = await Api.get(`/learn/nodes/${nodeId}/lesson`);
+    const started = await Api.post(`/learn/nodes/${nodeId}/start`, {});
+    if (started?.track) activeTrack = started.track;
+    activeLesson = started?.lesson || await Api.get(`/learn/nodes/${nodeId}/lesson`);
     return activeLesson;
   }
 
@@ -275,28 +277,44 @@ Module 4: Async Programming"></textarea>
 
   function renderModuleNode(mod, i) {
     const firstNode = (mod.nodes || [])[0];
-    const stateName = mod.completed ? 'completed' : mod.locked ? 'locked' : 'active';
+    const nodeDone = !!firstNode?.completed;
+    const stateName = mod.completed || nodeDone ? 'completed' : mod.locked ? 'locked' : 'active';
     const nodeId = firstNode ? firstNode.id : '';
     const exp = firstNode?.exp ?? mod.exp ?? 50;
     const title = firstNode?.title || `${mod.title} Overview`;
     const x = Math.sin(i * 1.5) * 92;
     return `<button class="forge-node-row ${stateName}" data-node="${esc(nodeId)}" style="--x:${x}px; --delay:${i * 90}ms">
       <span class="forge-node-orb"><i>${esc(iconFor(mod.title))}</i></span>
-      <span class="forge-node-card"><em>Module ${i + 1}</em><b>${esc(mod.title)}</b><small>${stateName.toUpperCase()} · ${esc(title)} · +${exp} EXP</small></span>
+      <span class="forge-node-card"><em>Module ${i + 1}</em><b>${esc(mod.title)}</b><small>${stateName.toUpperCase()} · ${esc(title)} · ${Math.round((firstNode?.mastery || mod.mastery || 0) * 100)}% mastery · +${exp} EXP</small></span>
     </button>`;
   }
 
   function renderLesson(el, lesson, S, Api) {
     if (!lesson) { activeLessonRef = null; return render(el, S, Api); }
+    const completed = lesson.status === 'completed';
     el.innerHTML = `<div class="forge-lesson fade-in">
-      <aside class="forge-lesson-side"><button data-exit>← Exit Lesson</button><p>Lesson Draft</p><h1>${esc(lesson.title)}</h1><div class="forge-scanner"><span></span></div></aside>
+      <aside class="forge-lesson-side"><button data-exit>← Exit Lesson</button><p>${completed ? 'Completed Lesson' : 'Lesson Draft'}</p><h1>${esc(lesson.title)}</h1><div class="forge-scanner"><span></span></div></aside>
       <main class="forge-lesson-main">
         ${(lesson.blocks || []).map((b, i) => renderBlock(b, i)).join('')}
-        <div class="forge-complete"><h2>Lesson Ready</h2><p>This draft is saved to Postgres. Completion, mastery, and source-grounded generation come next.</p><button data-complete>Return to Course Map</button></div>
+        <div class="forge-complete"><h2>${completed ? 'Lesson Complete' : 'Mark Progress'}</h2><p>${completed ? 'This lesson is completed and saved to Postgres.' : 'Mark this lesson complete to update mastery, unlock the next module, and return to the course map.'}</p><button data-complete>${completed ? 'Return to Course Map' : 'Complete Lesson'}</button></div>
       </main>
     </div>`;
     el.querySelector('[data-exit]').onclick = () => { activeLessonRef = null; activeLesson = null; render(el, S, Api); };
-    el.querySelector('[data-complete]').onclick = () => { activeLessonRef = null; activeLesson = null; activeTrack = null; render(el, S, Api); };
+    el.querySelector('[data-complete]').onclick = async () => {
+      if (completed) { activeLessonRef = null; activeLesson = null; render(el, S, Api); return; }
+      const btn = el.querySelector('[data-complete]');
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        const result = await Api.post(`/learn/nodes/${activeLessonRef.nodeId}/complete`, { mastery: 1.0 });
+        if (result?.track) { activeTrack = result.track; activeTrackId = String(result.track.id); }
+        activeLessonRef = null; activeLesson = null; state = null;
+        await loadTracks(Api);
+        render(el, S, Api);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = 'Complete Lesson';
+        alert(e.message || e);
+      }
+    };
   }
 
   function renderBlock(block, i) {

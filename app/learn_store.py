@@ -154,6 +154,195 @@ def create_track_from_spec(session: Session, spec: dict[str, Any]) -> dict[str, 
     return get_track_tree(session, track.id)  # type: ignore[arg-type]
 
 
+def _clamp_mastery(value: object) -> float:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        num = 1.0
+    return max(0.0, min(1.0, num))
+
+
+def _module_nodes(session: Session, module_id: int) -> list[LearningNode]:
+    return session.exec(
+        select(LearningNode)
+        .where(LearningNode.module_id == module_id)
+        .order_by(LearningNode.position)
+    ).all()
+
+
+def _track_modules(session: Session, track_id: int) -> list[LearningModule]:
+    return session.exec(
+        select(LearningModule)
+        .where(LearningModule.track_id == track_id)
+        .order_by(LearningModule.position)
+    ).all()
+
+
+def _add_starter_blocks(session: Session, lesson: LearningLesson, node: LearningNode) -> None:
+    existing = session.exec(
+        select(LearningBlock).where(LearningBlock.lesson_id == lesson.id)
+    ).all()
+    if existing:
+        return
+
+    starter_blocks = [
+        {
+            "block_type": "text",
+            "title": "Mission brief",
+            "payload": {
+                "body": f"Start here. This draft lesson introduces {node.title}. Source-grounded explanations, examples, and checks come next."
+            },
+        },
+        {
+            "block_type": "recall_prompt",
+            "title": "Recall before reveal",
+            "payload": {
+                "prompt": f"Before studying, write what you already know about {node.title}."
+            },
+        },
+    ]
+    for idx, block in enumerate(starter_blocks, start=1):
+        session.add(LearningBlock(
+            lesson_id=lesson.id,  # type: ignore[arg-type]
+            position=idx,
+            block_type=block["block_type"],
+            title=block["title"],
+            payload_json=_json_dump(block.get("payload"), {}),
+            source_refs_json="[]",
+            confidence=0.0,
+        ))
+
+
+def _lesson_model_for_node(session: Session, node: LearningNode) -> LearningLesson:
+    lesson = session.exec(
+        select(LearningLesson).where(LearningLesson.node_id == node.id)
+    ).first()
+    if lesson:
+        _add_starter_blocks(session, lesson, node)
+        session.commit()
+        return lesson
+
+    now = datetime.now()
+    lesson = LearningLesson(
+        node_id=node.id,  # type: ignore[arg-type]
+        title=node.title,
+        status="draft",
+        estimated_min=10,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(lesson)
+    session.commit()
+    session.refresh(lesson)
+    _add_starter_blocks(session, lesson, node)
+    session.commit()
+    return lesson
+
+
+def _recalculate_module(session: Session, module: LearningModule) -> None:
+    nodes = _module_nodes(session, module.id)  # type: ignore[arg-type]
+    if not nodes:
+        module.mastery = 0.0
+        module.completed = False
+    else:
+        module.mastery = round(sum(float(n.mastery or 0.0) for n in nodes) / len(nodes), 3)
+        module.completed = all(bool(n.completed) for n in nodes)
+    session.add(module)
+
+
+def _recalculate_track(session: Session, track: LearningTrack) -> None:
+    modules = _track_modules(session, track.id)  # type: ignore[arg-type]
+    if modules and all(m.completed for m in modules):
+        track.status = "completed"
+    elif any(m.mastery > 0 or m.completed for m in modules):
+        track.status = "active"
+    elif track.status == "draft":
+        track.status = "active"
+    track.updated_at = datetime.now()
+    session.add(track)
+
+
+def _unlock_next_module(session: Session, module: LearningModule) -> None:
+    next_module = session.exec(
+        select(LearningModule)
+        .where(LearningModule.track_id == module.track_id, LearningModule.position > module.position)
+        .order_by(LearningModule.position)
+    ).first()
+    if not next_module:
+        return
+    next_module.locked = False
+    session.add(next_module)
+    for node in _module_nodes(session, next_module.id):  # type: ignore[arg-type]
+        node.locked = False
+        session.add(node)
+
+
+def start_learning_node(session: Session, node_id: int) -> dict[str, Any] | None:
+    node = session.get(LearningNode, node_id)
+    if not node:
+        return None
+    if node.locked:
+        raise ValueError("node_locked")
+
+    module = session.get(LearningModule, node.module_id)
+    if not module:
+        return None
+    if module.locked:
+        raise ValueError("module_locked")
+
+    track = session.get(LearningTrack, module.track_id)
+    if not track:
+        return None
+
+    lesson = _lesson_model_for_node(session, node)
+    if lesson.status != "completed":
+        lesson.status = "in_progress"
+        lesson.updated_at = datetime.now()
+        session.add(lesson)
+
+    track.status = "active"
+    track.updated_at = datetime.now()
+    session.add(track)
+    session.commit()
+    return {"track": get_track_tree(session, track.id), "lesson": get_lesson_tree(session, lesson.id)}  # type: ignore[arg-type]
+
+
+def complete_learning_node(session: Session, node_id: int, mastery: float = 1.0) -> dict[str, Any] | None:
+    node = session.get(LearningNode, node_id)
+    if not node:
+        return None
+    if node.locked:
+        raise ValueError("node_locked")
+
+    module = session.get(LearningModule, node.module_id)
+    if not module:
+        return None
+    if module.locked:
+        raise ValueError("module_locked")
+
+    track = session.get(LearningTrack, module.track_id)
+    if not track:
+        return None
+
+    lesson = _lesson_model_for_node(session, node)
+    now = datetime.now()
+    node.completed = True
+    node.mastery = _clamp_mastery(mastery)
+    session.add(node)
+
+    lesson.status = "completed"
+    lesson.updated_at = now
+    session.add(lesson)
+
+    _recalculate_module(session, module)
+    if module.completed:
+        _unlock_next_module(session, module)
+    _recalculate_track(session, track)
+    session.commit()
+
+    return {"track": get_track_tree(session, track.id), "lesson": get_lesson_tree(session, lesson.id)}  # type: ignore[arg-type]
+
+
 ALLOWED_BLOCK_TYPES = {
     "text",
     "definition",
@@ -238,32 +427,7 @@ def get_or_create_lesson_for_node(session: Session, node_id: int) -> dict[str, A
     session.commit()
     session.refresh(lesson)
 
-    starter_blocks = [
-        {
-            "block_type": "text",
-            "title": "Mission brief",
-            "payload": {
-                "body": f"Start here. This draft lesson introduces {node.title}. Source-grounded explanations, examples, and checks come next."
-            },
-        },
-        {
-            "block_type": "recall_prompt",
-            "title": "Recall before reveal",
-            "payload": {
-                "prompt": f"Before studying, write what you already know about {node.title}."
-            },
-        },
-    ]
-    for idx, block in enumerate(starter_blocks, start=1):
-        session.add(LearningBlock(
-            lesson_id=lesson.id,  # type: ignore[arg-type]
-            position=idx,
-            block_type=block["block_type"],
-            title=block["title"],
-            payload_json=_json_dump(block.get("payload"), {}),
-            source_refs_json="[]",
-            confidence=0.0,
-        ))
+    _add_starter_blocks(session, lesson, node)
     session.commit()
     return get_lesson_tree(session, lesson.id)  # type: ignore[arg-type]
 
