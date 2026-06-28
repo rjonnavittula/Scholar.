@@ -21,7 +21,7 @@ from app.learn_store import (
     start_learning_node,
 )
 from app.source_store import (
-    create_source, delete_source, get_source, link_source_to_track, list_sources,
+    create_source, delete_source, get_source, get_source_audit, link_source_to_track, list_sources,
     list_source_sections, list_track_sources, parse_registered_source, unlink_source_from_track,
 )
 from app.source_upload import build_upload_source_spec
@@ -199,6 +199,11 @@ async def upload_learning_source(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+@learn_router.get("/sources/audit")
+def audit_learning_sources(session: Session = Depends(get_session)):
+    return get_source_audit(session)
+
+
 @learn_router.get("/sources/{source_id}")
 def read_learning_source(source_id: int, session: Session = Depends(get_session)):
     source = get_source(session, source_id)
@@ -248,7 +253,10 @@ def link_learning_source_to_track(
     payload: TrackSourceLinkIn,
     session: Session = Depends(get_session),
 ):
-    source = link_source_to_track(session, track_id, source_id, payload.role)
+    try:
+        source = link_source_to_track(session, track_id, source_id, payload.role)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     if not source:
         raise HTTPException(404, "track_or_source_not_found")
     return source

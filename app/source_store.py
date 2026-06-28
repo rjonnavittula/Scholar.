@@ -18,6 +18,8 @@ from app.source_parser import parse_pasted_source
 
 ALLOWED_SOURCE_TYPES = {"text", "markdown", "pdf", "url", "syllabus", "transcript"}
 ALLOWED_TRUST_LEVELS = {"user", "course", "official", "web", "instructor", "reference"}
+ALLOWED_SOURCE_ROLES = {"primary", "supplemental", "reference"}
+MAX_SOURCE_TEXT_CHARS = 250_000
 
 
 def _json_dump(value: object, fallback: object) -> str:
@@ -42,7 +44,7 @@ def _hash_body(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
-def _source_to_dict(source: LearningSource) -> dict[str, Any]:
+def _source_to_dict(source: LearningSource, *, section_count: int = 0) -> dict[str, Any]:
     return {
         "id": source.id,
         "title": source.title,
@@ -53,14 +55,15 @@ def _source_to_dict(source: LearningSource) -> dict[str, Any]:
         "mime_type": source.mime_type,
         "original_name": source.original_name,
         "char_count": len(source.body_text or ""),
+        "section_count": section_count,
         "metadata": _json_load(source.metadata_json, {}),
         "created_at": source.created_at.isoformat(),
         "updated_at": source.updated_at.isoformat(),
     }
 
 
-def _source_detail_to_dict(source: LearningSource, *, deduplicated: bool = False) -> dict[str, Any]:
-    out = _source_to_dict(source)
+def _source_detail_to_dict(source: LearningSource, *, deduplicated: bool = False, section_count: int = 0) -> dict[str, Any]:
+    out = _source_to_dict(source, section_count=section_count)
     out["body_text"] = source.body_text
     out["deduplicated"] = deduplicated
     return out
@@ -81,14 +84,27 @@ def _section_to_dict(section: LearningSourceSection) -> dict[str, Any]:
     }
 
 
+def _section_count(session: Session, source_id: int) -> int:
+    return len(session.exec(
+        select(LearningSourceSection.id).where(LearningSourceSection.source_id == source_id)
+    ).all())
+
+
+def _clean_role(role: str = "primary") -> str:
+    clean_role = _clean_text(role or "primary").lower()
+    if clean_role not in ALLOWED_SOURCE_ROLES:
+        raise ValueError("invalid_source_role")
+    return clean_role
+
+
 def list_sources(session: Session) -> list[dict[str, Any]]:
     rows = session.exec(select(LearningSource).order_by(LearningSource.created_at.desc())).all()
-    return [_source_to_dict(row) for row in rows]
+    return [_source_to_dict(row, section_count=_section_count(session, row.id or 0)) for row in rows]
 
 
 def get_source(session: Session, source_id: int) -> dict[str, Any] | None:
     source = session.get(LearningSource, source_id)
-    return _source_detail_to_dict(source) if source else None
+    return _source_detail_to_dict(source, section_count=_section_count(session, source_id)) if source else None
 
 
 def list_source_sections(session: Session, source_id: int) -> list[dict[str, Any]] | None:
@@ -132,7 +148,7 @@ def parse_registered_source(session: Session, source_id: int) -> dict[str, Any] 
 
     sections = list_source_sections(session, source_id) or []
     return {
-        "source": _source_detail_to_dict(source),
+        "source": _source_detail_to_dict(source, section_count=len(sections)),
         "section_count": len(sections),
         "total_chars": sum(int(row["char_count"]) for row in sections),
         "outline": [{
@@ -148,6 +164,8 @@ def create_source(session: Session, spec: dict[str, Any]) -> dict[str, Any]:
     body = _clean_text(spec.get("body_text"))
     if not body:
         raise ValueError("body_text_required")
+    if len(body) > MAX_SOURCE_TEXT_CHARS:
+        raise ValueError("body_text_too_large")
 
     source_type = _clean_text(spec.get("source_type") or "text").lower()
     if source_type not in ALLOWED_SOURCE_TYPES:
@@ -168,7 +186,7 @@ def create_source(session: Session, spec: dict[str, Any]) -> dict[str, Any]:
         .order_by(LearningSource.created_at)
     ).first()
     if existing:
-        return _source_detail_to_dict(existing, deduplicated=True)
+        return _source_detail_to_dict(existing, deduplicated=True, section_count=_section_count(session, existing.id or 0))
 
     title = _clean_text(spec.get("title"))
     if not title:
@@ -191,7 +209,7 @@ def create_source(session: Session, spec: dict[str, Any]) -> dict[str, Any]:
     session.add(source)
     session.commit()
     session.refresh(source)
-    return _source_detail_to_dict(source)
+    return _source_detail_to_dict(source, section_count=0)
 
 
 def link_source_to_track(session: Session, track_id: int, source_id: int, role: str = "primary") -> dict[str, Any] | None:
@@ -200,7 +218,7 @@ def link_source_to_track(session: Session, track_id: int, source_id: int, role: 
     if not track or not source:
         return None
 
-    clean_role = _clean_text(role) or "primary"
+    clean_role = _clean_role(role)
     existing = session.exec(
         select(LearningTrackSource).where(
             LearningTrackSource.track_id == track_id,
@@ -261,10 +279,33 @@ def list_track_sources(session: Session, track_id: int) -> list[dict[str, Any]] 
     for link in links:
         source = session.get(LearningSource, link.source_id)
         if source:
-            item = _source_to_dict(source)
+            item = _source_to_dict(source, section_count=_section_count(session, source.id or 0))
             item["role"] = link.role
             rows.append(item)
     return rows
+
+
+def get_source_audit(session: Session) -> dict[str, Any]:
+    sources = session.exec(select(LearningSource)).all()
+    links = session.exec(select(LearningTrackSource)).all()
+    sections = session.exec(select(LearningSourceSection)).all()
+
+    linked_source_ids = {link.source_id for link in links}
+    parsed_sources = [source for source in sources if source.status == "parsed"]
+    unlinked_sources = [source for source in sources if source.id not in linked_source_ids]
+
+    return {
+        "phase": "B",
+        "status": "ready" if sources else "empty",
+        "total_sources": len(sources),
+        "linked_sources": len(linked_source_ids),
+        "unlinked_sources": len(unlinked_sources),
+        "parsed_sources": len(parsed_sources),
+        "registered_sources": len([source for source in sources if source.status == "registered"]),
+        "total_sections": len(sections),
+        "source_types": sorted({source.source_type for source in sources}),
+        "trust_levels": sorted({source.trust_level for source in sources}),
+    }
 
 
 def delete_source(session: Session, source_id: int) -> bool:

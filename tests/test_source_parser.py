@@ -27,6 +27,14 @@ class TestSourceParser(unittest.TestCase):
         self.assertEqual(parsed["sections"][0]["heading"], "Overview")
         self.assertIn("Variables", parsed["sections"][0]["body_text"])
 
+    def test_pdf_page_markers_become_sections(self):
+        parsed = parse_pasted_source("Page 1\nVariables.\n\nPage 2\nFunctions.", "pdf")
+
+        self.assertEqual(parsed["section_count"], 2)
+        self.assertEqual(parsed["outline"][0]["heading"], "Page 1")
+        self.assertEqual(parsed["outline"][1]["heading"], "Page 2")
+        self.assertIn("Functions", parsed["sections"][1]["body_text"])
+
     def test_empty_text_is_rejected(self):
         with self.assertRaises(ValueError):
             parse_pasted_source("   ", "markdown")

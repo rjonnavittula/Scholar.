@@ -354,7 +354,9 @@ Module 4: Async Programming"></textarea>
   }
 
   function sourceMeta(src) {
-    return `${src.source_type || 'source'} · ${src.trust_level || 'trust'} · ${src.status || 'registered'} · ${Number(src.char_count || 0)} chars`;
+    const sections = Number(src.section_count || 0);
+    const sectionLabel = sections ? `${sections} sections` : 'no sections';
+    return `${src.source_type || 'source'} · ${src.trust_level || 'trust'} · ${src.status || 'registered'} · ${sectionLabel} · ${Number(src.char_count || 0)} chars`;
   }
 
   async function openSourcePreview(el, S, Api, sourceId) {

@@ -4,7 +4,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.learn_store import create_track_from_spec
 from app.source_store import (
-    create_source, delete_source, get_source, link_source_to_track, list_sources,
+    create_source, delete_source, get_source, get_source_audit, link_source_to_track, list_sources,
     list_source_sections, list_track_sources, parse_registered_source, unlink_source_from_track,
 )
 
@@ -62,11 +62,14 @@ class TestSourceStore(unittest.TestCase):
 
         self.assertEqual(parsed["source"]["status"], "parsed")
         self.assertEqual(parsed["section_count"], 2)
+        self.assertEqual(parsed["source"]["section_count"], 2)
+        self.assertEqual(get_source(self.session, source["id"])["section_count"], 2)
         self.assertEqual(parsed["outline"][0]["heading"], "Python Basics")
 
         sections = list_source_sections(self.session, source["id"])
         self.assertEqual(len(sections), 2)
         self.assertEqual(sections[1]["heading"], "Functions")
+        self.assertEqual(list_sources(self.session)[0]["section_count"], 2)
 
     def test_parse_registered_source_is_idempotent(self):
         source = create_source(self.session, {
@@ -85,6 +88,8 @@ class TestSourceStore(unittest.TestCase):
             create_source(self.session, {"title": "Empty", "body_text": ""})
         with self.assertRaises(ValueError):
             create_source(self.session, {"source_type": "exe", "body_text": "x"})
+        with self.assertRaises(ValueError):
+            create_source(self.session, {"title": "Huge", "body_text": "x" * 250_001})
 
     def test_source_allows_ui_trust_and_transcript_values(self):
         source = create_source(self.session, {
@@ -113,6 +118,13 @@ class TestSourceStore(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["role"], "supplemental")
 
+    def test_link_source_rejects_unknown_role(self):
+        track = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})
+        source = create_source(self.session, {"title": "Basics Notes", "body_text": "Variables."})
+
+        with self.assertRaises(ValueError):
+            link_source_to_track(self.session, track["id"], source["id"], role="admin")
+
 
     def test_unlink_source_from_track(self):
         track = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})
@@ -123,6 +135,25 @@ class TestSourceStore(unittest.TestCase):
         self.assertEqual(list_track_sources(self.session, track["id"]), [])
         self.assertFalse(unlink_source_from_track(self.session, track["id"], source["id"]))
         self.assertIsNone(unlink_source_from_track(self.session, 999, source["id"]))
+
+    def test_source_audit_reports_phase_b_counts(self):
+        track = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})
+        source = create_source(self.session, {
+            "title": "Basics Notes",
+            "source_type": "markdown",
+            "body_text": "# Basics\nVariables.",
+        })
+        parse_registered_source(self.session, source["id"])
+        link_source_to_track(self.session, track["id"], source["id"], role="reference")
+
+        audit = get_source_audit(self.session)
+
+        self.assertEqual(audit["phase"], "B")
+        self.assertEqual(audit["total_sources"], 1)
+        self.assertEqual(audit["linked_sources"], 1)
+        self.assertEqual(audit["parsed_sources"], 1)
+        self.assertEqual(audit["total_sections"], 1)
+        self.assertIn("markdown", audit["source_types"])
 
     def test_delete_source_removes_links(self):
         track = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})

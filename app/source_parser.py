@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 _MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+_PAGE_HEADING_RE = re.compile(r"^Page\s+(\d+)\s*$", re.IGNORECASE)
 _NUMBERED_HEADING_RE = re.compile(
     r"^(?:(module|chapter|unit|lesson|section|part)\s+\d+|\d+(?:\.\d+)*)(?:\s*[:.)-]\s*|\s+)(.+)$",
     re.IGNORECASE,
@@ -100,6 +101,14 @@ def parse_pasted_source(text: str, source_type: str = "text") -> dict[str, Any]:
         if line.strip().startswith("```"):
             in_code_fence = not in_code_fence
             current_body.append(line)
+            continue
+
+        page_heading = None if in_code_fence else _PAGE_HEADING_RE.match(line.strip())
+        if page_heading and kind == "pdf":
+            flush()
+            detected_headings += 1
+            current_level = 1
+            current_heading = f"Page {page_heading.group(1)}"
             continue
 
         markdown_heading = None if in_code_fence else _MARKDOWN_HEADING_RE.match(line.strip())
