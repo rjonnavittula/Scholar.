@@ -330,9 +330,10 @@ Module 4: Async Programming"></textarea>
       <p>Register trusted course material first. Parsing, chunking, RAG, and lesson generation come after this registry layer.</p>
       <label>Title<input data-source-title placeholder="Python Basics Notes"></label>
       <div class="forge-source-row">
-        <label>Type<select data-source-type><option value="markdown">Markdown</option><option value="text">Text</option><option value="syllabus">Syllabus</option><option value="transcript">Transcript</option></select></label>
-        <label>Trust<select data-source-trust><option value="user">User</option><option value="official">Official</option><option value="instructor">Instructor</option><option value="reference">Reference</option></select></label>
+        <label>Type<select data-source-type><option value="auto">Auto for upload</option><option value="markdown">Markdown</option><option value="text">Text</option><option value="pdf">PDF</option><option value="syllabus">Syllabus</option><option value="transcript">Transcript</option></select></label>
+        <label>Trust<select data-source-trust><option value="user">User</option><option value="course">Course</option><option value="official">Official</option><option value="web">Web</option><option value="instructor">Instructor</option><option value="reference">Reference</option></select></label>
       </div>
+      <label class="forge-source-file">Upload file<input data-source-file type="file" accept=".txt,.md,.markdown,.pdf,.py,.js,.ts,.json,.csv,text/plain,text/markdown,application/pdf"></label>
       <textarea data-source-body placeholder="# Python Basics\nVariables store references. Functions package reusable behavior."></textarea>
       <div class="forge-source-existing"><h3>Source Registry</h3><div data-source-registry><p>Loading sources…</p></div></div>
       <div class="forge-modal-actions"><button data-close>Cancel</button><button data-save>Create & Link</button></div>
@@ -358,17 +359,33 @@ Module 4: Async Programming"></textarea>
     host.querySelector('[data-save]').onclick = async () => {
       const title = host.querySelector('[data-source-title]').value.trim();
       const body = host.querySelector('[data-source-body]').value.trim();
-      if (!title || !body) return alert('Add a source title and body.');
+      const file = host.querySelector('[data-source-file]').files[0];
+      if (!file && (!title || !body)) return alert('Add pasted source text, or choose a file to upload.');
       const save = host.querySelector('[data-save]');
-      save.disabled = true; save.textContent = 'Linking…';
+      save.disabled = true; save.textContent = file ? 'Uploading…' : 'Linking…';
       try {
-        const source = await Api.post('/learn/sources', {
-          title,
-          source_type: host.querySelector('[data-source-type]').value,
-          trust_level: host.querySelector('[data-source-trust]').value,
-          body_text: body,
-          metadata: { origin: 'course-map-ui' }
-        });
+        let source;
+        if (file) {
+          const form = new FormData();
+          form.append('file', file);
+          form.append('title', title);
+          form.append('source_type', host.querySelector('[data-source-type]').value);
+          form.append('trust_level', host.querySelector('[data-source-trust]').value);
+          form.append('parse_now', 'true');
+          const result = await Api.upload('/learn/sources/upload', form);
+          source = result.source || result;
+        } else {
+          const selectedType = host.querySelector('[data-source-type]').value;
+          const sourceType = selectedType === 'auto' ? (body.trim().startsWith('#') ? 'markdown' : 'text') : selectedType;
+          source = await Api.post('/learn/sources', {
+            title,
+            source_type: sourceType,
+            trust_level: host.querySelector('[data-source-trust]').value,
+            body_text: body,
+            metadata: { origin: 'course-map-ui' }
+          });
+          await Api.post(`/learn/sources/${source.id}/parse`, {});
+        }
         await Api.post(`/learn/tracks/${track.id}/sources/${source.id}`, { role: 'primary' });
         activeSources = null; activeSourcesTrackId = null;
         await loadTrackSources(Api, track.id);

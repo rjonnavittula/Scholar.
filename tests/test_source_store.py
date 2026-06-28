@@ -86,6 +86,17 @@ class TestSourceStore(unittest.TestCase):
         with self.assertRaises(ValueError):
             create_source(self.session, {"source_type": "exe", "body_text": "x"})
 
+    def test_source_allows_ui_trust_and_transcript_values(self):
+        source = create_source(self.session, {
+            "title": "Lecture Transcript",
+            "source_type": "transcript",
+            "trust_level": "instructor",
+            "body_text": "Welcome to Python basics.",
+        })
+
+        self.assertEqual(source["source_type"], "transcript")
+        self.assertEqual(source["trust_level"], "instructor")
+
     def test_link_source_to_track(self):
         track = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})
         source = create_source(self.session, {"title": "Basics Notes", "body_text": "Variables and functions."})

@@ -16,8 +16,8 @@ from sqlmodel import Session, select
 from app.models import LearningSource, LearningSourceSection, LearningTrack, LearningTrackSource
 from app.source_parser import parse_pasted_source
 
-ALLOWED_SOURCE_TYPES = {"text", "markdown", "pdf", "url", "syllabus"}
-ALLOWED_TRUST_LEVELS = {"user", "course", "official", "web"}
+ALLOWED_SOURCE_TYPES = {"text", "markdown", "pdf", "url", "syllabus", "transcript"}
+ALLOWED_TRUST_LEVELS = {"user", "course", "official", "web", "instructor", "reference"}
 
 
 def _json_dump(value: object, fallback: object) -> str:

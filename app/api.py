@@ -6,7 +6,7 @@ import secrets
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, select
 
@@ -24,6 +24,7 @@ from app.source_store import (
     create_source, delete_source, get_source, link_source_to_track, list_sources,
     list_source_sections, list_track_sources, parse_registered_source,
 )
+from app.source_upload import build_upload_source_spec
 
 
 def _due_to_utc(due, school_tz: str):
@@ -168,6 +169,35 @@ def create_learning_source(payload: SourceIn, session: Session = Depends(get_ses
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+
+
+
+@learn_router.post("/sources/upload", status_code=201)
+async def upload_learning_source(
+    file: UploadFile = File(...),
+    title: str = Form(""),
+    source_type: str = Form("auto"),
+    trust_level: str = Form("user"),
+    parse_now: bool = Form(False),
+    session: Session = Depends(get_session),
+):
+    try:
+        data = await file.read()
+        spec = build_upload_source_spec(
+            filename=file.filename or "upload.txt",
+            content_type=file.content_type or "application/octet-stream",
+            data=data,
+            title=title,
+            source_type=source_type,
+            trust_level=trust_level,
+        )
+        source = create_source(session, spec)
+        if parse_now:
+            parsed = parse_registered_source(session, int(source["id"]))
+            return {"source": get_source(session, int(source["id"])), "parsed": parsed}
+        return source
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 @learn_router.get("/sources/{source_id}")
 def read_learning_source(source_id: int, session: Session = Depends(get_session)):

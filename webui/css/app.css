@@ -1210,6 +1210,9 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 .forge-source-modal input,.forge-source-modal select,.forge-source-modal textarea{border:1px solid rgba(197,168,128,.14);border-radius:14px;background:#100e0d;color:#e6e4e0;padding:13px 14px;outline:none;font:inherit;letter-spacing:normal;text-transform:none;}
 .forge-source-modal textarea{min-height:150px;resize:vertical;line-height:1.5;}
 .forge-source-modal input:focus,.forge-source-modal select:focus,.forge-source-modal textarea:focus{border-color:rgba(197,168,128,.50);box-shadow:0 0 0 4px rgba(197,168,128,.05);}
+.forge-source-file{border:1px dashed rgba(197,168,128,.20);border-radius:16px;background:#100e0d;padding:13px 14px;transition:border-color .3s,background .3s;}
+.forge-source-file:hover{border-color:rgba(197,168,128,.45);background:#15120f;}
+.forge-source-file input{padding:0!important;border:0!important;background:transparent!important;color:#8f8377!important;}
 .forge-source-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}
 .forge-source-existing{border-top:1px dashed rgba(197,168,128,.16);padding-top:16px;}
 .forge-source-existing h3{font-size:12px;margin:0 0 10px;color:#c5a880;text-transform:uppercase;letter-spacing:.18em;}
