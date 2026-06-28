@@ -285,6 +285,7 @@ Module 4: Async Programming"></textarea>
     el.querySelector('[data-forge-back]').onclick = () => { activeTrackId = null; activeTrack = null; activeSources = null; activeSourcesTrackId = null; render(el, S, Api); };
     const addSource = el.querySelector('[data-forge-source]');
     if (addSource) addSource.onclick = () => openSourceModal(el, S, Api, track);
+    wireSourcePanel(el, S, Api, track);
     const del = el.querySelector('[data-forge-delete]');
     if (del) del.onclick = async () => {
       if (!confirm(`Delete ${track.title}? This removes the saved course map and lesson drafts.`)) return;
@@ -314,69 +315,187 @@ Module 4: Async Programming"></textarea>
     const count = sources.length;
     return `<section class="forge-source-panel">
       <div class="forge-source-head"><span>${count}</span><em>${count === 1 ? 'source' : 'sources'}</em></div>
-      ${count ? `<div class="forge-source-list">${sources.slice(0, 4).map(renderSourceChip).join('')}</div>` : '<p>No trusted sources linked yet.</p>'}
+      ${count ? `<div class="forge-source-list">${sources.map(renderSourceChip).join('')}</div>` : '<p>No trusted sources linked yet. Add notes, uploads, or course files before generating grounded lessons.</p>'}
     </section>`;
   }
 
   function renderSourceChip(src) {
     const label = src.role || src.trust_level || 'source';
-    return `<div class="forge-source-chip"><b>${esc(src.title)}</b><small>${esc(label)} · ${esc(src.source_type)} · ${Number(src.char_count || 0)} chars</small></div>`;
+    const parsed = src.status === 'parsed' ? 'parsed' : 'registered';
+    return `<div class="forge-source-chip-row">
+      <button class="forge-source-chip" data-preview-source="${esc(src.id)}" title="Preview source">
+        <b>${esc(src.title)}</b>
+        <small>${esc(label)} · ${esc(src.source_type)} · ${esc(parsed)} · ${Number(src.char_count || 0)} chars</small>
+      </button>
+      <button class="forge-source-unlink" data-unlink-source="${esc(src.id)}" title="Unlink source">×</button>
+    </div>`;
+  }
+
+  function wireSourcePanel(el, S, Api, track) {
+    el.querySelectorAll('[data-preview-source]').forEach((b) => b.onclick = (ev) => {
+      ev.preventDefault();
+      openSourcePreview(el, S, Api, b.dataset.previewSource);
+    });
+    el.querySelectorAll('[data-unlink-source]').forEach((b) => b.onclick = async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (!confirm('Unlink this source from the course?')) return;
+      b.disabled = true;
+      try {
+        await Api.del(`/learn/tracks/${track.id}/sources/${b.dataset.unlinkSource}`);
+        activeSources = null; activeSourcesTrackId = null;
+        await loadTrackSources(Api, track.id);
+        render(el, S, Api);
+      } catch (e) {
+        b.disabled = false;
+        alert(e.message || e);
+      }
+    });
+  }
+
+  function sourceMeta(src) {
+    return `${src.source_type || 'source'} · ${src.trust_level || 'trust'} · ${src.status || 'registered'} · ${Number(src.char_count || 0)} chars`;
+  }
+
+  async function openSourcePreview(el, S, Api, sourceId) {
+    const host = modalHost(el);
+    host.innerHTML = `<div class="forge-modal modal-overlay fade-in"><div class="forge-modal-card forge-source-modal forge-preview-modal">
+      <h2>Source Preview</h2><p>Loading source evidence…</p>
+      <div class="forge-modal-actions"><button data-close>Close</button></div>
+    </div></div>`;
+    host.querySelector('[data-close]').onclick = () => { host.innerHTML = ''; };
+
+    async function draw() {
+      const [source, sections] = await Promise.all([
+        Api.get(`/learn/sources/${sourceId}`),
+        Api.get(`/learn/sources/${sourceId}/sections`).catch(() => []),
+      ]);
+      host.innerHTML = `<div class="forge-modal modal-overlay fade-in"><div class="forge-modal-card forge-source-modal forge-preview-modal">
+        <div class="forge-source-modal-head">
+          <div><h2>${esc(source.title)}</h2><p>${esc(sourceMeta(source))}</p></div>
+          <button data-close>×</button>
+        </div>
+        <div class="forge-preview-grid">
+          <section class="forge-preview-pane">
+            <h3>Sections</h3>
+            ${sections.length ? sections.map((sec) => `<article class="forge-section-preview"><em>${esc(sec.position)} · H${esc(sec.level)}</em><b>${esc(sec.heading)}</b><p>${esc(sec.body_text).slice(0, 260)}</p></article>`).join('') : '<p>No parsed sections yet.</p>'}
+          </section>
+          <section class="forge-preview-pane">
+            <h3>Raw Source</h3>
+            <pre>${esc(source.body_text || '').slice(0, 5000)}</pre>
+          </section>
+        </div>
+        <div class="forge-modal-actions"><button data-close-bottom>Close</button><button data-parse>${source.status === 'parsed' ? 'Re-parse Source' : 'Parse Source'}</button></div>
+      </div></div>`;
+      host.querySelector('[data-close]').onclick = () => { host.innerHTML = ''; };
+      host.querySelector('[data-close-bottom]').onclick = () => { host.innerHTML = ''; };
+      host.querySelector('[data-parse]').onclick = async () => {
+        const btn = host.querySelector('[data-parse]');
+        btn.disabled = true; btn.textContent = 'Parsing…';
+        try { await Api.post(`/learn/sources/${sourceId}/parse`, {}); await draw(); }
+        catch (e) { btn.disabled = false; alert(e.message || e); }
+      };
+    }
+    try { await draw(); }
+    catch (e) { host.innerHTML = `<div class="forge-modal modal-overlay fade-in"><div class="forge-modal-card forge-source-modal"><h2>Preview failed</h2><p>${esc(e.message || e)}</p><div class="forge-modal-actions"><button data-close>Close</button></div></div></div>`; host.querySelector('[data-close]').onclick = () => { host.innerHTML = ''; }; }
   }
 
   async function openSourceModal(el, S, Api, track) {
     const host = modalHost(el);
     host.innerHTML = `<div class="forge-modal modal-overlay fade-in"><div class="forge-modal-card forge-source-modal">
-      <h2>Add Source</h2>
-      <p>Register trusted course material first. Parsing, chunking, RAG, and lesson generation come after this registry layer.</p>
-      <label>Title<input data-source-title placeholder="Python Basics Notes"></label>
-      <div class="forge-source-row">
-        <label>Type<select data-source-type><option value="auto">Auto for upload</option><option value="markdown">Markdown</option><option value="text">Text</option><option value="pdf">PDF</option><option value="syllabus">Syllabus</option><option value="transcript">Transcript</option></select></label>
-        <label>Trust<select data-source-trust><option value="user">User</option><option value="course">Course</option><option value="official">Official</option><option value="web">Web</option><option value="instructor">Instructor</option><option value="reference">Reference</option></select></label>
+      <div class="forge-source-modal-head"><div><h2>Add Source</h2><p>Attach trusted course material. Parsed sections become evidence for later grounded lessons.</p></div><button data-close>×</button></div>
+      <div class="forge-source-tabs"><button data-source-mode="paste" class="active">Paste</button><button data-source-mode="upload">Upload</button><button data-source-mode="registry">Registry</button></div>
+      <div class="forge-source-modal-body">
+        <section data-source-panel="paste" class="forge-source-mode active">
+          <label>Title<input data-source-title placeholder="Python Basics Notes"></label>
+          <div class="forge-source-row">
+            <label>Type<select data-source-type><option value="auto">Auto</option><option value="markdown">Markdown</option><option value="text">Text</option><option value="pdf">PDF</option><option value="syllabus">Syllabus</option><option value="transcript">Transcript</option></select></label>
+            <label>Trust<select data-source-trust><option value="user">User</option><option value="course">Course</option><option value="official">Official</option><option value="web">Web</option><option value="instructor">Instructor</option><option value="reference">Reference</option></select></label>
+          </div>
+          <textarea data-source-body placeholder="# Python Basics\nVariables store references. Functions package reusable behavior."></textarea>
+        </section>
+        <section data-source-panel="upload" class="forge-source-mode">
+          <label>Title<input data-upload-title placeholder="Optional — inferred from file name"></label>
+          <div class="forge-source-row">
+            <label>Type<select data-upload-type><option value="auto">Auto</option><option value="markdown">Markdown</option><option value="text">Text</option><option value="pdf">PDF</option><option value="syllabus">Syllabus</option><option value="transcript">Transcript</option></select></label>
+            <label>Trust<select data-upload-trust><option value="course">Course</option><option value="user">User</option><option value="official">Official</option><option value="instructor">Instructor</option><option value="reference">Reference</option></select></label>
+          </div>
+          <label class="forge-upload-card"><input data-source-file type="file" accept=".txt,.md,.markdown,.pdf,.py,.js,.ts,.json,.csv,text/plain,text/markdown,application/pdf"><span>Choose File</span><b data-file-name>No file selected</b><em>Text, Markdown, code files, and text-readable PDFs.</em></label>
+        </section>
+        <section data-source-panel="registry" class="forge-source-mode">
+          <div class="forge-source-existing"><h3>Source Registry</h3><div data-source-registry><p>Loading sources…</p></div></div>
+        </section>
       </div>
-      <label class="forge-source-file">Upload file<input data-source-file type="file" accept=".txt,.md,.markdown,.pdf,.py,.js,.ts,.json,.csv,text/plain,text/markdown,application/pdf"></label>
-      <textarea data-source-body placeholder="# Python Basics\nVariables store references. Functions package reusable behavior."></textarea>
-      <div class="forge-source-existing"><h3>Source Registry</h3><div data-source-registry><p>Loading sources…</p></div></div>
-      <div class="forge-modal-actions"><button data-close>Cancel</button><button data-save>Create & Link</button></div>
+      <div class="forge-modal-actions"><button data-close-bottom>Cancel</button><button data-save>Create & Link</button></div>
     </div></div>`;
-    host.querySelector('[data-close]').onclick = () => { host.innerHTML = ''; };
+
+    const close = () => { host.innerHTML = ''; };
+    host.querySelector('[data-close]').onclick = close;
+    host.querySelector('[data-close-bottom]').onclick = close;
+
+    let mode = 'paste';
+    const save = host.querySelector('[data-save]');
+    const setMode = (next) => {
+      mode = next;
+      host.querySelectorAll('[data-source-mode]').forEach((b) => b.classList.toggle('active', b.dataset.sourceMode === mode));
+      host.querySelectorAll('[data-source-panel]').forEach((p) => p.classList.toggle('active', p.dataset.sourcePanel === mode));
+      save.textContent = mode === 'registry' ? 'Select A Registry Source' : 'Create & Link';
+      save.disabled = mode === 'registry';
+    };
+    host.querySelectorAll('[data-source-mode]').forEach((b) => b.onclick = () => setMode(b.dataset.sourceMode));
+
+    const fileInput = host.querySelector('[data-source-file]');
+    fileInput.onchange = () => {
+      const file = fileInput.files[0];
+      host.querySelector('[data-file-name]').textContent = file ? file.name : 'No file selected';
+    };
+
     const registry = host.querySelector('[data-source-registry]');
-    try {
-      const sources = await Api.get('/learn/sources');
-      registry.innerHTML = sources.length ? sources.map((src) => `<button class="forge-source-registry-item" data-link-source="${esc(src.id)}"><b>${esc(src.title)}</b><small>${esc(src.source_type)} · ${esc(src.trust_level)} · ${Number(src.char_count || 0)} chars</small></button>`).join('') : '<p>No sources registered yet.</p>';
-      registry.querySelectorAll('[data-link-source]').forEach((b) => b.onclick = async () => {
-        b.disabled = true;
-        try {
-          await Api.post(`/learn/tracks/${track.id}/sources/${b.dataset.linkSource}`, { role: 'supplemental' });
-          activeSources = null; activeSourcesTrackId = null;
-          await loadTrackSources(Api, track.id);
-          host.innerHTML = '';
-          render(el, S, Api);
-        } catch (e) { b.disabled = false; alert(e.message || e); }
-      });
-    } catch (e) {
-      registry.innerHTML = `<p>${esc(e.message || e)}</p>`;
+    async function loadRegistry() {
+      try {
+        const sources = await Api.get('/learn/sources');
+        registry.innerHTML = sources.length ? sources.map((src) => `<article class="forge-source-registry-item">
+          <div><b>${esc(src.title)}</b><small>${esc(sourceMeta(src))}</small></div>
+          <div class="forge-registry-actions"><button data-preview-existing="${esc(src.id)}">Preview</button><button data-link-source="${esc(src.id)}">Link</button></div>
+        </article>`).join('') : '<p>No sources registered yet.</p>';
+        registry.querySelectorAll('[data-preview-existing]').forEach((b) => b.onclick = () => openSourcePreview(el, S, Api, b.dataset.previewExisting));
+        registry.querySelectorAll('[data-link-source]').forEach((b) => b.onclick = async () => {
+          b.disabled = true;
+          try {
+            await Api.post(`/learn/tracks/${track.id}/sources/${b.dataset.linkSource}`, { role: 'supplemental' });
+            activeSources = null; activeSourcesTrackId = null;
+            await loadTrackSources(Api, track.id);
+            host.innerHTML = '';
+            render(el, S, Api);
+          } catch (e) { b.disabled = false; alert(e.message || e); }
+        });
+      } catch (e) { registry.innerHTML = `<p>${esc(e.message || e)}</p>`; }
     }
-    host.querySelector('[data-save]').onclick = async () => {
-      const title = host.querySelector('[data-source-title]').value.trim();
-      const body = host.querySelector('[data-source-body]').value.trim();
-      const file = host.querySelector('[data-source-file]').files[0];
-      if (!file && (!title || !body)) return alert('Add pasted source text, or choose a file to upload.');
-      const save = host.querySelector('[data-save]');
-      save.disabled = true; save.textContent = file ? 'Uploading…' : 'Linking…';
+    loadRegistry();
+
+    save.onclick = async () => {
+      if (mode === 'registry') return;
+      const btn = host.querySelector('[data-save]');
+      btn.disabled = true; btn.textContent = mode === 'upload' ? 'Uploading…' : 'Linking…';
       try {
         let source;
-        if (file) {
+        if (mode === 'upload') {
+          const file = fileInput.files[0];
+          if (!file) throw new Error('choose_file_required');
           const form = new FormData();
           form.append('file', file);
-          form.append('title', title);
-          form.append('source_type', host.querySelector('[data-source-type]').value);
-          form.append('trust_level', host.querySelector('[data-source-trust]').value);
+          form.append('title', host.querySelector('[data-upload-title]').value.trim());
+          form.append('source_type', host.querySelector('[data-upload-type]').value);
+          form.append('trust_level', host.querySelector('[data-upload-trust]').value);
           form.append('parse_now', 'true');
           const result = await Api.upload('/learn/sources/upload', form);
           source = result.source || result;
         } else {
+          const title = host.querySelector('[data-source-title]').value.trim();
+          const body = host.querySelector('[data-source-body]').value.trim();
+          if (!title || !body) throw new Error('title_and_body_required');
           const selectedType = host.querySelector('[data-source-type]').value;
-          const sourceType = selectedType === 'auto' ? (body.trim().startsWith('#') ? 'markdown' : 'text') : selectedType;
+          const sourceType = selectedType === 'auto' ? (body.startsWith('#') ? 'markdown' : 'text') : selectedType;
           source = await Api.post('/learn/sources', {
             title,
             source_type: sourceType,
@@ -392,7 +511,7 @@ Module 4: Async Programming"></textarea>
         host.innerHTML = '';
         render(el, S, Api);
       } catch (e) {
-        save.disabled = false; save.textContent = 'Create & Link';
+        btn.disabled = false; btn.textContent = 'Create & Link';
         alert(e.message || e);
       }
     };

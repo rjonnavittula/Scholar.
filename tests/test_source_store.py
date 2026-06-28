@@ -5,7 +5,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from app.learn_store import create_track_from_spec
 from app.source_store import (
     create_source, delete_source, get_source, link_source_to_track, list_sources,
-    list_source_sections, list_track_sources, parse_registered_source,
+    list_source_sections, list_track_sources, parse_registered_source, unlink_source_from_track,
 )
 
 
@@ -112,6 +112,17 @@ class TestSourceStore(unittest.TestCase):
         rows = list_track_sources(self.session, track["id"])
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["role"], "supplemental")
+
+
+    def test_unlink_source_from_track(self):
+        track = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})
+        source = create_source(self.session, {"title": "Basics Notes", "body_text": "Variables."})
+        link_source_to_track(self.session, track["id"], source["id"])
+
+        self.assertTrue(unlink_source_from_track(self.session, track["id"], source["id"]))
+        self.assertEqual(list_track_sources(self.session, track["id"]), [])
+        self.assertFalse(unlink_source_from_track(self.session, track["id"], source["id"]))
+        self.assertIsNone(unlink_source_from_track(self.session, 999, source["id"]))
 
     def test_delete_source_removes_links(self):
         track = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})

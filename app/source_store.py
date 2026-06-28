@@ -226,6 +226,28 @@ def link_source_to_track(session: Session, track_id: int, source_id: int, role: 
     return out
 
 
+
+def unlink_source_from_track(session: Session, track_id: int, source_id: int) -> bool | None:
+    track = session.get(LearningTrack, track_id)
+    source = session.get(LearningSource, source_id)
+    if not track or not source:
+        return None
+
+    link = session.exec(
+        select(LearningTrackSource).where(
+            LearningTrackSource.track_id == track_id,
+            LearningTrackSource.source_id == source_id,
+        )
+    ).first()
+    if not link:
+        return False
+
+    session.delete(link)
+    track.updated_at = datetime.now()
+    session.add(track)
+    session.commit()
+    return True
+
 def list_track_sources(session: Session, track_id: int) -> list[dict[str, Any]] | None:
     if not session.get(LearningTrack, track_id):
         return None

@@ -22,7 +22,7 @@ from app.learn_store import (
 )
 from app.source_store import (
     create_source, delete_source, get_source, link_source_to_track, list_sources,
-    list_source_sections, list_track_sources, parse_registered_source,
+    list_source_sections, list_track_sources, parse_registered_source, unlink_source_from_track,
 )
 from app.source_upload import build_upload_source_spec
 
@@ -252,6 +252,20 @@ def link_learning_source_to_track(
     if not source:
         raise HTTPException(404, "track_or_source_not_found")
     return source
+
+
+@learn_router.delete("/tracks/{track_id}/sources/{source_id}", status_code=204)
+def unlink_learning_source_from_track(
+    track_id: int,
+    source_id: int,
+    session: Session = Depends(get_session),
+):
+    result = unlink_source_from_track(session, track_id, source_id)
+    if result is None:
+        raise HTTPException(404, "track_or_source_not_found")
+    if result is False:
+        raise HTTPException(404, "source_link_not_found")
+    return None
 
 
 @learn_router.get("/tracks")
