@@ -2,6 +2,24 @@
 const Api = (() => {
   let KEY = localStorage.getItem('hive-key') || '';
 
+  function isLocalDev() {
+    return ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
+  }
+
+  async function ensureLocalDevKey() {
+    if (KEY || !isLocalDev()) return !!KEY;
+    try {
+      const r = await fetch('/auth/keys?label=local-browser', { method: 'POST' });
+      if (!r.ok) return false;
+      const data = await r.json();
+      if (!data.api_key) return false;
+      setKey(data.api_key);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   async function req(path, opts = {}) {
     const r = await fetch(path, {
       ...opts,
@@ -39,7 +57,7 @@ const Api = (() => {
   }
 
   return {
-    setKey, hasKey: () => !!KEY, fmtInZone, dayInZone,
+    setKey, ensureLocalDevKey, hasKey: () => !!KEY, fmtInZone, dayInZone,
     get:  (p)    => req(p),
     post: (p, b) => req(p, { method: 'POST',  body: b }),
     put:  (p, b) => req(p, { method: 'PUT',   body: b }),

@@ -191,6 +191,31 @@ class LearningTrack(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.now)
 
 
+class LearningSource(SQLModel, table=True):
+    """Trusted material registered for Scholar learning. Parsing/RAG comes later."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(index=True)
+    source_type: str = "text"        # text | markdown | pdf | url | syllabus
+    trust_level: str = "user"        # user | course | official | web
+    status: str = "registered"      # registered | parsed | indexed | archived
+    content_hash: str = Field(default="", index=True)
+    mime_type: str = "text/plain"
+    original_name: str = ""
+    body_text: str = ""
+    metadata_json: str = "{}"
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class LearningTrackSource(SQLModel, table=True):
+    """Join table: a course can be grounded by many registered sources."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    track_id: int = Field(foreign_key="learningtrack.id", index=True)
+    source_id: int = Field(foreign_key="learningsource.id", index=True)
+    role: str = "primary"
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
 class LearningModule(SQLModel, table=True):
     """A major region/unit inside a Forge learning track."""
     id: Optional[int] = Field(default=None, primary_key=True)

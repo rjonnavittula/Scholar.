@@ -20,6 +20,10 @@ from app.learn_store import (
     get_lesson_tree, get_or_create_lesson_for_node, get_track_tree, list_tracks,
     start_learning_node,
 )
+from app.source_store import (
+    create_source, delete_source, get_source, link_source_to_track, list_sources,
+    list_track_sources,
+)
 
 
 def _due_to_utc(due, school_tz: str):
@@ -116,6 +120,20 @@ class ForgeTrackIn(BaseModel):
     source_hash: str = ""
 
 
+class SourceIn(BaseModel):
+    title: str = ""
+    source_type: str = "text"
+    trust_level: str = "user"
+    mime_type: str = "text/plain"
+    original_name: str = ""
+    body_text: str
+    metadata: dict = PydanticField(default_factory=dict)
+
+
+class TrackSourceLinkIn(BaseModel):
+    role: str = "primary"
+
+
 class LessonBlockIn(BaseModel):
     block_type: str
     title: str = ""
@@ -136,6 +154,55 @@ def parse_learn_source(payload: ParseSourceIn):
     if not payload.text.strip():
         raise HTTPException(400, "text_required")
     return parse_source(payload.text)
+
+
+@learn_router.get("/sources")
+def list_learning_sources(session: Session = Depends(get_session)):
+    return list_sources(session)
+
+
+@learn_router.post("/sources", status_code=201)
+def create_learning_source(payload: SourceIn, session: Session = Depends(get_session)):
+    try:
+        return create_source(session, payload.dict())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@learn_router.get("/sources/{source_id}")
+def read_learning_source(source_id: int, session: Session = Depends(get_session)):
+    source = get_source(session, source_id)
+    if not source:
+        raise HTTPException(404, "source_not_found")
+    return source
+
+
+@learn_router.delete("/sources/{source_id}", status_code=204)
+def delete_learning_source(source_id: int, session: Session = Depends(get_session)):
+    if not delete_source(session, source_id):
+        raise HTTPException(404, "source_not_found")
+    return None
+
+
+@learn_router.get("/tracks/{track_id}/sources")
+def list_learning_track_sources(track_id: int, session: Session = Depends(get_session)):
+    sources = list_track_sources(session, track_id)
+    if sources is None:
+        raise HTTPException(404, "track_not_found")
+    return sources
+
+
+@learn_router.post("/tracks/{track_id}/sources/{source_id}", status_code=201)
+def link_learning_source_to_track(
+    track_id: int,
+    source_id: int,
+    payload: TrackSourceLinkIn,
+    session: Session = Depends(get_session),
+):
+    source = link_source_to_track(session, track_id, source_id, payload.role)
+    if not source:
+        raise HTTPException(404, "track_or_source_not_found")
+    return source
 
 
 @learn_router.get("/tracks")

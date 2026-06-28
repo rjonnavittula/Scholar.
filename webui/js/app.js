@@ -41,7 +41,10 @@
 
   // ---------- boot ----------
   async function boot() {
-    if (!Api.hasKey()) return showGate();
+    if (!Api.hasKey()) {
+      const ok = await Api.ensureLocalDevKey();
+      if (!ok) return showGate();
+    }
     try { await Api.get('/config/settings'); } catch (e) { return showGate(); }
     $('gate').classList.add('hidden');
     $('app').classList.remove('hidden');
@@ -2311,7 +2314,7 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
         row('Planned task starts', 'remind me before a block', `<input type="checkbox" disabled />`)
       );
 
-    const paneAcct = `<p class="set-sub">Single-user, self-hosted — auth is your API key.</p>` +
+    const paneAcct = `<p class="set-sub">Single-user, self-hosted — localhost testing auto-creates a browser key.</p>` +
       group('',
         row('Display name', '', `<input id="m-name" type="text" value="${esc(st.display_name || '')}" placeholder="your name" />`)
       ) + group('api key',
