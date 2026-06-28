@@ -264,10 +264,12 @@ Module 4: Async Programming"></textarea>
     el.innerHTML = `<div class="forge-shell forge-map-shell">
       <aside class="forge-sidebar forge-course-rail">
         <button class="forge-back" data-forge-back>← Courses</button>
-        <div class="forge-context-mark course"><span>${esc(iconFor(track.title + ' ' + (track.role || '')))}</span></div>
-        <h1>${esc(track.title)}</h1>
+        <div class="forge-course-id">
+          <span class="forge-context-mark course">${esc(iconFor(track.title + ' ' + (track.role || '')))}</span>
+          <div><p>Course</p><h1>${esc(track.title)}</h1></div>
+        </div>
         <p class="forge-course-meta">${esc(inputLabel(track))} · ${modules.length} modules · ${esc(track.status || 'draft')}</p>
-        <div class="forge-mastery"><span>${masteryForTrack(track)}%</span><em>mastery</em></div>
+        ${renderCourseProgress(track, modules)}
         ${renderCourseStats(track, modules, sources)}
         <div class="forge-side-actions">
           <button data-forge-delete class="forge-danger">Delete Course</button>
@@ -329,13 +331,24 @@ Module 4: Async Programming"></textarea>
     return next ? `Next · ${next.title}` : 'Course complete';
   }
 
+  function renderCourseProgress(track, modules) {
+    const mastery = masteryForTrack(track);
+    const total = modules.length || 0;
+    const done = modules.filter((m) => m.completed).length;
+    return `<section class="forge-course-progress-card">
+      <div><span>Progress</span><b>${mastery}%</b></div>
+      <div class="forge-focus-meter"><i style="width:${mastery}%"></i></div>
+      <small>${done}/${total} modules complete</small>
+    </section>`;
+  }
+
   function renderCourseStats(track, modules, sources) {
     const totalNodes = (modules || []).reduce((sum, m) => sum + ((m.nodes || []).length), 0);
     const completedNodes = (modules || []).reduce((sum, m) => sum + ((m.nodes || []).filter((n) => n.status === 'completed').length), 0);
     const parsedSources = (sources || []).filter((s) => s.status === 'parsed').length;
-    return `<div class="forge-course-stat-grid">
-      <div class="forge-course-stat"><b>${completedNodes}/${totalNodes || 0}</b><span>lessons</span></div>
-      <div class="forge-course-stat"><b>${parsedSources}/${sources.length || 0}</b><span>parsed</span></div>
+    return `<div class="forge-course-stat-list">
+      <div><span>Lessons</span><b>${completedNodes}/${totalNodes || 0}</b></div>
+      <div><span>Sources parsed</span><b>${parsedSources}/${sources.length || 0}</b></div>
     </div>`;
   }
 
@@ -343,10 +356,10 @@ Module 4: Async Programming"></textarea>
     const next = nextModuleTitle(track, modules).replace(/^Next · /, '');
     const mastery = masteryForTrack(track);
     return `<section class="forge-focus-card">
-      <p>Study Focus</p>
+      <p>Next Step</p>
       <h3>${esc(next)}</h3>
       <div class="forge-focus-meter"><i style="width:${mastery}%"></i></div>
-      <small>${mastery}% mastery · open the next node, attach sources, then complete the lesson.</small>
+      <small>${mastery}% course progress · open the next node, attach sources, then complete the lesson.</small>
     </section>`;
   }
 
@@ -619,19 +632,26 @@ Module 4: Async Programming"></textarea>
     const minutes = lesson.estimated_min || 10;
     el.innerHTML = `<div class="forge-lesson fade-in">
       <aside class="forge-lesson-side forge-lesson-rail">
-        <button data-exit>← Exit Lesson</button>
-        <p>${completed ? 'Completed Lesson' : 'Lesson Workspace'}</p>
-        <h1>${esc(lesson.title)}</h1>
-        <div class="forge-lesson-mini"><span>${completed ? 'Saved' : 'Interactive shell'}</span><em>${esc(minutes)} min</em></div>
+        <button data-exit>← Course Map</button>
+        <div class="forge-lesson-nav-card">
+          <p>Workspace</p>
+          <b>${completed ? 'Review' : 'Draft'}</b>
+          <span>${esc(minutes)} min · ${blocks.length} blocks</span>
+        </div>
+        <div class="forge-lesson-rail-steps">
+          <span class="active">Read</span>
+          <span>Recall</span>
+          <span>Complete</span>
+        </div>
       </aside>
       <main class="forge-lesson-main">
         <section class="forge-lesson-hero slide-up">
-          <p>${completed ? 'Review Mode' : 'Active Draft'}</p>
+          <p>${completed ? 'Review Mode' : 'Lesson Draft'}</p>
           <h2>${esc(lesson.title)}</h2>
-          <div class="forge-lesson-hero-grid">
-            <span><b>${esc(minutes)}</b><em>minutes</em></span>
-            <span><b>${blocks.length}</b><em>blocks</em></span>
-            <span><b>${completed ? 'done' : 'open'}</b><em>status</em></span>
+          <div class="forge-lesson-meta-line">
+            <span>${esc(minutes)} minutes</span>
+            <span>${blocks.length} blocks</span>
+            <span>${completed ? 'done' : 'open'}</span>
           </div>
         </section>
         <section class="forge-lesson-flow">
@@ -662,8 +682,8 @@ Module 4: Async Programming"></textarea>
   function renderLessonEmpty(lesson) {
     return `<section class="forge-block forge-lesson-empty slide-up">
       <p>Lesson Shell</p>
-      <h2>Build your first pass</h2>
-      <div class="forge-prose">Grounded lesson blocks arrive after source indexing. For now, use this workspace to recall the idea in your own words before marking progress.</div>
+      <h2>Quick recall</h2>
+      <div class="forge-prose">Write what you remember before revealing generated explanations. Grounded lesson blocks come after Phase C source indexing.</div>
       <div class="forge-lesson-steps">
         <span>1 · Read attached source</span>
         <span>2 · Write recall</span>

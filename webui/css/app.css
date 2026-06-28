@@ -1313,3 +1313,52 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 .forge-options button.selected{border-color:#c5a880;color:#c5a880;background:rgba(197,168,128,.06);}
 @media(max-width:1180px){.forge-map-layout{grid-template-columns:1fr}.forge-study-panel{position:relative;top:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}.forge-study-panel .forge-source-panel,.forge-study-panel .forge-source-add{grid-column:1/-1;}}
 @media(max-width:900px){.forge-map-shell .forge-course-rail,.forge-lesson-rail{width:auto;flex-basis:auto}.forge-map-main{padding:16px}.forge-study-panel{display:flex}.forge-lesson-main{padding:34px 20px}.forge-lesson-hero-grid,.forge-lesson-steps{grid-template-columns:1fr}.forge-lesson-hero h2{font-size:44px;}}
+
+/* === v6h: Minimal course and lesson composition cleanup === */
+.forge-map-shell .forge-course-rail{width:248px;flex-basis:248px;padding:32px 28px;background:#0f0d0c;}
+.forge-course-id{display:flex;align-items:center;gap:14px;margin:28px 0 18px;}
+.forge-course-id .forge-context-mark{margin:0;width:46px;height:46px;border-radius:14px;font-size:15px;flex:0 0 auto;}
+.forge-course-id p{margin:0 0 5px;color:#70665c;text-transform:uppercase;letter-spacing:.18em;font-size:9px;}
+.forge-course-id h1{margin:0;font-size:24px;line-height:1.05;max-width:150px;}
+.forge-course-rail .forge-course-meta{font-size:10px;letter-spacing:.18em;color:#8f8377;margin:0 0 28px;}
+.forge-course-rail .forge-mastery{display:none;}
+.forge-course-progress-card{border:1px solid rgba(197,168,128,.12);border-radius:18px;background:#151210;padding:18px;margin:0 0 12px;}
+.forge-course-progress-card>div:first-child{display:flex;align-items:baseline;justify-content:space-between;gap:16px;}
+.forge-course-progress-card span{color:#70665c;text-transform:uppercase;letter-spacing:.17em;font-size:9px;}
+.forge-course-progress-card b{color:#e6e4e0;font-size:24px;line-height:1;}
+.forge-course-progress-card small{display:block;margin-top:10px;color:#8f8377;text-transform:uppercase;letter-spacing:.14em;font-size:9px;}
+.forge-course-stat-grid{display:none;}
+.forge-course-stat-list{display:flex;flex-direction:column;gap:0;margin:10px 0 0;border-top:1px solid rgba(197,168,128,.10);border-bottom:1px solid rgba(197,168,128,.10);}
+.forge-course-stat-list div{display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid rgba(197,168,128,.07);}
+.forge-course-stat-list div:last-child{border-bottom:0;}
+.forge-course-stat-list span{color:#70665c;text-transform:uppercase;letter-spacing:.15em;font-size:9px;}
+.forge-course-stat-list b{color:#d8d4ce;font-size:14px;}
+.forge-side-actions{margin-top:auto;padding-top:28px;}
+.forge-side-actions .forge-danger{padding:0;border:0;background:transparent;color:#b46c61;text-align:left;letter-spacing:.2em;}
+.forge-map-main{background:#100e0d;border-color:rgba(197,168,128,.07);box-shadow:none;}
+.forge-focus-card,.forge-study-panel .forge-source-panel{background:#151210;box-shadow:none;}
+.forge-focus-card h3{font-size:22px;}
+.forge-source-head span{font-size:22px;}
+
+.forge-lesson{background:#100e0d;}
+.forge-lesson-rail{width:236px;flex-basis:236px;padding:32px 28px;background:#0f0d0c;}
+.forge-lesson-rail button{margin-bottom:42px;color:#8f8377;}
+.forge-lesson-rail>p,.forge-lesson-rail>h1,.forge-lesson-mini{display:none;}
+.forge-lesson-nav-card{border:1px solid rgba(197,168,128,.11);border-radius:18px;background:#151210;padding:18px;}
+.forge-lesson-nav-card p{margin:0 0 18px;color:#c5a880;text-transform:uppercase;letter-spacing:.22em;font-size:9px;}
+.forge-lesson-nav-card b{display:block;color:#e6e4e0;font-size:22px;line-height:1.05;}
+.forge-lesson-nav-card span{display:block;margin-top:8px;color:#70665c;text-transform:uppercase;letter-spacing:.14em;font-size:9px;}
+.forge-lesson-rail-steps{margin-top:18px;display:flex;flex-direction:column;border-top:1px solid rgba(197,168,128,.08);border-bottom:1px solid rgba(197,168,128,.08);}
+.forge-lesson-rail-steps span{padding:13px 0;color:#70665c;text-transform:uppercase;letter-spacing:.16em;font-size:9px;border-bottom:1px solid rgba(197,168,128,.06);}
+.forge-lesson-rail-steps span:last-child{border-bottom:0;}
+.forge-lesson-rail-steps span.active{color:#c5a880;}
+.forge-lesson-main{grid-template-columns:minmax(0,760px);padding-top:58px;}
+.forge-lesson-hero{padding:30px 34px;border-radius:24px;background:#151210;box-shadow:none;}
+.forge-lesson-hero h2{font-size:clamp(38px,5vw,58px);letter-spacing:-.045em;line-height:.96;}
+.forge-lesson-hero-grid{display:none;}
+.forge-lesson-meta-line{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px;}
+.forge-lesson-meta-line span{border:1px solid rgba(197,168,128,.10);border-radius:999px;padding:9px 12px;color:#8f8377;text-transform:uppercase;letter-spacing:.13em;font-size:9px;background:#100e0d;}
+.forge-block{background:#151210;border-color:rgba(197,168,128,.11);}
+.forge-block h2{font-size:30px;}
+.forge-complete{max-width:760px;border-top-color:rgba(197,168,128,.16);}
+@media(max-width:900px){.forge-map-shell .forge-course-rail,.forge-lesson-rail{width:auto;flex-basis:auto}.forge-course-id h1{max-width:none}.forge-lesson-main{padding-top:32px}.forge-lesson-rail-steps{display:none}}
