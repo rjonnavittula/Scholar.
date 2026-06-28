@@ -11,6 +11,8 @@ window.HiveCourses = (() => {
   let activeTrack = null;
   let activeLessonRef = null;
   let activeLesson = null;
+  let activeSources = null;
+  let activeSourcesTrackId = null;
 
   function activateCourseWorkspace(el) {
     if (el) el.classList.add('forge-active');
@@ -81,7 +83,15 @@ window.HiveCourses = (() => {
   async function loadTrack(Api, trackId) {
     activeTrack = await Api.get(`/learn/tracks/${trackId}`);
     activeTrackId = String(activeTrack.id);
+    activeSources = null;
+    activeSourcesTrackId = null;
     return activeTrack;
+  }
+
+  async function loadTrackSources(Api, trackId) {
+    activeSources = await Api.get(`/learn/tracks/${trackId}/sources`);
+    activeSourcesTrackId = String(trackId);
+    return activeSources;
   }
 
   async function loadLesson(Api, nodeId) {
@@ -109,6 +119,9 @@ window.HiveCourses = (() => {
         if (!activeTrack || String(activeTrack.id) !== String(activeTrackId)) {
           setLoading(el, 'Opening course map…');
           await loadTrack(Api, activeTrackId);
+        }
+        if (!activeSources || String(activeSourcesTrackId) !== String(activeTrackId)) {
+          await loadTrackSources(Api, activeTrackId);
         }
         return renderTopology(el, activeTrack, S, Api);
       }
@@ -192,12 +205,12 @@ window.HiveCourses = (() => {
   function wireDashboard(el, S, Api) {
     el.querySelectorAll('[data-forge-cat]').forEach((b) => b.onclick = () => {
       activeCategory = b.dataset.forgeCat;
-      activeTrackId = null; activeTrack = null; activeLessonRef = null; activeLesson = null;
+      activeTrackId = null; activeTrack = null; activeSources = null; activeSourcesTrackId = null; activeLessonRef = null; activeLesson = null;
       render(el, S, Api);
     });
     el.querySelectorAll('[data-forge-track]').forEach((b) => b.onclick = () => {
       activeTrackId = b.dataset.forgeTrack;
-      activeTrack = null; activeLessonRef = null; activeLesson = null;
+      activeTrack = null; activeSources = null; activeSourcesTrackId = null; activeLessonRef = null; activeLesson = null;
       render(el, S, Api);
     });
     el.querySelectorAll('[data-forge-text-node]').forEach((b) => b.onclick = () => openTextModal(el, S, Api));
@@ -234,6 +247,7 @@ Module 4: Async Programming"></textarea>
         activeCategory = categoryFor(track);
         activeTrackId = String(track.id);
         activeTrack = track;
+        activeSources = null; activeSourcesTrackId = null;
         activeLessonRef = null; activeLesson = null;
         render(el, S, Api);
       } catch (e) {
@@ -253,7 +267,9 @@ Module 4: Async Programming"></textarea>
         <h1>${esc(track.title)}</h1>
         <p class="forge-course-meta">${esc(inputLabel(track))} · ${modules.length} modules · ${esc(track.status || 'draft')}</p>
         <div class="forge-mastery"><span>${masteryForTrack(track)}%</span><em>mastery</em></div>
+        ${renderSourcePanel(activeSources || [])}
         <div class="forge-side-actions">
+          <button data-forge-source class="forge-source-add">+ Add Source</button>
           <button data-forge-delete class="forge-danger">Delete Course</button>
         </div>
       </aside>
@@ -264,15 +280,18 @@ Module 4: Async Programming"></textarea>
           ${modules.map((mod, i) => renderModuleNode(mod, i)).join('')}
         </div>
       </main>
+      <div class="forge-modal-host"></div>
     </div>`;
-    el.querySelector('[data-forge-back]').onclick = () => { activeTrackId = null; activeTrack = null; render(el, S, Api); };
+    el.querySelector('[data-forge-back]').onclick = () => { activeTrackId = null; activeTrack = null; activeSources = null; activeSourcesTrackId = null; render(el, S, Api); };
+    const addSource = el.querySelector('[data-forge-source]');
+    if (addSource) addSource.onclick = () => openSourceModal(el, S, Api, track);
     const del = el.querySelector('[data-forge-delete]');
     if (del) del.onclick = async () => {
       if (!confirm(`Delete ${track.title}? This removes the saved course map and lesson drafts.`)) return;
       del.disabled = true; del.textContent = 'Deleting…';
       try {
         await Api.del(`/learn/tracks/${track.id}`);
-        activeTrackId = null; activeTrack = null; activeLessonRef = null; activeLesson = null; state = null;
+        activeTrackId = null; activeTrack = null; activeSources = null; activeSourcesTrackId = null; activeLessonRef = null; activeLesson = null; state = null;
         await loadTracks(Api);
         render(el, S, Api);
       } catch (e) {
@@ -289,6 +308,77 @@ Module 4: Async Programming"></textarea>
       activeLesson = null;
       render(el, S, Api);
     });
+  }
+
+  function renderSourcePanel(sources) {
+    const count = sources.length;
+    return `<section class="forge-source-panel">
+      <div class="forge-source-head"><span>${count}</span><em>${count === 1 ? 'source' : 'sources'}</em></div>
+      ${count ? `<div class="forge-source-list">${sources.slice(0, 4).map(renderSourceChip).join('')}</div>` : '<p>No trusted sources linked yet.</p>'}
+    </section>`;
+  }
+
+  function renderSourceChip(src) {
+    const label = src.role || src.trust_level || 'source';
+    return `<div class="forge-source-chip"><b>${esc(src.title)}</b><small>${esc(label)} · ${esc(src.source_type)} · ${Number(src.char_count || 0)} chars</small></div>`;
+  }
+
+  async function openSourceModal(el, S, Api, track) {
+    const host = modalHost(el);
+    host.innerHTML = `<div class="forge-modal modal-overlay fade-in"><div class="forge-modal-card forge-source-modal">
+      <h2>Add Source</h2>
+      <p>Register trusted course material first. Parsing, chunking, RAG, and lesson generation come after this registry layer.</p>
+      <label>Title<input data-source-title placeholder="Python Basics Notes"></label>
+      <div class="forge-source-row">
+        <label>Type<select data-source-type><option value="markdown">Markdown</option><option value="text">Text</option><option value="syllabus">Syllabus</option><option value="transcript">Transcript</option></select></label>
+        <label>Trust<select data-source-trust><option value="user">User</option><option value="official">Official</option><option value="instructor">Instructor</option><option value="reference">Reference</option></select></label>
+      </div>
+      <textarea data-source-body placeholder="# Python Basics\nVariables store references. Functions package reusable behavior."></textarea>
+      <div class="forge-source-existing"><h3>Source Registry</h3><div data-source-registry><p>Loading sources…</p></div></div>
+      <div class="forge-modal-actions"><button data-close>Cancel</button><button data-save>Create & Link</button></div>
+    </div></div>`;
+    host.querySelector('[data-close]').onclick = () => { host.innerHTML = ''; };
+    const registry = host.querySelector('[data-source-registry]');
+    try {
+      const sources = await Api.get('/learn/sources');
+      registry.innerHTML = sources.length ? sources.map((src) => `<button class="forge-source-registry-item" data-link-source="${esc(src.id)}"><b>${esc(src.title)}</b><small>${esc(src.source_type)} · ${esc(src.trust_level)} · ${Number(src.char_count || 0)} chars</small></button>`).join('') : '<p>No sources registered yet.</p>';
+      registry.querySelectorAll('[data-link-source]').forEach((b) => b.onclick = async () => {
+        b.disabled = true;
+        try {
+          await Api.post(`/learn/tracks/${track.id}/sources/${b.dataset.linkSource}`, { role: 'supplemental' });
+          activeSources = null; activeSourcesTrackId = null;
+          await loadTrackSources(Api, track.id);
+          host.innerHTML = '';
+          render(el, S, Api);
+        } catch (e) { b.disabled = false; alert(e.message || e); }
+      });
+    } catch (e) {
+      registry.innerHTML = `<p>${esc(e.message || e)}</p>`;
+    }
+    host.querySelector('[data-save]').onclick = async () => {
+      const title = host.querySelector('[data-source-title]').value.trim();
+      const body = host.querySelector('[data-source-body]').value.trim();
+      if (!title || !body) return alert('Add a source title and body.');
+      const save = host.querySelector('[data-save]');
+      save.disabled = true; save.textContent = 'Linking…';
+      try {
+        const source = await Api.post('/learn/sources', {
+          title,
+          source_type: host.querySelector('[data-source-type]').value,
+          trust_level: host.querySelector('[data-source-trust]').value,
+          body_text: body,
+          metadata: { origin: 'course-map-ui' }
+        });
+        await Api.post(`/learn/tracks/${track.id}/sources/${source.id}`, { role: 'primary' });
+        activeSources = null; activeSourcesTrackId = null;
+        await loadTrackSources(Api, track.id);
+        host.innerHTML = '';
+        render(el, S, Api);
+      } catch (e) {
+        save.disabled = false; save.textContent = 'Create & Link';
+        alert(e.message || e);
+      }
+    };
   }
 
   function masteryForTrack(track) {
