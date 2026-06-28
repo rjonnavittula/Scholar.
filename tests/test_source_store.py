@@ -5,7 +5,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from app.learn_store import create_track_from_spec
 from app.source_store import (
     create_source, delete_source, get_source, link_source_to_track, list_sources,
-    list_track_sources,
+    list_source_sections, list_track_sources, parse_registered_source,
 )
 
 
@@ -48,6 +48,37 @@ class TestSourceStore(unittest.TestCase):
         self.assertEqual(second["id"], first["id"])
         self.assertTrue(second["deduplicated"])
         self.assertEqual(len(list_sources(self.session)), 1)
+
+
+    def test_parse_registered_source_persists_sections(self):
+        source = create_source(self.session, {
+            "title": "Python Notes",
+            "source_type": "markdown",
+            "trust_level": "user",
+            "body_text": "# Python Basics\nVariables store references.\n\n## Functions\nFunctions package behavior.",
+        })
+
+        parsed = parse_registered_source(self.session, source["id"])
+
+        self.assertEqual(parsed["source"]["status"], "parsed")
+        self.assertEqual(parsed["section_count"], 2)
+        self.assertEqual(parsed["outline"][0]["heading"], "Python Basics")
+
+        sections = list_source_sections(self.session, source["id"])
+        self.assertEqual(len(sections), 2)
+        self.assertEqual(sections[1]["heading"], "Functions")
+
+    def test_parse_registered_source_is_idempotent(self):
+        source = create_source(self.session, {
+            "title": "Python Notes",
+            "source_type": "markdown",
+            "body_text": "# Python Basics\nVariables.\n\n## Functions\nFunctions.",
+        })
+
+        parse_registered_source(self.session, source["id"])
+        parse_registered_source(self.session, source["id"])
+
+        self.assertEqual(len(list_source_sections(self.session, source["id"])), 2)
 
     def test_source_requires_body_and_known_type(self):
         with self.assertRaises(ValueError):

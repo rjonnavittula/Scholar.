@@ -22,7 +22,7 @@ from app.learn_store import (
 )
 from app.source_store import (
     create_source, delete_source, get_source, link_source_to_track, list_sources,
-    list_track_sources,
+    list_source_sections, list_track_sources, parse_registered_source,
 )
 
 
@@ -175,6 +175,25 @@ def read_learning_source(source_id: int, session: Session = Depends(get_session)
     if not source:
         raise HTTPException(404, "source_not_found")
     return source
+
+
+@learn_router.post("/sources/{source_id}/parse")
+def parse_learning_source(source_id: int, session: Session = Depends(get_session)):
+    try:
+        parsed = parse_registered_source(session, source_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not parsed:
+        raise HTTPException(404, "source_not_found")
+    return parsed
+
+
+@learn_router.get("/sources/{source_id}/sections")
+def list_learning_source_sections(source_id: int, session: Session = Depends(get_session)):
+    sections = list_source_sections(session, source_id)
+    if sections is None:
+        raise HTTPException(404, "source_not_found")
+    return sections
 
 
 @learn_router.delete("/sources/{source_id}", status_code=204)

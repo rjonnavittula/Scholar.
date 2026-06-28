@@ -216,6 +216,20 @@ class LearningTrackSource(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
+class LearningSourceSection(SQLModel, table=True):
+    """Deterministic parsed section from a registered source. No embeddings yet."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_id: int = Field(foreign_key="learningsource.id", index=True)
+    position: int = Field(index=True)
+    heading: str
+    level: int = 1
+    body_text: str = ""
+    char_count: int = 0
+    section_hash: str = Field(default="", index=True)
+    metadata_json: str = "{}"
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
 class LearningModule(SQLModel, table=True):
     """A major region/unit inside a Forge learning track."""
     id: Optional[int] = Field(default=None, primary_key=True)
