@@ -34,6 +34,21 @@ class TestSourceStore(unittest.TestCase):
         self.assertIn("body_text", get_source(self.session, source["id"]))
         self.assertEqual(list_sources(self.session)[0]["title"], "Python Notes")
 
+
+    def test_duplicate_source_reuses_existing_row(self):
+        spec = {
+            "title": "Python Notes",
+            "source_type": "markdown",
+            "trust_level": "user",
+            "body_text": "# Python Notes\nVariables store references.",
+        }
+        first = create_source(self.session, spec)
+        second = create_source(self.session, {**spec, "title": "Duplicate Title"})
+
+        self.assertEqual(second["id"], first["id"])
+        self.assertTrue(second["deduplicated"])
+        self.assertEqual(len(list_sources(self.session)), 1)
+
     def test_source_requires_body_and_known_type(self):
         with self.assertRaises(ValueError):
             create_source(self.session, {"title": "Empty", "body_text": ""})
@@ -46,10 +61,15 @@ class TestSourceStore(unittest.TestCase):
 
         linked = link_source_to_track(self.session, track["id"], source["id"], role="primary")
         self.assertEqual(linked["id"], source["id"])
+        self.assertEqual(linked["role"], "primary")
+
+        linked_again = link_source_to_track(self.session, track["id"], source["id"], role="supplemental")
+        self.assertEqual(linked_again["id"], source["id"])
+        self.assertEqual(linked_again["role"], "supplemental")
 
         rows = list_track_sources(self.session, track["id"])
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["role"], "primary")
+        self.assertEqual(rows[0]["role"], "supplemental")
 
     def test_delete_source_removes_links(self):
         track = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})

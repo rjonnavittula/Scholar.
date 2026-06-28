@@ -58,9 +58,10 @@ def _source_to_dict(source: LearningSource) -> dict[str, Any]:
     }
 
 
-def _source_detail_to_dict(source: LearningSource) -> dict[str, Any]:
+def _source_detail_to_dict(source: LearningSource, *, deduplicated: bool = False) -> dict[str, Any]:
     out = _source_to_dict(source)
     out["body_text"] = source.body_text
+    out["deduplicated"] = deduplicated
     return out
 
 
@@ -87,6 +88,19 @@ def create_source(session: Session, spec: dict[str, Any]) -> dict[str, Any]:
     if trust_level not in ALLOWED_TRUST_LEVELS:
         raise ValueError("invalid_trust_level")
 
+    content_hash = _hash_body(body)
+    existing = session.exec(
+        select(LearningSource)
+        .where(
+            LearningSource.content_hash == content_hash,
+            LearningSource.source_type == source_type,
+            LearningSource.body_text == body,
+        )
+        .order_by(LearningSource.created_at)
+    ).first()
+    if existing:
+        return _source_detail_to_dict(existing, deduplicated=True)
+
     title = _clean_text(spec.get("title"))
     if not title:
         title = body.splitlines()[0].strip()[:80] or "Untitled Source"
@@ -97,7 +111,7 @@ def create_source(session: Session, spec: dict[str, Any]) -> dict[str, Any]:
         source_type=source_type,
         trust_level=trust_level,
         status="registered",
-        content_hash=_hash_body(body),
+        content_hash=content_hash,
         mime_type=_clean_text(spec.get("mime_type") or "text/plain"),
         original_name=_clean_text(spec.get("original_name")),
         body_text=body,
@@ -117,6 +131,7 @@ def link_source_to_track(session: Session, track_id: int, source_id: int, role: 
     if not track or not source:
         return None
 
+    clean_role = _clean_text(role) or "primary"
     existing = session.exec(
         select(LearningTrackSource).where(
             LearningTrackSource.track_id == track_id,
@@ -124,18 +139,22 @@ def link_source_to_track(session: Session, track_id: int, source_id: int, role: 
         )
     ).first()
     if existing:
-        existing.role = _clean_text(role) or "primary"
+        existing.role = clean_role
         session.add(existing)
     else:
         session.add(LearningTrackSource(
             track_id=track_id,
             source_id=source_id,
-            role=_clean_text(role) or "primary",
+            role=clean_role,
         ))
     track.updated_at = datetime.now()
     session.add(track)
     session.commit()
-    return get_source(session, source_id)
+
+    out = get_source(session, source_id)
+    if out is not None:
+        out["role"] = clean_role
+    return out
 
 
 def list_track_sources(session: Session, track_id: int) -> list[dict[str, Any]] | None:
