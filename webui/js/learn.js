@@ -374,10 +374,12 @@ Module 4: Async Programming"></textarea>
   function renderSourceChip(src) {
     const label = src.role || src.trust_level || 'source';
     const parsed = src.status === 'parsed' ? 'parsed' : 'registered';
+    const chunks = Number(src.chunk_count || 0);
+    const chunkLabel = chunks ? `${chunks} chunks` : 'no chunks';
     return `<div class="forge-source-chip-row">
       <button class="forge-source-chip" data-preview-source="${esc(src.id)}" title="Preview source">
         <b>${esc(src.title)}</b>
-        <small>${esc(label)} · ${esc(src.source_type)} · ${esc(parsed)} · ${Number(src.char_count || 0)} chars</small>
+        <small>${esc(label)} · ${esc(src.source_type)} · ${esc(parsed)} · ${esc(chunkLabel)} · ${Number(src.char_count || 0)} chars</small>
       </button>
       <button class="forge-source-unlink" data-unlink-source="${esc(src.id)}" title="Unlink source">×</button>
     </div>`;
@@ -407,8 +409,20 @@ Module 4: Async Programming"></textarea>
 
   function sourceMeta(src) {
     const sections = Number(src.section_count || 0);
+    const chunks = Number(src.chunk_count || 0);
     const sectionLabel = sections ? `${sections} sections` : 'no sections';
-    return `${src.source_type || 'source'} · ${src.trust_level || 'trust'} · ${src.status || 'registered'} · ${sectionLabel} · ${Number(src.char_count || 0)} chars`;
+    const chunkLabel = chunks ? `${chunks} chunks` : 'no chunks';
+    return `${src.source_type || 'source'} · ${src.trust_level || 'trust'} · ${src.status || 'registered'} · ${sectionLabel} · ${chunkLabel} · ${Number(src.char_count || 0)} chars`;
+  }
+
+  function renderChunkPreview(chunk) {
+    const path = Array.isArray(chunk.heading_path) && chunk.heading_path.length ? chunk.heading_path.join(' / ') : chunk.heading;
+    return `<article class="forge-section-preview forge-chunk-preview">
+      <em>${esc(chunk.position)} · ${esc(chunk.token_estimate || 0)} tokens</em>
+      <b>${esc(chunk.heading || 'Chunk')}</b>
+      <small>${esc(path || 'No heading path')}</small>
+      <p>${esc(chunk.body_text || '').slice(0, 320)}</p>
+    </article>`;
   }
 
   async function openSourcePreview(el, S, Api, sourceId) {
@@ -420,26 +434,32 @@ Module 4: Async Programming"></textarea>
     host.querySelector('[data-close]').onclick = () => { host.innerHTML = ''; };
 
     async function draw() {
-      const [source, sections] = await Promise.all([
+      const [source, sections, chunks] = await Promise.all([
         Api.get(`/learn/sources/${sourceId}`),
         Api.get(`/learn/sources/${sourceId}/sections`).catch(() => []),
+        Api.get(`/learn/sources/${sourceId}/chunks`).catch(() => []),
       ]);
+      const chunkCount = chunks.length;
       host.innerHTML = `<div class="forge-modal modal-overlay fade-in"><div class="forge-modal-card forge-source-modal forge-preview-modal">
         <div class="forge-source-modal-head">
           <div><h2>${esc(source.title)}</h2><p>${esc(sourceMeta(source))}</p></div>
           <button data-close>×</button>
         </div>
-        <div class="forge-preview-grid">
+        <div class="forge-preview-grid forge-preview-grid-three">
           <section class="forge-preview-pane">
             <h3>Sections</h3>
             ${sections.length ? sections.map((sec) => `<article class="forge-section-preview"><em>${esc(sec.position)} · H${esc(sec.level)}</em><b>${esc(sec.heading)}</b><p>${esc(sec.body_text).slice(0, 260)}</p></article>`).join('') : '<p>No parsed sections yet.</p>'}
+          </section>
+          <section class="forge-preview-pane">
+            <h3>Chunks</h3>
+            ${chunkCount ? chunks.map(renderChunkPreview).join('') : '<p>No chunks yet. Chunk this source after parsing to prepare it for vector indexing.</p>'}
           </section>
           <section class="forge-preview-pane">
             <h3>Raw Source</h3>
             <pre>${esc(source.body_text || '').slice(0, 5000)}</pre>
           </section>
         </div>
-        <div class="forge-modal-actions"><button data-close-bottom>Close</button><button data-parse>${source.status === 'parsed' ? 'Re-parse Source' : 'Parse Source'}</button></div>
+        <div class="forge-modal-actions"><button data-close-bottom>Close</button><button data-parse>${source.status === 'parsed' ? 'Re-parse Source' : 'Parse Source'}</button><button data-chunk>${chunkCount ? 'Re-chunk Source' : 'Chunk Source'}</button></div>
       </div></div>`;
       host.querySelector('[data-close]').onclick = () => { host.innerHTML = ''; };
       host.querySelector('[data-close-bottom]').onclick = () => { host.innerHTML = ''; };
@@ -447,6 +467,12 @@ Module 4: Async Programming"></textarea>
         const btn = host.querySelector('[data-parse]');
         btn.disabled = true; btn.textContent = 'Parsing…';
         try { await Api.post(`/learn/sources/${sourceId}/parse`, {}); await draw(); }
+        catch (e) { btn.disabled = false; alert(e.message || e); }
+      };
+      host.querySelector('[data-chunk]').onclick = async () => {
+        const btn = host.querySelector('[data-chunk]');
+        btn.disabled = true; btn.textContent = 'Chunking…';
+        try { await Api.post(`/learn/sources/${sourceId}/chunk`, { max_chars: 900, overlap_chars: 120, replace: true }); await draw(); }
         catch (e) { btn.disabled = false; alert(e.message || e); }
       };
     }

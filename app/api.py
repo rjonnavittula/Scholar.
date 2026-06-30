@@ -20,6 +20,8 @@ from app.learn_store import (
     get_lesson_tree, get_or_create_lesson_for_node, get_track_tree, list_tracks,
     start_learning_node,
 )
+from app.chunk_store import list_source_chunks
+from app.chunker import chunk_registered_source
 from app.source_store import (
     create_source, delete_source, get_source, get_source_audit, link_source_to_track, list_sources,
     list_source_sections, list_track_sources, parse_registered_source, unlink_source_from_track,
@@ -135,6 +137,12 @@ class TrackSourceLinkIn(BaseModel):
     role: str = "primary"
 
 
+class ChunkSourceIn(BaseModel):
+    max_chars: int = 900
+    overlap_chars: int = 120
+    replace: bool = True
+
+
 class LessonBlockIn(BaseModel):
     block_type: str
     title: str = ""
@@ -229,6 +237,32 @@ def list_learning_source_sections(source_id: int, session: Session = Depends(get
     if sections is None:
         raise HTTPException(404, "source_not_found")
     return sections
+
+
+@learn_router.post("/sources/{source_id}/chunk")
+def chunk_learning_source(source_id: int, payload: ChunkSourceIn | None = None, session: Session = Depends(get_session)):
+    config = payload or ChunkSourceIn()
+    try:
+        result = chunk_registered_source(
+            session,
+            source_id,
+            max_chars=config.max_chars,
+            overlap_chars=config.overlap_chars,
+            replace=config.replace,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not result:
+        raise HTTPException(404, "source_not_found")
+    return result
+
+
+@learn_router.get("/sources/{source_id}/chunks")
+def list_learning_source_chunks(source_id: int, session: Session = Depends(get_session)):
+    chunks = list_source_chunks(session, source_id)
+    if chunks is None:
+        raise HTTPException(404, "source_not_found")
+    return chunks
 
 
 @learn_router.delete("/sources/{source_id}", status_code=204)

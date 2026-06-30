@@ -2,6 +2,7 @@ import unittest
 
 from sqlmodel import Session, SQLModel, create_engine
 
+from app.chunker import chunk_registered_source
 from app.learn_store import create_track_from_spec
 from app.source_store import (
     create_source, delete_source, get_source, get_source_audit, link_source_to_track, list_sources,
@@ -72,6 +73,19 @@ class TestSourceStore(unittest.TestCase):
         self.assertEqual(sections[1]["metadata"]["parser_version"], "source-parser-v2")
         self.assertEqual(sections[1]["metadata"]["heading_path"], ["Python Basics", "Functions"])
         self.assertEqual(list_sources(self.session)[0]["section_count"], 2)
+
+    def test_source_reports_chunk_count_after_chunking(self):
+        source = create_source(self.session, {
+            "title": "Python Notes",
+            "source_type": "markdown",
+            "body_text": "# Python Basics\nVariables store references.",
+        })
+
+        result = chunk_registered_source(self.session, source["id"])
+
+        self.assertEqual(result["chunk_count"], 1)
+        self.assertEqual(get_source(self.session, source["id"])["chunk_count"], 1)
+        self.assertEqual(list_sources(self.session)[0]["chunk_count"], 1)
 
     def test_parse_registered_source_is_idempotent(self):
         source = create_source(self.session, {
@@ -155,6 +169,7 @@ class TestSourceStore(unittest.TestCase):
         self.assertEqual(audit["linked_sources"], 1)
         self.assertEqual(audit["parsed_sources"], 1)
         self.assertEqual(audit["total_sections"], 1)
+        self.assertEqual(audit["total_chunks"], 0)
         self.assertIn("markdown", audit["source_types"])
 
     def test_delete_source_removes_links(self):

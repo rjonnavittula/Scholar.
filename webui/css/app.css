@@ -1362,3 +1362,13 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 .forge-block h2{font-size:30px;}
 .forge-complete{max-width:760px;border-top-color:rgba(197,168,128,.16);}
 @media(max-width:900px){.forge-map-shell .forge-course-rail,.forge-lesson-rail{width:auto;flex-basis:auto}.forge-course-id h1{max-width:none}.forge-lesson-main{padding-top:32px}.forge-lesson-rail-steps{display:none}}
+
+/* === v6l: Chunk API and preview UI === */
+.forge-preview-grid-three{grid-template-columns:minmax(230px,.82fr) minmax(280px,1fr) minmax(300px,1.05fr);}
+.forge-chunk-preview{border-style:solid;background:#14110f;}
+.forge-chunk-preview small{display:block;color:#70665c;text-transform:uppercase;letter-spacing:.12em;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0 0 8px;}
+.forge-preview-modal .forge-modal-actions button[data-chunk]{border:1px solid rgba(197,168,128,.45);background:#1a1816;color:#c5a880;text-transform:uppercase;letter-spacing:.18em;font-size:11px;padding:13px 28px;cursor:pointer;transition:background .4s,border-color .4s;}
+.forge-preview-modal .forge-modal-actions button[data-chunk]:hover{background:rgba(197,168,128,.06);border-color:#c5a880;}
+.forge-preview-modal .forge-modal-actions button:disabled{opacity:.5;cursor:wait;}
+@media(max-width:1180px){.forge-preview-grid-three{grid-template-columns:1fr 1fr}.forge-preview-grid-three .forge-preview-pane:last-child{grid-column:1/-1;}}
+@media(max-width:900px){.forge-preview-grid-three{grid-template-columns:1fr}.forge-preview-grid-three .forge-preview-pane:last-child{grid-column:auto;}}
