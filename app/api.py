@@ -27,6 +27,7 @@ from app.source_store import (
     list_source_sections, list_track_sources, parse_registered_source, unlink_source_from_track,
 )
 from app.source_upload import build_upload_source_spec
+from app.embedding_client import embed_text_preview, get_embedding_health
 from app.vector_store import ensure_scholar_collection, get_memory_layers, get_qdrant_health
 
 
@@ -148,6 +149,10 @@ class EnsureQdrantIn(BaseModel):
     recreate: bool = False
 
 
+class EmbeddingPreviewIn(BaseModel):
+    text: str
+
+
 class LessonBlockIn(BaseModel):
     block_type: str
     title: str = ""
@@ -191,6 +196,21 @@ def ensure_qdrant_collection(payload: EnsureQdrantIn | None = None):
     if result.get("status") == "unavailable":
         raise HTTPException(400, result.get("error") or "qdrant_unavailable")
     return result
+
+
+@learn_router.get("/memory/embeddings/health")
+def read_embedding_health():
+    return get_embedding_health()
+
+
+@learn_router.post("/memory/embeddings/preview")
+def preview_embedding(payload: EmbeddingPreviewIn):
+    try:
+        return embed_text_preview(payload.text)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
 
 
 @learn_router.post("/sources", status_code=201)

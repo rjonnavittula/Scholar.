@@ -375,6 +375,7 @@ Module 4: Async Programming"></textarea>
     const fallback = { layers: [
       { id: 'sql', label: 'SQL', status: 'ready', description: 'Canonical Scholar records live in Postgres.' },
       { id: 'qdrant', label: 'Qdrant', status: 'checking', description: 'Vector index health is loading.' },
+      { id: 'embeddings', label: 'Embeddings', status: 'checking', description: 'Ollama embedding health is loading.' },
       { id: 'rag', label: 'RAG', status: 'planned', description: 'Retrieval pipeline comes after indexing.' },
       { id: 'okf', label: 'OKF', status: 'planned', description: 'Portable curated memory layer stays on the roadmap.' },
     ] };
@@ -389,6 +390,7 @@ Module 4: Async Programming"></textarea>
       </div>
       <p>${esc(active?.description || '')}</p>
       ${active?.id === 'qdrant' ? `<small>${esc(detail.collection || 'hive_scholar_chunks')} · ${esc(detail.embedding_model || 'nomic-embed-text')} · ${esc(detail.url || 'Qdrant URL pending')}</small>` : ''}
+      ${active?.id === 'embeddings' ? `<small>${esc(detail.model || 'nomic-embed-text')} · ${esc(detail.url || 'Ollama URL pending')} · ${esc(String(detail.expected_dim || 768))} dims</small>` : ''}
     </section>`;
   }
 

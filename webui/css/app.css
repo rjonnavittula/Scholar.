@@ -1379,7 +1379,7 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 .forge-memory-head{display:flex;align-items:center;justify-content:space-between;gap:14px;}
 .forge-memory-head span{color:#c5a880;text-transform:uppercase;letter-spacing:.2em;font-size:10px;}
 .forge-memory-head b{color:#8f8377;text-transform:uppercase;letter-spacing:.14em;font-size:9px;font-weight:500;}
-.forge-memory-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;}
+.forge-memory-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;}
 .forge-memory-tabs button{border:1px solid rgba(197,168,128,.10);border-radius:999px;background:#100e0d;color:#70665c;padding:9px 6px;text-transform:uppercase;letter-spacing:.12em;font-size:9px;cursor:pointer;transition:border-color .25s,color .25s,background .25s;}
 .forge-memory-tabs button.active,.forge-memory-tabs button:hover{border-color:rgba(197,168,128,.36);color:#c5a880;background:#1b1714;}
 .forge-memory-card p{margin:0;color:#9d9081;font-size:12px;line-height:1.5;}

@@ -108,8 +108,12 @@ def ensure_scholar_collection(*, recreate: bool = False) -> dict[str, Any]:
 
 
 def get_memory_layers() -> dict[str, Any]:
+    from app.embedding_client import get_embedding_health
+
     qdrant = get_qdrant_health()
+    embedding = get_embedding_health()
     qdrant_status = qdrant.get("status", "unavailable")
+    embedding_status = embedding.get("status", "unavailable")
     return {
         "phase": "D",
         "active_layer": "qdrant",
@@ -126,6 +130,13 @@ def get_memory_layers() -> dict[str, Any]:
                 "status": qdrant_status,
                 "description": "Semantic vector index for Scholar chunks. Embeddings/upserts land next.",
                 "details": qdrant,
+            },
+            {
+                "id": "embeddings",
+                "label": "Embeddings",
+                "status": embedding_status,
+                "description": "Ollama embedding layer using nomic-embed-text. Chunk upserts land next.",
+                "details": embedding,
             },
             {
                 "id": "rag",
