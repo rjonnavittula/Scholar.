@@ -27,6 +27,7 @@ from app.source_store import (
     list_source_sections, list_track_sources, parse_registered_source, unlink_source_from_track,
 )
 from app.source_upload import build_upload_source_spec
+from app.vector_store import ensure_scholar_collection, get_memory_layers, get_qdrant_health
 
 
 def _due_to_utc(due, school_tz: str):
@@ -143,6 +144,10 @@ class ChunkSourceIn(BaseModel):
     replace: bool = True
 
 
+class EnsureQdrantIn(BaseModel):
+    recreate: bool = False
+
+
 class LessonBlockIn(BaseModel):
     block_type: str
     title: str = ""
@@ -168,6 +173,24 @@ def parse_learn_source(payload: ParseSourceIn):
 @learn_router.get("/sources")
 def list_learning_sources(session: Session = Depends(get_session)):
     return list_sources(session)
+
+
+@learn_router.get("/memory/layers")
+def read_memory_layers():
+    return get_memory_layers()
+
+
+@learn_router.get("/memory/qdrant/health")
+def read_qdrant_health():
+    return get_qdrant_health()
+
+
+@learn_router.post("/memory/qdrant/ensure")
+def ensure_qdrant_collection(payload: EnsureQdrantIn | None = None):
+    result = ensure_scholar_collection(recreate=bool(payload and payload.recreate))
+    if result.get("status") == "unavailable":
+        raise HTTPException(400, result.get("error") or "qdrant_unavailable")
+    return result
 
 
 @learn_router.post("/sources", status_code=201)

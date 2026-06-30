@@ -13,6 +13,8 @@ window.HiveCourses = (() => {
   let activeLesson = null;
   let activeSources = null;
   let activeSourcesTrackId = null;
+  let memoryLayers = null;
+  let activeMemoryLayer = 'qdrant';
 
   function activateCourseWorkspace(el) {
     if (el) el.classList.add('forge-active');
@@ -122,6 +124,9 @@ window.HiveCourses = (() => {
         }
         if (!activeSources || String(activeSourcesTrackId) !== String(activeTrackId)) {
           await loadTrackSources(Api, activeTrackId);
+        }
+        if (!memoryLayers) {
+          memoryLayers = await Api.get('/learn/memory/layers').catch(() => null);
         }
         return renderTopology(el, activeTrack, S, Api);
       }
@@ -289,6 +294,7 @@ Module 4: Async Programming"></textarea>
           </section>
           <aside class="forge-study-panel">
             ${renderFocusCard(track, modules)}
+            ${renderMemoryLayerTabs(memoryLayers)}
             ${renderSourcePanel(sources)}
             <button data-forge-source class="forge-source-add">+ Add Source</button>
           </aside>
@@ -300,6 +306,7 @@ Module 4: Async Programming"></textarea>
     const addSource = el.querySelector('[data-forge-source]');
     if (addSource) addSource.onclick = () => openSourceModal(el, S, Api, track);
     wireSourcePanel(el, S, Api, track);
+    el.querySelectorAll('[data-memory-layer]').forEach((b) => b.onclick = () => { activeMemoryLayer = b.dataset.memoryLayer; render(el, S, Api); });
     const del = el.querySelector('[data-forge-delete]');
     if (del) del.onclick = async () => {
       if (!confirm(`Delete ${track.title}? This removes the saved course map and lesson drafts.`)) return;
@@ -360,6 +367,28 @@ Module 4: Async Programming"></textarea>
       <h3>${esc(next)}</h3>
       <div class="forge-focus-meter"><i style="width:${mastery}%"></i></div>
       <small>${mastery}% course progress · open the next node, attach sources, then complete the lesson.</small>
+    </section>`;
+  }
+
+
+  function renderMemoryLayerTabs(memory) {
+    const fallback = { layers: [
+      { id: 'sql', label: 'SQL', status: 'ready', description: 'Canonical Scholar records live in Postgres.' },
+      { id: 'qdrant', label: 'Qdrant', status: 'checking', description: 'Vector index health is loading.' },
+      { id: 'rag', label: 'RAG', status: 'planned', description: 'Retrieval pipeline comes after indexing.' },
+      { id: 'okf', label: 'OKF', status: 'planned', description: 'Portable curated memory layer stays on the roadmap.' },
+    ] };
+    const layers = (memory?.layers || fallback.layers);
+    const active = layers.find((layer) => layer.id === activeMemoryLayer) || layers[0];
+    const detail = active?.details || {};
+    const status = active?.status || 'planned';
+    return `<section class="forge-memory-card">
+      <div class="forge-memory-head"><span>Memory Layers</span><b>${esc(status)}</b></div>
+      <div class="forge-memory-tabs">
+        ${layers.map((layer) => `<button data-memory-layer="${esc(layer.id)}" class="${layer.id === active.id ? 'active' : ''}">${esc(layer.label)}</button>`).join('')}
+      </div>
+      <p>${esc(active?.description || '')}</p>
+      ${active?.id === 'qdrant' ? `<small>${esc(detail.collection || 'hive_scholar_chunks')} · ${esc(detail.embedding_model || 'nomic-embed-text')} · ${esc(detail.url || 'Qdrant URL pending')}</small>` : ''}
     </section>`;
   }
 

@@ -7,3 +7,4 @@ alembic>=1.13
 canvasapi>=3.2
 pypdf>=4.0
 python-multipart>=0.0.9
+qdrant-client>=1.12
