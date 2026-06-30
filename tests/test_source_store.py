@@ -69,6 +69,8 @@ class TestSourceStore(unittest.TestCase):
         sections = list_source_sections(self.session, source["id"])
         self.assertEqual(len(sections), 2)
         self.assertEqual(sections[1]["heading"], "Functions")
+        self.assertEqual(sections[1]["metadata"]["parser_version"], "source-parser-v2")
+        self.assertEqual(sections[1]["metadata"]["heading_path"], ["Python Basics", "Functions"])
         self.assertEqual(list_sources(self.session)[0]["section_count"], 2)
 
     def test_parse_registered_source_is_idempotent(self):
