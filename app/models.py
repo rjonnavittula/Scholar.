@@ -230,6 +230,25 @@ class LearningSourceSection(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
+
+
+class LearningSourceChunk(SQLModel, table=True):
+    """Small deterministic text unit prepared for later embedding/RAG indexing."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_id: int = Field(foreign_key="learningsource.id", index=True)
+    section_id: Optional[int] = Field(default=None, foreign_key="learningsourcesection.id", index=True)
+    position: int = Field(index=True)
+    section_position: int = 0
+    heading: str = ""
+    heading_path_json: str = "[]"
+    body_text: str = ""
+    char_count: int = 0
+    token_estimate: int = 0
+    chunk_hash: str = Field(default="", index=True)
+    metadata_json: str = "{}"
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
 class LearningModule(SQLModel, table=True):
     """A major region/unit inside a Forge learning track."""
     id: Optional[int] = Field(default=None, primary_key=True)

@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy import delete
 from sqlmodel import Session, select
 
-from app.models import LearningSource, LearningSourceSection, LearningTrack, LearningTrackSource
+from app.models import LearningSource, LearningSourceChunk, LearningSourceSection, LearningTrack, LearningTrackSource
 from app.source_parser import parse_pasted_source
 
 ALLOWED_SOURCE_TYPES = {"text", "markdown", "pdf", "url", "syllabus", "transcript"}
@@ -124,6 +124,7 @@ def parse_registered_source(session: Session, source_id: int) -> dict[str, Any] 
         return None
 
     parsed = parse_pasted_source(source.body_text, source.source_type)
+    session.exec(delete(LearningSourceChunk).where(LearningSourceChunk.source_id == source_id))
     session.exec(delete(LearningSourceSection).where(LearningSourceSection.source_id == source_id))
 
     now = datetime.now()
@@ -312,6 +313,7 @@ def delete_source(session: Session, source_id: int) -> bool:
     source = session.get(LearningSource, source_id)
     if not source:
         return False
+    session.exec(delete(LearningSourceChunk).where(LearningSourceChunk.source_id == source_id))
     session.exec(delete(LearningSourceSection).where(LearningSourceSection.source_id == source_id))
     session.exec(delete(LearningTrackSource).where(LearningTrackSource.source_id == source_id))
     session.delete(source)
