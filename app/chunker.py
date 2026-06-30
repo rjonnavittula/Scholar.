@@ -57,6 +57,30 @@ def _best_window_end(text: str, start: int, hard_end: int, min_end: int) -> int:
     return max(usable) if usable else hard_end
 
 
+
+def _snap_start_to_word_boundary(text: str, index: int) -> int:
+    """Move a proposed chunk start so it never begins inside a word.
+
+    Character overlap is cheap, but starting inside a token produces ugly
+    fragments like ``n104`` or ``age reusable``. For source-grounded learning,
+    readable boundaries matter more than exact overlap length.
+    """
+    if index <= 0:
+        return 0
+    if index >= len(text):
+        return len(text)
+    if text[index].isspace():
+        while index < len(text) and text[index].isspace():
+            index += 1
+        return index
+    if text[index - 1].isspace():
+        return index
+    while index < len(text) and not text[index].isspace():
+        index += 1
+    while index < len(text) and text[index].isspace():
+        index += 1
+    return index
+
 def split_text_for_chunks(text: str, *, max_chars: int = DEFAULT_MAX_CHARS, overlap_chars: int = DEFAULT_OVERLAP_CHARS) -> list[str]:
     """Split one section body into deterministic text windows.
 
@@ -85,9 +109,12 @@ def split_text_for_chunks(text: str, *, max_chars: int = DEFAULT_MAX_CHARS, over
         if end >= len(body):
             break
 
-        next_start = max(start + 1, end - overlap_chars)
-        while next_start < len(body) and body[next_start].isspace():
-            next_start += 1
+        proposed_start = max(start + 1, end - overlap_chars)
+        next_start = _snap_start_to_word_boundary(body, proposed_start)
+        if next_start <= start or next_start >= end:
+            next_start = _snap_start_to_word_boundary(body, end)
+        if next_start <= start:
+            next_start = end
         start = next_start
 
     return chunks

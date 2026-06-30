@@ -98,6 +98,17 @@ def create_source_chunk(session: Session, spec: dict[str, Any]) -> dict[str, Any
 
     position = int(spec.get("position") or _next_position(session, source_id))
     heading = _clean_text(spec.get("heading"))
+    chunk_hash = _clean_text(spec.get("chunk_hash")) or _hash_chunk(source_id, position, heading, body_text)
+    existing = session.exec(
+        select(LearningSourceChunk)
+        .where(
+            LearningSourceChunk.source_id == source_id,
+            LearningSourceChunk.chunk_hash == chunk_hash,
+        )
+    ).first()
+    if existing:
+        return chunk_to_dict(existing)
+
     heading_path = spec.get("heading_path") or []
     if isinstance(heading_path, str):
         heading_path = [heading_path] if heading_path.strip() else []
@@ -112,7 +123,7 @@ def create_source_chunk(session: Session, spec: dict[str, Any]) -> dict[str, Any
         body_text=body_text,
         char_count=len(body_text),
         token_estimate=int(spec.get("token_estimate") or estimate_tokens(body_text)),
-        chunk_hash=_clean_text(spec.get("chunk_hash")) or _hash_chunk(source_id, position, heading, body_text),
+        chunk_hash=chunk_hash,
         metadata_json=_json_dump(spec.get("metadata"), {}),
         created_at=datetime.now(),
     )

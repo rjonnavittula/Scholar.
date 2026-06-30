@@ -164,13 +164,36 @@ class TestSourceStore(unittest.TestCase):
 
         audit = get_source_audit(self.session)
 
-        self.assertEqual(audit["phase"], "B")
+        self.assertEqual(audit["phase"], "C")
+        self.assertEqual(audit["status"], "parsed")
         self.assertEqual(audit["total_sources"], 1)
         self.assertEqual(audit["linked_sources"], 1)
         self.assertEqual(audit["parsed_sources"], 1)
+        self.assertEqual(audit["chunked_sources"], 0)
+        self.assertEqual(audit["unchunked_parsed_sources"], 1)
         self.assertEqual(audit["total_sections"], 1)
         self.assertEqual(audit["total_chunks"], 0)
+        self.assertEqual(audit["avg_chunk_tokens"], 0)
         self.assertIn("markdown", audit["source_types"])
+
+
+    def test_source_audit_reports_chunk_counts_for_phase_c(self):
+        source = create_source(self.session, {
+            "title": "Chunked Notes",
+            "source_type": "markdown",
+            "body_text": "# Basics\n" + " ".join(f"token{i}" for i in range(120)),
+        })
+        chunk_registered_source(self.session, source["id"], max_chars=320, overlap_chars=40)
+
+        audit = get_source_audit(self.session)
+
+        self.assertEqual(audit["phase"], "C")
+        self.assertEqual(audit["status"], "ready")
+        self.assertEqual(audit["chunked_sources"], 1)
+        self.assertEqual(audit["unchunked_parsed_sources"], 0)
+        self.assertGreater(audit["total_chunks"], 0)
+        self.assertGreater(audit["total_chunk_tokens"], 0)
+        self.assertGreater(audit["avg_chunk_tokens"], 0)
 
     def test_delete_source_removes_links(self):
         track = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})

@@ -303,16 +303,23 @@ def get_source_audit(session: Session) -> dict[str, Any]:
     parsed_sources = [source for source in sources if source.status == "parsed"]
     unlinked_sources = [source for source in sources if source.id not in linked_source_ids]
 
+    chunked_source_ids = {chunk.source_id for chunk in chunks}
+    total_tokens = sum(int(chunk.token_estimate or 0) for chunk in chunks)
+
     return {
-        "phase": "B",
-        "status": "ready" if sources else "empty",
+        "phase": "C",
+        "status": "ready" if chunks else ("parsed" if parsed_sources else ("registered" if sources else "empty")),
         "total_sources": len(sources),
         "linked_sources": len(linked_source_ids),
         "unlinked_sources": len(unlinked_sources),
         "parsed_sources": len(parsed_sources),
         "registered_sources": len([source for source in sources if source.status == "registered"]),
+        "chunked_sources": len(chunked_source_ids),
+        "unchunked_parsed_sources": len([source for source in parsed_sources if source.id not in chunked_source_ids]),
         "total_sections": len(sections),
         "total_chunks": len(chunks),
+        "total_chunk_tokens": total_tokens,
+        "avg_chunk_tokens": round(total_tokens / len(chunks), 2) if chunks else 0,
         "source_types": sorted({source.source_type for source in sources}),
         "trust_levels": sorted({source.trust_level for source in sources}),
     }

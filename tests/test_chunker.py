@@ -43,6 +43,30 @@ class TestChunker(unittest.TestCase):
         self.assertTrue(all(len(chunk) <= 260 for chunk in chunks))
         self.assertTrue(chunks[1].split()[0] in chunks[0] or chunks[0].split()[-1] in chunks[1])
 
+
+    def test_overlap_never_starts_inside_word(self):
+        text = " ".join(f"token{i}" for i in range(260))
+        chunks = split_text_for_chunks(text, max_chars=320, overlap_chars=40)
+
+        self.assertGreater(len(chunks), 2)
+        for chunk in chunks[1:]:
+            first_word = chunk.split()[0]
+            self.assertRegex(first_word, r"^token\d+$")
+
+    def test_replace_false_does_not_duplicate_existing_chunks(self):
+        body = "# Python\n" + " ".join(f"token{i}" for i in range(180))
+        source = create_source(self.session, {
+            "title": "Python Notes",
+            "source_type": "markdown",
+            "body_text": body,
+        })
+
+        first = chunk_registered_source(self.session, source["id"], max_chars=320, overlap_chars=40, replace=False)
+        second = chunk_registered_source(self.session, source["id"], max_chars=320, overlap_chars=40, replace=False)
+
+        self.assertEqual(first["chunk_count"], second["chunk_count"])
+        self.assertEqual(len(list_source_chunks(self.session, source["id"])), first["chunk_count"])
+
     def test_chunk_registered_source_replaces_old_chunks(self):
         body = "# Python\n" + " ".join(f"token{i}" for i in range(160))
         source = create_source(self.session, {
