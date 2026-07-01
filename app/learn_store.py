@@ -9,7 +9,7 @@ from datetime import datetime
 import json
 from typing import Any
 
-from sqlalchemy import delete
+from sqlalchemy import delete, func
 from sqlmodel import Session, select
 
 from app.models import LearningBlock, LearningLesson, LearningModule, LearningNode, LearningTrack
@@ -30,6 +30,62 @@ def _clean_modules(values: list[str] | None) -> list[str]:
             cleaned.append(title)
             seen.add(key)
     return cleaned or ["Overview"]
+
+
+def _track_summary(session: Session, track: LearningTrack) -> dict[str, Any]:
+    modules = session.exec(
+        select(LearningModule)
+        .where(LearningModule.track_id == track.id)
+        .order_by(LearningModule.position)
+    ).all()
+    return {
+        "id": track.id,
+        "title": track.title,
+        "input_type": track.input_type,
+        "role": track.role or None,
+        "source_hash": track.source_hash,
+        "status": track.status,
+        **_progress_from_modules(modules),
+        "module_titles": [module.title for module in modules[:4]],
+        "created_at": track.created_at.isoformat(),
+        "updated_at": track.updated_at.isoformat(),
+    }
+
+
+def _track_dedupe_key(summary: dict[str, Any]) -> str:
+    source_hash = str(summary.get("source_hash") or "").strip()
+    if source_hash:
+        return f"source:{source_hash}"
+    modules = "|".join(str(v).strip().lower() for v in summary.get("module_titles") or [])
+    return f"title:{str(summary.get('title') or '').strip().lower()}::{modules}"
+
+
+def _find_existing_track(session: Session, title: str, modules: list[str], source_hash: str) -> LearningTrack | None:
+    if source_hash:
+        existing = session.exec(
+            select(LearningTrack)
+            .where(LearningTrack.source_hash == source_hash)
+            .order_by(LearningTrack.created_at.desc())
+        ).first()
+        if existing:
+            return existing
+
+    title_key = title.strip().lower()
+    candidates = session.exec(
+        select(LearningTrack)
+        .where(func.lower(LearningTrack.title) == title_key)
+        .order_by(LearningTrack.created_at.desc())
+    ).all()
+    module_key = [m.strip().lower() for m in modules]
+    for candidate in candidates:
+        candidate_modules = session.exec(
+            select(LearningModule)
+            .where(LearningModule.track_id == candidate.id)
+            .order_by(LearningModule.position)
+        ).all()
+        if [m.title.strip().lower() for m in candidate_modules] == module_key:
+            return candidate
+    return None
 
 
 def _node_to_dict(node: LearningNode) -> dict[str, Any]:
@@ -95,37 +151,35 @@ def get_track_tree(session: Session, track_id: int) -> dict[str, Any] | None:
 def list_tracks(session: Session) -> list[dict[str, Any]]:
     tracks = session.exec(select(LearningTrack).order_by(LearningTrack.created_at.desc())).all()
     summaries: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for track in tracks:
-        modules = session.exec(
-            select(LearningModule)
-            .where(LearningModule.track_id == track.id)
-            .order_by(LearningModule.position)
-        ).all()
-        summaries.append({
-            "id": track.id,
-            "title": track.title,
-            "input_type": track.input_type,
-            "role": track.role or None,
-            "source_hash": track.source_hash,
-            "status": track.status,
-            **_progress_from_modules(modules),
-            "module_titles": [module.title for module in modules[:4]],
-            "created_at": track.created_at.isoformat(),
-            "updated_at": track.updated_at.isoformat(),
-        })
+        summary = _track_summary(session, track)
+        key = _track_dedupe_key(summary)
+        if key in seen:
+            continue
+        seen.add(key)
+        summaries.append(summary)
     return summaries
 
 
 def create_track_from_spec(session: Session, spec: dict[str, Any]) -> dict[str, Any]:
     modules = _clean_modules(spec.get("modules"))
     title = _clean_title(spec.get("track_title") or spec.get("title"), "Untitled Track")
+    source_hash = str(spec.get("source_hash") or "").strip()
+    existing = _find_existing_track(session, title, modules, source_hash)
+    if existing:
+        tree = get_track_tree(session, existing.id)
+        if tree is not None:
+            tree["deduplicated"] = True
+            return tree
+
     now = datetime.now()
 
     track = LearningTrack(
         title=title,
         input_type=_clean_title(spec.get("input_type"), "source_text"),
         role=str(spec.get("role") or "").strip(),
-        source_hash=str(spec.get("source_hash") or "").strip(),
+        source_hash=source_hash,
         status="draft",
         created_at=now,
         updated_at=now,

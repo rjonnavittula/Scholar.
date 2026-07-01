@@ -1385,3 +1385,53 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 .forge-memory-card p{margin:0;color:#9d9081;font-size:12px;line-height:1.5;}
 .forge-memory-card small{color:#70665c;text-transform:uppercase;letter-spacing:.12em;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 @media(max-width:1180px){.forge-memory-card{grid-column:1/-1;}}
+
+/* === v6p: Scholar interaction design system / Industrial Ma motion === */
+:root{
+  --scholar-spring:cubic-bezier(.16,1,.3,1);
+  --scholar-quick:cubic-bezier(.2,.8,.2,1);
+  --scholar-ma:clamp(18px,2.4vw,34px);
+}
+.learn-view.forge-active *{scroll-behavior:smooth;}
+.motion-stagger>*{opacity:0;transform:translateY(18px) scale(.985);animation:scholarRise .62s var(--scholar-spring) forwards;animation-delay:calc(var(--delay,0ms) + var(--stagger,0ms));}
+.motion-card{transition:transform .38s var(--scholar-spring),border-color .38s ease,background .38s ease,box-shadow .38s ease,opacity .38s ease;will-change:transform;}
+.motion-card:hover{transform:translateY(-6px);border-color:rgba(197,168,128,.42);background:#171411;box-shadow:0 26px 80px rgba(0,0,0,.26);}
+.motion-card:active,.motion-card.is-activating{transform:translateY(-2px) scale(.985);transition-duration:.14s;}
+.motion-button{position:relative;overflow:hidden;transition:transform .26s var(--scholar-spring),background .28s ease,border-color .28s ease,color .28s ease;}
+.motion-button:hover{transform:translateY(-2px);}
+.motion-button:active{transform:translateY(1px) scale(.985);}
+.motion-button.is-loading::after{content:'';position:absolute;inset:auto 14px 10px 14px;height:1px;background:linear-gradient(90deg,transparent,#c5a880,transparent);animation:scholarScan 1.05s linear infinite;}
+.motion-button.is-resolved{background:rgba(197,168,128,.12)!important;border-color:rgba(197,168,128,.50)!important;color:#e6e4e0!important;}
+.motion-pop{animation:scholarPop .46s var(--scholar-spring) both;}
+.forge-course-card{isolation:isolate;}
+.forge-course-card::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:radial-gradient(circle at 20% 0%,rgba(197,168,128,.12),transparent 28%);opacity:0;transition:opacity .5s ease;}
+.forge-course-card:hover::after,.forge-course-card.is-active::after{opacity:1;}
+.forge-course-card.is-completed{border-color:rgba(153,184,139,.28);}
+.forge-course-card.is-completed .forge-course-glyph{border-color:rgba(153,184,139,.34);color:#9bb88b;}
+.forge-step-rail{display:flex;align-items:center;gap:6px;margin:6px 0 2px;min-height:12px;}
+.forge-step-rail i{display:block;width:7px;height:7px;border-radius:999px;border:1px solid rgba(197,168,128,.18);background:transparent;transition:width .42s var(--scholar-spring),background .42s ease,border-color .42s ease,transform .42s var(--scholar-spring);}
+.forge-step-rail i.done{width:18px;background:#c5a880;border-color:#c5a880;}
+.forge-step-rail i.next{border-color:rgba(197,168,128,.58);transform:scale(1.25);}
+.forge-step-rail i.locked{opacity:.45;}
+.forge-empty-soul{gap:18px;}
+.forge-mascot{width:72px;height:72px;border:1px solid rgba(197,168,128,.18);border-radius:24px;background:#151210;position:relative;display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.03);}
+.forge-mascot::before{content:'';width:28px;height:36px;border:1px solid rgba(197,168,128,.48);border-radius:18px 18px 12px 12px;transform:translateY(2px);}
+.forge-mascot::after{content:'';position:absolute;width:8px;height:8px;border-radius:50%;background:#c5a880;top:24px;left:30px;box-shadow:12px 0 0 rgba(197,168,128,.82);opacity:.86;}
+.forge-mascot i{position:absolute;bottom:17px;width:22px;height:1px;background:rgba(197,168,128,.44);}
+.forge-mascot.resting{animation:scholarBreathe 3.8s ease-in-out infinite;}
+.forge-flow-state{display:flex;align-items:center;gap:10px;margin-bottom:20px;color:#70665c;}
+.forge-flow-state span{width:24px;height:24px;border-radius:999px;border:1px solid rgba(197,168,128,.20);display:grid;place-items:center;font-size:10px;color:#c5a880;background:#151210;}
+.forge-flow-state i{height:1px;width:44px;background:linear-gradient(90deg,rgba(197,168,128,.42),rgba(197,168,128,.06));}
+.forge-create-course-card textarea{transition:min-height .4s var(--scholar-spring),border-color .25s ease,box-shadow .25s ease;}
+.forge-create-course-card textarea:focus{min-height:260px;}
+.forge-node-row{transition:transform .34s var(--scholar-spring),background .34s ease,border-color .34s ease,opacity .34s ease;}
+.forge-node-row:not(:disabled):hover{transform:translateX(5px);}
+.forge-node-row.is-activating{transform:translateX(8px) scale(.985);background:rgba(197,168,128,.07);border-color:rgba(197,168,128,.34);}
+.forge-memory-tabs button{position:relative;overflow:hidden;}
+.forge-memory-tabs button::after{content:'';position:absolute;left:50%;right:50%;bottom:4px;height:1px;background:#c5a880;transition:left .32s var(--scholar-spring),right .32s var(--scholar-spring),opacity .32s ease;opacity:0;}
+.forge-memory-tabs button.active::after{left:18px;right:18px;opacity:.75;}
+@keyframes scholarRise{to{opacity:1;transform:translateY(0) scale(1);}}
+@keyframes scholarPop{0%{opacity:0;transform:translateY(18px) scale(.975);}100%{opacity:1;transform:translateY(0) scale(1);}}
+@keyframes scholarScan{0%{transform:translateX(-70%);opacity:.2;}50%{opacity:1;}100%{transform:translateX(70%);opacity:.2;}}
+@keyframes scholarBreathe{0%,100%{transform:translateY(0);}50%{transform:translateY(-4px);}}
+@media (prefers-reduced-motion:reduce){.motion-stagger>*,.motion-pop,.forge-mascot.resting{animation:none!important;opacity:1!important;transform:none!important}.motion-card,.motion-button,.forge-node-row{transition:none!important}}

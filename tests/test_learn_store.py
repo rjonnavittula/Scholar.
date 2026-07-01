@@ -39,6 +39,37 @@ class TestLearnStore(unittest.TestCase):
         tree = create_track_from_spec(self.session, {"track_title": "Scratch"})
         self.assertEqual([m["title"] for m in tree["modules"]], ["Overview"])
 
+
+    def test_create_track_reuses_duplicate_source_hash(self):
+        first = create_track_from_spec(self.session, {
+            "track_title": "Python Course",
+            "source_hash": "same-source",
+            "modules": ["Basics", "Functions"],
+        })
+        second = create_track_from_spec(self.session, {
+            "track_title": "Python Course",
+            "source_hash": "same-source",
+            "modules": ["Basics", "Functions"],
+        })
+
+        self.assertEqual(second["id"], first["id"])
+        self.assertTrue(second["deduplicated"])
+        self.assertEqual(len(list_tracks(self.session)), 1)
+
+    def test_create_track_reuses_duplicate_title_and_modules_without_hash(self):
+        first = create_track_from_spec(self.session, {
+            "track_title": "Python Course",
+            "modules": ["Basics", "Functions"],
+        })
+        second = create_track_from_spec(self.session, {
+            "track_title": "python course",
+            "modules": ["Basics", "Functions"],
+        })
+
+        self.assertEqual(second["id"], first["id"])
+        self.assertTrue(second["deduplicated"])
+        self.assertEqual(len(list_tracks(self.session)), 1)
+
     def test_list_and_get_track_tree(self):
         created = create_track_from_spec(self.session, {
             "track_title": "Python",

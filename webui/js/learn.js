@@ -16,6 +16,39 @@ window.HiveCourses = (() => {
   let memoryLayers = null;
   let activeMemoryLayer = 'qdrant';
 
+  function haptic(kind = 'light') {
+    if (!window.navigator || typeof window.navigator.vibrate !== 'function') return;
+    const pattern = kind === 'heavy' ? [18, 30, 18] : kind === 'resolve' ? [8, 22, 12] : 8;
+    window.navigator.vibrate(pattern);
+  }
+
+  function courseDedupeKey(track) {
+    const hash = String(track?.source_hash || '').trim();
+    if (hash) return `source:${hash}`;
+    const modules = (track?.module_titles || (track?.modules || []).map((m) => m.title) || [])
+      .map((v) => String(v || '').trim().toLowerCase()).join('|');
+    return `title:${String(track?.title || '').trim().toLowerCase()}::${modules}`;
+  }
+
+  function dedupeTracks(tracks) {
+    const seen = new Set();
+    const out = [];
+    for (const track of tracks || []) {
+      const key = courseDedupeKey(track);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(track);
+    }
+    return out;
+  }
+
+  function resetMicroMotion(root) {
+    if (!root) return;
+    root.querySelectorAll('.motion-stagger > *').forEach((child, index) => {
+      child.style.setProperty('--stagger', `${Math.min(index * 55, 360)}ms`);
+    });
+  }
+
   function activateCourseWorkspace(el) {
     if (el) el.classList.add('forge-active');
     const body = document.body;
@@ -78,7 +111,8 @@ window.HiveCourses = (() => {
 
   async function loadTracks(Api) {
     const tracks = await Api.get('/learn/tracks');
-    state = { tracks, categories: categoriesFromTracks(tracks), loaded: true };
+    const uniqueTracks = dedupeTracks(tracks);
+    state = { tracks: uniqueTracks, categories: categoriesFromTracks(uniqueTracks), loaded: true };
     if (!state.categories.includes(activeCategory)) activeCategory = 'ALL COURSES';
   }
 
@@ -168,6 +202,7 @@ window.HiveCourses = (() => {
       <div class="forge-modal-host"></div>
     </div>`;
     wireDashboard(el, S, Api);
+    resetMicroMotion(el);
   }
 
   function dashboardTitle() {
@@ -175,25 +210,27 @@ window.HiveCourses = (() => {
   }
 
   function renderEmptyArchive() {
-    return `<section class="forge-empty fade-in">
-      <div class="forge-mark big"><span>S.</span></div>
+    return `<section class="forge-empty forge-empty-soul fade-in">
+      <div class="forge-mascot resting" aria-hidden="true"><i></i></div>
       <h3>No Courses Yet</h3>
-      <p>Paste a programming course prompt, syllabus, or notes. Scholar will create a saved course map in Postgres.</p>
-      <button data-forge-text-node>Create Course</button>
+      <p>Paste a programming course prompt, syllabus, or notes. Scholar will create one focused course path and skip duplicates.</p>
+      <button data-forge-text-node class="motion-button">Create Course</button>
     </section>`;
   }
 
   function renderTrackCards(tracks) {
-    return `<div class="forge-course-grid">
+    return `<div class="forge-course-grid motion-stagger">
       ${tracks.map((track, idx) => {
         const total = track.module_count ?? (track.modules || []).length;
         const done = track.completed_module_count ?? 0;
         const mastery = Math.round((track.mastery || 0) * 100);
-        return `<article class="forge-course-card" data-forge-track="${esc(track.id)}" style="--delay:${idx * 80}ms">
+        const cardState = track.status === 'completed' ? 'completed' : track.status === 'active' ? 'active' : 'available';
+        return `<article class="forge-course-card motion-card is-${esc(cardState)}" data-course-state="${esc(cardState)}" data-forge-track="${esc(track.id)}" style="--delay:${idx * 80}ms">
           <div class="forge-card-top"><span class="forge-course-glyph">${esc(iconFor(track.title + ' ' + (track.role || '')))}</span><p>${esc(inputLabel(track))}</p></div>
           <h3>${esc(track.title)}</h3>
           <div class="forge-card-modules">${modulePreview(track)}</div>
           ${track.next_module_title ? `<small class="forge-next-course">Next: ${esc(track.next_module_title)}</small>` : '<small class="forge-next-course">Course complete</small>'}
+          <div class="forge-step-rail" aria-label="${done} of ${total} modules complete">${renderStepDots(done, total)}</div>
           <div class="forge-course-progress" aria-label="${mastery}% mastery"><i style="width:${mastery}%"></i></div>
           <footer><span>${done}/${total} modules</span><span>${mastery}% mastery</span></footer>
         </article>`;
@@ -207,6 +244,15 @@ window.HiveCourses = (() => {
     return titles.slice(0, 4).map((title) => `<span>${esc(title)}</span>`).join('');
   }
 
+  function renderStepDots(done, total) {
+    const safeTotal = Math.max(1, Math.min(Number(total || 1), 8));
+    const safeDone = Math.max(0, Number(done || 0));
+    return Array.from({ length: safeTotal }, (_, index) => {
+      const state = index < safeDone ? 'done' : index === safeDone ? 'next' : 'locked';
+      return `<i class="${state}"></i>`;
+    }).join('');
+  }
+
   function wireDashboard(el, S, Api) {
     el.querySelectorAll('[data-forge-cat]').forEach((b) => b.onclick = () => {
       activeCategory = b.dataset.forgeCat;
@@ -214,9 +260,11 @@ window.HiveCourses = (() => {
       render(el, S, Api);
     });
     el.querySelectorAll('[data-forge-track]').forEach((b) => b.onclick = () => {
+      haptic('light');
+      b.classList.add('is-activating');
       activeTrackId = b.dataset.forgeTrack;
       activeTrack = null; activeSources = null; activeSourcesTrackId = null; activeLessonRef = null; activeLesson = null;
-      render(el, S, Api);
+      setTimeout(() => render(el, S, Api), 110);
     });
     el.querySelectorAll('[data-forge-text-node]').forEach((b) => b.onclick = () => openTextModal(el, S, Api));
     const refresh = el.querySelector('[data-forge-refresh]');
@@ -226,9 +274,10 @@ window.HiveCourses = (() => {
   function modalHost(el) { return el.querySelector('.forge-modal-host') || el; }
 
   function openTextModal(el, S, Api) {
-    modalHost(el).innerHTML = `<div class="forge-modal modal-overlay fade-in"><div class="forge-modal-card">
+    modalHost(el).innerHTML = `<div class="forge-modal modal-overlay fade-in"><div class="forge-modal-card forge-create-course-card motion-pop">
+      <div class="forge-flow-state"><span>1</span><i></i><span>2</span><i></i><span>3</span></div>
       <h2>Create Course</h2>
-      <p>Paste a programming course prompt, syllabus text, notes, or transcript. Scholar will parse it into a saved course map.</p>
+      <p>Paste a programming course prompt, syllabus text, notes, or transcript. Scholar will parse one saved course map and reopen the existing course if this material already exists.</p>
       <textarea data-prompt-input placeholder="System Prompt
 Role & Persona
 You are the Python Mentor.
@@ -237,7 +286,7 @@ Module 1: Python Basics
 Module 2: Functions
 Module 3: Files and Modules
 Module 4: Async Programming"></textarea>
-      <div class="forge-modal-actions"><button data-close>Cancel</button><button data-save>Create Course</button></div>
+      <div class="forge-modal-actions"><button data-close>Cancel</button><button data-save class="motion-button">Create Course</button></div>
     </div></div>`;
     const host = modalHost(el);
     host.querySelector('[data-close]').onclick = () => { host.innerHTML = ''; };
@@ -245,9 +294,15 @@ Module 4: Async Programming"></textarea>
       const text = host.querySelector('[data-prompt-input]').value || '';
       if (!text.trim()) return;
       const save = host.querySelector('[data-save]');
-      save.disabled = true; save.textContent = 'Creating…';
+      haptic('light');
+      save.disabled = true; save.textContent = 'Parsing…'; save.classList.add('is-loading');
       try {
         const track = await Api.post('/learn/tracks/from-source', { text });
+        save.classList.remove('is-loading');
+        save.classList.add('is-resolved');
+        save.textContent = track?.deduplicated ? 'Opening existing…' : 'Course ready';
+        haptic(track?.deduplicated ? 'light' : 'resolve');
+        await new Promise((resolve) => setTimeout(resolve, 260));
         await loadTracks(Api);
         activeCategory = categoryFor(track);
         activeTrackId = String(track.id);
@@ -256,7 +311,7 @@ Module 4: Async Programming"></textarea>
         activeLessonRef = null; activeLesson = null;
         render(el, S, Api);
       } catch (e) {
-        save.disabled = false; save.textContent = 'Create Course';
+        save.disabled = false; save.textContent = 'Create Course'; save.classList.remove('is-loading');
         alert(e.message || e);
       }
     };
@@ -306,7 +361,8 @@ Module 4: Async Programming"></textarea>
     const addSource = el.querySelector('[data-forge-source]');
     if (addSource) addSource.onclick = () => openSourceModal(el, S, Api, track);
     wireSourcePanel(el, S, Api, track);
-    el.querySelectorAll('[data-memory-layer]').forEach((b) => b.onclick = () => { activeMemoryLayer = b.dataset.memoryLayer; render(el, S, Api); });
+    el.querySelectorAll('[data-memory-layer]').forEach((b) => b.onclick = () => { haptic('light'); activeMemoryLayer = b.dataset.memoryLayer; render(el, S, Api); });
+    resetMicroMotion(el);
     const del = el.querySelector('[data-forge-delete]');
     if (del) del.onclick = async () => {
       if (!confirm(`Delete ${track.title}? This removes the saved course map and lesson drafts.`)) return;
@@ -326,9 +382,11 @@ Module 4: Async Programming"></textarea>
       const mod = modules.find((m) => (m.nodes || []).some((n) => String(n.id) === String(nodeId)));
       const node = mod && (mod.nodes || []).find((n) => String(n.id) === String(nodeId));
       if (!node || node.locked || mod.locked) return;
+      haptic('light');
+      b.classList.add('is-activating');
       activeLessonRef = { trackId: track.id, nodeId: node.id };
       activeLesson = null;
-      render(el, S, Api);
+      setTimeout(() => render(el, S, Api), 120);
     });
   }
 
