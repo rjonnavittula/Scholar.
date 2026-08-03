@@ -23,9 +23,8 @@
   <nav class="rail">
     <div class="rail-logo serif">s<span class="accent">.</span></div>
     <button class="rail-btn active" data-view="home" title="Home">⌂</button>
-    <button class="rail-btn" data-view="insights" title="Cushion &amp; Analytics (phase 5)">◐</button>
-    <button class="rail-btn" data-view="courses" title="Courses">❏</button>
-    <button class="rail-btn" data-view="learn" title="HIVE-Courses">✦</button>
+    <button class="rail-btn" data-view="insights" title="Cushion &amp; Analytics">◐</button>
+    <button class="rail-btn" data-view="learn" title="Courses">✦</button>
     <div class="rail-spacer"></div>
     <button class="rail-btn" id="btn-theme" title="Toggle light / dark">☽</button>
     <button class="rail-btn" id="btn-settings" title="Settings">⚙</button>
@@ -55,10 +54,6 @@
     <header class="topbar">
       <div class="tb-global">
         <span class="brand" id="brand">scholar.</span>
-        <div class="tabs">
-          <button class="tab active">Calendar</button>
-          <button class="tab muted" title="phase 4">Task List</button>
-        </div>
         <span class="tb-spacer"></span>
         <div class="topbar-actions" id="topbar-actions">
           <div class="streak" id="streak" title="study streak"></div>
@@ -88,7 +83,6 @@
     </header>
     <div class="calendar" id="calendar"></div>
     <div class="analytics hidden" id="analytics"></div>
-    <div class="courses-view hidden" id="courses"></div>
     <div class="learn-view hidden" id="learn"></div>
   </main>
 
@@ -120,7 +114,6 @@
 
 <div id="modal-root"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.20/index.global.min.js?v=1781626287"></script>
 <script src="js/api.js?v=1781626287"></script>
 <script src="js/calendar.js?v=1781626287"></script>
 <script src="js/panel.js?v=1781626287"></script>

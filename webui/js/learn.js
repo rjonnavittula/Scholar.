@@ -225,7 +225,7 @@ window.HiveCourses = (() => {
         const done = track.completed_module_count ?? 0;
         const mastery = Math.round((track.mastery || 0) * 100);
         const cardState = track.status === 'completed' ? 'completed' : track.status === 'active' ? 'active' : 'available';
-        return `<article class="forge-course-card motion-card is-${esc(cardState)}" data-course-state="${esc(cardState)}" data-forge-track="${esc(track.id)}" style="--delay:${idx * 80}ms">
+        return `<article class="forge-course-card motion-card is-${esc(cardState)}" data-course-state="${esc(cardState)}" data-category="${esc(categoryFor(track))}" data-forge-track="${esc(track.id)}" style="--delay:${idx * 80}ms">
           <div class="forge-card-top"><span class="forge-course-glyph">${esc(iconFor(track.title + ' ' + (track.role || '')))}</span><p>${esc(inputLabel(track))}</p></div>
           <h3>${esc(track.title)}</h3>
           <div class="forge-card-modules">${modulePreview(track)}</div>
@@ -321,7 +321,7 @@ Module 4: Async Programming"></textarea>
     if (!track) { activeTrackId = null; return render(el, S, Api); }
     const modules = track.modules || [];
     const sources = activeSources || [];
-    el.innerHTML = `<div class="forge-shell forge-map-shell">
+    el.innerHTML = `<div class="forge-shell forge-map-shell" data-category="${esc(categoryFor(track))}">
       <aside class="forge-sidebar forge-course-rail">
         <button class="forge-back" data-forge-back>← Courses</button>
         <div class="forge-course-id">
@@ -449,6 +449,7 @@ Module 4: Async Programming"></textarea>
       <p>${esc(active?.description || '')}</p>
       ${active?.id === 'qdrant' ? `<small>${esc(detail.collection || 'hive_scholar_chunks')} · ${esc(detail.embedding_model || 'nomic-embed-text')} · ${esc(detail.url || 'Qdrant URL pending')}</small>` : ''}
       ${active?.id === 'embeddings' ? `<small>${esc(detail.model || 'nomic-embed-text')} · ${esc(detail.url || 'Ollama URL pending')} · ${esc(String(detail.expected_dim || 768))} dims</small>` : ''}
+      ${active?.id === 'rag' && detail.generation ? `<small>${esc(detail.generation.model || 'llama3.1')} · ${esc(detail.generation.status || 'unavailable')} · ${esc(detail.generation.url || 'Ollama URL pending')}</small>` : ''}
     </section>`;
   }
 
@@ -548,7 +549,7 @@ Module 4: Async Programming"></textarea>
             <pre>${esc(source.body_text || '').slice(0, 5000)}</pre>
           </section>
         </div>
-        <div class="forge-modal-actions"><button data-close-bottom>Close</button><button data-parse>${source.status === 'parsed' ? 'Re-parse Source' : 'Parse Source'}</button><button data-chunk>${chunkCount ? 'Re-chunk Source' : 'Chunk Source'}</button></div>
+        <div class="forge-modal-actions"><button data-close-bottom>Close</button><button data-parse>${source.status === 'parsed' ? 'Re-parse Source' : 'Parse Source'}</button><button data-chunk>${chunkCount ? 'Re-chunk Source' : 'Chunk Source'}</button><button data-index-source>Index to Qdrant</button></div>
       </div></div>`;
       host.querySelector('[data-close]').onclick = () => { host.innerHTML = ''; };
       host.querySelector('[data-close-bottom]').onclick = () => { host.innerHTML = ''; };
@@ -563,6 +564,16 @@ Module 4: Async Programming"></textarea>
         btn.disabled = true; btn.textContent = 'Chunking…';
         try { await Api.post(`/learn/sources/${sourceId}/chunk`, { max_chars: 900, overlap_chars: 120, replace: true }); await draw(); }
         catch (e) { btn.disabled = false; alert(e.message || e); }
+      };
+      host.querySelector('[data-index-source]').onclick = async () => {
+        const btn = host.querySelector('[data-index-source]');
+        btn.disabled = true; btn.textContent = 'Indexing…';
+        try {
+          const result = await Api.post(`/learn/sources/${sourceId}/index`);
+          if (result.status === 'unavailable') alert(`Qdrant is unavailable right now: ${result.error || 'unknown error'}`);
+          else alert(`Indexed ${result.indexed}, skipped ${result.skipped} (already current), failed ${result.failed}.`);
+        } catch (e) { alert(e.message || e); }
+        btn.disabled = false; btn.textContent = 'Index to Qdrant';
       };
     }
     try { await draw(); }
@@ -735,90 +746,239 @@ Module 4: Async Programming"></textarea>
     const locked = stateName === 'locked';
     const hint = locked ? 'Complete previous module' : stateName === 'completed' ? 'Completed' : 'Ready to study';
     return `<button class="forge-node-row ${stateName}" data-node="${esc(nodeId)}" style="--x:${x}px; --delay:${i * 90}ms" ${locked ? 'disabled aria-disabled="true"' : ''}>
-      <span class="forge-node-orb"><i>${esc(iconFor(mod.title))}</i></span>
+      <span class="forge-node-orb"><i>${esc(iconFor(mod.title))}</i>${stateName === 'completed' ? '<i class="forge-node-check" aria-hidden="true">✓</i>' : ''}</span>
       <span class="forge-node-card"><em>Module ${i + 1} · ${esc(hint)}</em><b>${esc(mod.title)}</b><small>${stateName.toUpperCase()} · ${esc(title)} · ${Math.round((firstNode?.mastery || mod.mastery || 0) * 100)}% mastery · +${exp} EXP</small></span>
     </button>`;
   }
 
-  function renderLesson(el, lesson, S, Api) {
-    if (!lesson) { activeLessonRef = null; return render(el, S, Api); }
-    const completed = lesson.status === 'completed';
-    const blocks = lesson.blocks || [];
-    const minutes = lesson.estimated_min || 10;
-    el.innerHTML = `<div class="forge-lesson fade-in">
-      <aside class="forge-lesson-side forge-lesson-rail">
-        <button data-exit>← Course Map</button>
-        <div class="forge-lesson-nav-card">
-          <p>Workspace</p>
-          <b>${completed ? 'Review' : 'Draft'}</b>
-          <span>${esc(minutes)} min · ${blocks.length} blocks</span>
-        </div>
-        <div class="forge-lesson-rail-steps">
-          <span class="active">Read</span>
-          <span>Recall</span>
-          <span>Complete</span>
-        </div>
-      </aside>
-      <main class="forge-lesson-main">
-        <section class="forge-lesson-hero slide-up">
-          <p>${completed ? 'Review Mode' : 'Lesson Draft'}</p>
-          <h2>${esc(lesson.title)}</h2>
-          <div class="forge-lesson-meta-line">
-            <span>${esc(minutes)} minutes</span>
-            <span>${blocks.length} blocks</span>
-            <span>${completed ? 'done' : 'open'}</span>
-          </div>
-        </section>
-        <section class="forge-lesson-flow">
-          ${blocks.length ? blocks.map((b, i) => renderBlock(b, i)).join('') : renderLessonEmpty(lesson)}
-        </section>
-        <div class="forge-complete"><h2>${completed ? 'Lesson Complete' : 'Mark Progress'}</h2><p>${completed ? 'This lesson is completed and saved to Postgres.' : 'Mark this lesson complete to update mastery, unlock the next module, and return to the course map.'}</p><button data-complete>${completed ? 'Return to Course Map' : 'Complete Lesson'}</button></div>
-      </main>
+  // ---- fluid one-card-at-a-time lesson engine (Brilliant-style) --------- //
+  let lessonStage = 'blocks'; // 'offer' (generate CTA) | 'blocks' | 'complete'
+  let activeBlockIndex = 0;
+  let lessonStageForId = null;
+  let lessonDirection = 'forward';
+  const quizAnswers = {}; // `${lessonId}:${blockIndex}` -> selected option index
+
+  function ensureLessonStage(lesson) {
+    if (lessonStageForId === lesson.id) return;
+    lessonStageForId = lesson.id;
+    activeBlockIndex = 0;
+    lessonDirection = 'forward';
+    if (lesson.status === 'completed') { lessonStage = 'complete'; return; }
+    const hasSources = (activeSources || []).length > 0;
+    lessonStage = (lesson.status === 'draft' && hasSources) ? 'offer' : 'blocks';
+  }
+
+  function renderProgressSegments(total, done) {
+    return Array.from({ length: Math.max(total, 1) }, (_, i) =>
+      `<div class="forge-progress-seg${i < done ? ' done' : ''}"><i></i></div>`
+    ).join('');
+  }
+
+  function generationStatusMessage(generation) {
+    if (!generation) return 'Generation is unavailable right now.';
+    if (generation.status === 'no_sources') return generation.message || 'Attach a source to this course first.';
+    if (generation.status === 'unavailable') return 'Scholar could not reach the local generation model. Keeping the quick draft for now.';
+    return 'Generation is unavailable right now.';
+  }
+
+  function isBlockSatisfied(lesson, index, block) {
+    if (!block) return true;
+    const type = block.block_type || block.type || 'text';
+    if (type === 'recall_prompt') {
+      const key = `hive.lesson.${lesson.id}.${block.id || index}`;
+      return !!(sessionStorage.getItem(key) || '').trim();
+    }
+    if (type === 'quiz') return quizAnswers[`${lesson.id}:${index}`] !== undefined;
+    return true;
+  }
+
+  function renderGenerateOfferCard(lesson) {
+    return `<section class="forge-block forge-generate-card slide-up">
+      <p>Grounded Lesson</p>
+      <h2>Generate this lesson from your sources</h2>
+      <div class="forge-prose">Scholar will read the sources linked to this course and write a short, source-grounded lesson with a quick check and a recall prompt.</div>
+      <button data-generate class="motion-button">Generate Grounded Lesson</button>
+      <button data-skip-generate class="forge-lesson-back" style="display:block;margin:14px auto 0;">Study the quick draft instead</button>
+    </section>`;
+  }
+
+  function renderCompleteCard(lesson) {
+    const already = lesson.status === 'completed';
+    return `<div class="forge-complete slide-up">
+      <h2>${already ? 'Lesson Complete' : 'Nicely done'}</h2>
+      <p>${already ? 'This lesson is completed and saved to Postgres.' : 'Mark this lesson complete to update mastery, unlock the next module, and return to the course map.'}</p>
+      <button data-complete class="motion-button">${already ? 'Return to Course Map' : 'Finish & Return to Course Map'}</button>
     </div>`;
-    el.querySelector('[data-exit]').onclick = () => { activeLessonRef = null; activeLesson = null; render(el, S, Api); };
-    wireLessonShell(el, lesson);
-    el.querySelector('[data-complete]').onclick = async () => {
-      if (completed) { activeLessonRef = null; activeLesson = null; render(el, S, Api); return; }
-      const btn = el.querySelector('[data-complete]');
-      btn.disabled = true; btn.textContent = 'Saving…';
-      try {
-        const result = await Api.post(`/learn/nodes/${activeLessonRef.nodeId}/complete`, { mastery: 1.0 });
-        if (result?.track) { activeTrack = result.track; activeTrackId = String(result.track.id); }
-        activeLessonRef = null; activeLesson = null; state = null;
-        await loadTracks(Api);
-        render(el, S, Api);
-      } catch (e) {
-        btn.disabled = false; btn.textContent = 'Complete Lesson';
-        alert(e.message || e);
-      }
-    };
   }
 
   function renderLessonEmpty(lesson) {
     return `<section class="forge-block forge-lesson-empty slide-up">
       <p>Lesson Shell</p>
       <h2>Quick recall</h2>
-      <div class="forge-prose">Write what you remember before revealing generated explanations. Grounded lesson blocks come after Phase C source indexing.</div>
-      <div class="forge-lesson-steps">
-        <span>1 · Read attached source</span>
-        <span>2 · Write recall</span>
-        <span>3 · Complete lesson</span>
-      </div>
+      <div class="forge-prose">Write what you remember before a grounded lesson is generated for this node.</div>
       <textarea class="forge-recall-input" data-lesson-recall="empty" placeholder="Explain ${esc(lesson.title)} from memory. This saves locally for this browser session."></textarea>
     </section>`;
   }
 
-  function wireLessonShell(el, lesson) {
-    el.querySelectorAll('[data-answer]').forEach((btn) => btn.onclick = () => {
-      const group = btn.closest('.forge-options');
-      if (group) group.querySelectorAll('[data-answer]').forEach((x) => x.classList.remove('selected'));
-      btn.classList.add('selected');
-    });
+  function renderLessonStage(lesson, blocks) {
+    if (lessonStage === 'offer') return renderGenerateOfferCard(lesson);
+    if (lessonStage === 'complete') return renderCompleteCard(lesson);
+    const block = blocks[activeBlockIndex];
+    if (!block) return renderLessonEmpty(lesson);
+    return renderBlock(block, 0);
+  }
+
+  function renderLessonActionBar(lesson, blocks) {
+    const block = blocks[activeBlockIndex];
+    const isLast = activeBlockIndex >= blocks.length - 1;
+    const satisfied = isBlockSatisfied(lesson, activeBlockIndex, block);
+    return `<footer class="forge-lesson-actionbar">
+      <button data-back class="forge-lesson-back" ${activeBlockIndex === 0 ? 'disabled' : ''}>Back</button>
+      <button data-continue class="forge-lesson-continue" ${satisfied ? '' : 'disabled'}>${isLast ? 'Finish' : 'Continue'}</button>
+    </footer>`;
+  }
+
+  function renderLesson(el, lesson, S, Api) {
+    if (!lesson) { activeLessonRef = null; return render(el, S, Api); }
+    ensureLessonStage(lesson);
+    const track = activeTrack;
+    const category = track ? categoryFor(track) : 'GENERAL';
+    const blocks = lesson.blocks || [];
+    const totalSteps = Math.max(blocks.length, 1);
+    const doneCount = lessonStage === 'complete' ? totalSteps : lessonStage === 'offer' ? 0 : activeBlockIndex;
+    const counter = lessonStage === 'complete' ? 'Complete' : lessonStage === 'offer' ? esc(lesson.title) : `${activeBlockIndex + 1} / ${blocks.length}`;
+
+    el.innerHTML = `<div class="forge-lesson fade-in" data-category="${esc(category)}">
+      <header class="forge-lesson-topbar">
+        <button data-exit class="forge-lesson-exit" aria-label="Exit lesson">×</button>
+        <div class="forge-progress-track">${renderProgressSegments(totalSteps, doneCount)}</div>
+        <div class="forge-lesson-counter">${counter}</div>
+      </header>
+      <main class="forge-card-stage">
+        <div class="forge-card-viewport${lessonDirection === 'back' ? ' dir-back' : ''}">
+          ${renderLessonStage(lesson, blocks)}
+        </div>
+      </main>
+      ${lessonStage === 'blocks' ? renderLessonActionBar(lesson, blocks) : ''}
+    </div>`;
+
+    el.querySelector('[data-exit]').onclick = () => { activeLessonRef = null; activeLesson = null; render(el, S, Api); };
+    wireLessonStage(el, lesson, blocks, S, Api);
+  }
+
+  function wireLessonStage(el, lesson, blocks, S, Api) {
+    if (lessonStage === 'offer') {
+      const genBtn = el.querySelector('[data-generate]');
+      if (genBtn) genBtn.onclick = async () => {
+        haptic('light');
+        genBtn.disabled = true; genBtn.classList.add('is-loading'); genBtn.textContent = 'Reading sources…';
+        try {
+          const result = await Api.post(`/learn/nodes/${activeLessonRef.nodeId}/generate`);
+          activeLesson = result.lesson;
+          const generation = result.generation || {};
+          lessonStageForId = activeLesson.id;
+          lessonStage = 'blocks';
+          activeBlockIndex = 0;
+          haptic(generation.status === 'generated' ? 'resolve' : 'light');
+          if (generation.status !== 'generated') alert(generationStatusMessage(generation));
+          render(el, S, Api);
+        } catch (e) {
+          genBtn.disabled = false; genBtn.classList.remove('is-loading'); genBtn.textContent = 'Generate Grounded Lesson';
+          alert(e.message || e);
+        }
+      };
+      const skipBtn = el.querySelector('[data-skip-generate]');
+      if (skipBtn) skipBtn.onclick = () => { lessonStage = 'blocks'; activeBlockIndex = 0; render(el, S, Api); };
+      return;
+    }
+
+    if (lessonStage === 'complete') {
+      const btn = el.querySelector('[data-complete]');
+      if (btn) btn.onclick = async () => {
+        if (lesson.status === 'completed') { activeLessonRef = null; activeLesson = null; render(el, S, Api); return; }
+        btn.disabled = true; btn.textContent = 'Saving…';
+        try {
+          const result = await Api.post(`/learn/nodes/${activeLessonRef.nodeId}/complete`, { mastery: 1.0 });
+          if (result?.track) { activeTrack = result.track; activeTrackId = String(result.track.id); }
+          haptic('resolve');
+          activeLessonRef = null; activeLesson = null; state = null;
+          await loadTracks(Api);
+          render(el, S, Api);
+        } catch (e) {
+          btn.disabled = false; btn.textContent = lesson.status === 'completed' ? 'Return to Course Map' : 'Finish & Return to Course Map';
+          alert(e.message || e);
+        }
+      };
+      return;
+    }
+
+    wireLessonBlockCard(el, lesson, blocks);
+
+    const back = el.querySelector('[data-back]');
+    if (back) back.onclick = () => {
+      if (activeBlockIndex === 0) return;
+      haptic('light');
+      lessonDirection = 'back';
+      activeBlockIndex -= 1;
+      render(el, S, Api);
+    };
+    const cont = el.querySelector('[data-continue]');
+    if (cont) cont.onclick = () => {
+      haptic('light');
+      lessonDirection = 'forward';
+      if (activeBlockIndex >= blocks.length - 1) lessonStage = 'complete';
+      else activeBlockIndex += 1;
+      render(el, S, Api);
+    };
+  }
+
+  function wireLessonBlockCard(el, lesson, blocks) {
+    const block = blocks[activeBlockIndex];
+    if (!block) return;
+    const type = block.block_type || block.type || 'text';
+    const continueBtn = el.querySelector('[data-continue]');
+
     el.querySelectorAll('[data-lesson-recall]').forEach((box) => {
       const key = `hive.lesson.${lesson.id}.${box.dataset.lessonRecall || 'recall'}`;
       box.value = sessionStorage.getItem(key) || '';
-      box.oninput = () => sessionStorage.setItem(key, box.value);
+      box.oninput = () => {
+        sessionStorage.setItem(key, box.value);
+        if (continueBtn) continueBtn.disabled = !box.value.trim();
+      };
     });
+
+    if (type === 'quiz') {
+      const answerKey = `${lesson.id}:${activeBlockIndex}`;
+      const options = Array.from(el.querySelectorAll('[data-answer]'));
+      const already = quizAnswers[answerKey];
+      const correctIndex = Number(block.payload?.correct_index);
+      const hasCorrectAnswer = !Number.isNaN(correctIndex);
+      options.forEach((btn) => {
+        const idx = Number(btn.dataset.answer);
+        if (already !== undefined) {
+          btn.disabled = true;
+          if (hasCorrectAnswer && idx === correctIndex) btn.classList.add('correct');
+          else if (idx === already) btn.classList.add(hasCorrectAnswer ? 'incorrect' : 'selected');
+        }
+        btn.onclick = () => {
+          if (quizAnswers[answerKey] !== undefined) return;
+          quizAnswers[answerKey] = idx;
+          options.forEach((other) => { other.disabled = true; });
+          const isRight = hasCorrectAnswer && idx === correctIndex;
+          if (hasCorrectAnswer) {
+            btn.classList.add(isRight ? 'correct' : 'incorrect');
+            if (!isRight) {
+              const correctBtn = options.find((o) => Number(o.dataset.answer) === correctIndex);
+              if (correctBtn) correctBtn.classList.add('correct');
+            }
+          } else {
+            btn.classList.add('selected');
+          }
+          haptic(isRight || !hasCorrectAnswer ? 'resolve' : 'heavy');
+          if (continueBtn) continueBtn.disabled = false;
+        };
+      });
+    }
   }
 
   function renderBlock(block, i) {
