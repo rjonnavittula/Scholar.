@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import delete, func
 from sqlmodel import Session, select
 
-from app.models import LearningBlock, LearningLesson, LearningModule, LearningNode, LearningTrack
+from app.models import LearningBlock, LearningLesson, LearningModule, LearningNode, LearningTrack, LearningTrackSource
 
 
 def _clean_title(value: object, fallback: str) -> str:
@@ -275,6 +275,8 @@ def delete_track(session: Session, track_id: int) -> bool:
 
     if module_ids:
         session.exec(delete(LearningModule).where(LearningModule.id.in_(module_ids)))
+
+    session.exec(delete(LearningTrackSource).where(LearningTrackSource.track_id == track_id))
 
     session.delete(track)
     session.commit()
@@ -555,6 +557,39 @@ def add_lesson_block(session: Session, lesson_id: int, spec: dict[str, Any]) -> 
         confidence=float(spec.get("confidence") or 0.0),
     )
     session.add(block)
+    lesson.updated_at = datetime.now()
+    session.add(lesson)
+    session.commit()
+    return get_lesson_tree(session, lesson.id)  # type: ignore[arg-type]
+
+
+def replace_lesson_blocks(session: Session, lesson_id: int, blocks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Swap a lesson's blocks for a freshly generated set.
+
+    Used by RAG generation once a response has been validated against
+    ALLOWED_BLOCK_TYPES. Marks the lesson "generated" so the UI can tell it
+    apart from the untouched starter-block draft.
+    """
+    lesson = session.get(LearningLesson, lesson_id)
+    if not lesson:
+        return None
+
+    session.exec(delete(LearningBlock).where(LearningBlock.lesson_id == lesson.id))
+    for position, block in enumerate(blocks, start=1):
+        block_type = str(block.get("block_type") or "text").strip()
+        if block_type not in ALLOWED_BLOCK_TYPES:
+            raise ValueError("invalid_block_type")
+        session.add(LearningBlock(
+            lesson_id=lesson.id,  # type: ignore[arg-type]
+            position=position,
+            block_type=block_type,
+            title=str(block.get("title") or "").strip(),
+            payload_json=_json_dump(block.get("payload"), {}),
+            source_refs_json=_json_dump(block.get("source_refs"), []),
+            confidence=float(block.get("confidence") or 0.0),
+        ))
+
+    lesson.status = "generated"
     lesson.updated_at = datetime.now()
     session.add(lesson)
     session.commit()

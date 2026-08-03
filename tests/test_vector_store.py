@@ -1,8 +1,8 @@
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from app.vector_store import get_memory_layers, qdrant_config
+from app.vector_store import get_memory_layers, qdrant_config, search_chunks, upsert_source_chunks
 
 
 class TestVectorStore(unittest.TestCase):
@@ -27,17 +27,76 @@ class TestVectorStore(unittest.TestCase):
             "status": "missing_collection",
             "collection": "hive_scholar_chunks",
             "embedding_model": "nomic-embed-text",
+        }), patch("app.embedding_client.get_embedding_health", return_value={
+            "layer": "embeddings", "status": "unavailable",
+        }), patch("app.generation_client.get_generation_health", return_value={
+            "layer": "generation", "status": "unavailable",
         }):
             layers = get_memory_layers()
 
         ids = [layer["id"] for layer in layers["layers"]]
-        self.assertEqual(layers["phase"], "D")
+        self.assertEqual(layers["phase"], "E")
         self.assertIn("sql", ids)
         self.assertIn("qdrant", ids)
         self.assertIn("rag", ids)
         self.assertIn("okf", ids)
         okf = next(layer for layer in layers["layers"] if layer["id"] == "okf")
         self.assertEqual(okf["status"], "planned")
+
+    def test_memory_layers_rag_ready_only_when_all_layers_ready(self):
+        ready = {"status": "ready"}
+        with patch("app.vector_store.get_qdrant_health", return_value=ready), \
+             patch("app.embedding_client.get_embedding_health", return_value=ready), \
+             patch("app.generation_client.get_generation_health", return_value=ready):
+            layers = get_memory_layers()
+        rag = next(layer for layer in layers["layers"] if layer["id"] == "rag")
+        self.assertEqual(rag["status"], "ready")
+
+    def test_upsert_source_chunks_returns_zero_counts_for_empty_source(self):
+        with patch("app.chunk_store.list_source_chunks", return_value=[]):
+            result = upsert_source_chunks(MagicMock(), 1)
+        self.assertEqual(result, {"status": "ready", "indexed": 0, "skipped": 0, "failed": 0})
+
+    def test_upsert_source_chunks_reports_source_not_found(self):
+        with patch("app.chunk_store.list_source_chunks", return_value=None):
+            with self.assertRaises(ValueError):
+                upsert_source_chunks(MagicMock(), 999)
+
+    def test_upsert_source_chunks_embeds_new_and_skips_unchanged(self):
+        chunks = [
+            {"id": 1, "source_id": 1, "heading": "A", "heading_path": [], "position": 1, "chunk_hash": "hash1", "body_text": "alpha"},
+            {"id": 2, "source_id": 1, "heading": "B", "heading_path": [], "position": 2, "chunk_hash": "hash2", "body_text": "beta"},
+        ]
+        existing_record = MagicMock(id=1, payload={"chunk_hash": "hash1"})
+        mock_client = MagicMock()
+        mock_client.retrieve.return_value = [existing_record]
+
+        with patch("app.chunk_store.list_source_chunks", return_value=chunks), \
+             patch("app.vector_store._client", return_value=mock_client), \
+             patch("app.vector_store.ensure_scholar_collection", return_value={"status": "ready"}), \
+             patch("app.embedding_client.embed_text", return_value=[0.1, 0.2]):
+            result = upsert_source_chunks(MagicMock(), 1)
+
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["indexed"], 1)
+        self.assertEqual(result["skipped"], 1)
+        self.assertEqual(result["failed"], 0)
+        mock_client.upsert.assert_called_once()
+
+    def test_upsert_source_chunks_unavailable_when_qdrant_unreachable(self):
+        chunks = [{"id": 1, "source_id": 1, "heading": "A", "heading_path": [], "position": 1, "chunk_hash": "hash1", "body_text": "alpha"}]
+        with patch("app.chunk_store.list_source_chunks", return_value=chunks), \
+             patch("app.vector_store._client", side_effect=RuntimeError("no qdrant")):
+            result = upsert_source_chunks(MagicMock(), 1)
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["failed"], 1)
+
+    def test_search_chunks_returns_empty_without_source_ids(self):
+        self.assertEqual(search_chunks("query", []), [])
+
+    def test_search_chunks_returns_empty_on_failure(self):
+        with patch("app.embedding_client.embed_text", side_effect=RuntimeError("down")):
+            self.assertEqual(search_chunks("query", [1, 2]), [])
 
 
 if __name__ == "__main__":

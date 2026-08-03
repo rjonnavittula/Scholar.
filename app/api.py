@@ -28,7 +28,9 @@ from app.source_store import (
 )
 from app.source_upload import build_upload_source_spec
 from app.embedding_client import embed_text_preview, get_embedding_health
-from app.vector_store import ensure_scholar_collection, get_memory_layers, get_qdrant_health
+from app.vector_store import ensure_scholar_collection, get_memory_layers, get_qdrant_health, upsert_source_chunks
+from app.generation_client import get_generation_health
+from app.rag_engine import generate_lesson_blocks
 
 
 def _due_to_utc(due, school_tz: str):
@@ -203,6 +205,11 @@ def read_embedding_health():
     return get_embedding_health()
 
 
+@learn_router.get("/memory/generation/health")
+def read_generation_health():
+    return get_generation_health()
+
+
 @learn_router.post("/memory/embeddings/preview")
 def preview_embedding(payload: EmbeddingPreviewIn):
     try:
@@ -308,6 +315,14 @@ def list_learning_source_chunks(source_id: int, session: Session = Depends(get_s
     return chunks
 
 
+@learn_router.post("/sources/{source_id}/index")
+def index_learning_source(source_id: int, session: Session = Depends(get_session)):
+    try:
+        return upsert_source_chunks(session, source_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
 @learn_router.delete("/sources/{source_id}", status_code=204)
 def delete_learning_source(source_id: int, session: Session = Depends(get_session)):
     if not delete_source(session, source_id):
@@ -399,6 +414,14 @@ def start_learning_lesson(node_id: int, session: Session = Depends(get_session))
         result = start_learning_node(session, node_id)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    if not result:
+        raise HTTPException(404, "node_not_found")
+    return result
+
+
+@learn_router.post("/nodes/{node_id}/generate")
+def generate_node_lesson(node_id: int, session: Session = Depends(get_session)):
+    result = generate_lesson_blocks(session, node_id)
     if not result:
         raise HTTPException(404, "node_not_found")
     return result

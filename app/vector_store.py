@@ -107,15 +107,116 @@ def ensure_scholar_collection(*, recreate: bool = False) -> dict[str, Any]:
         }
 
 
+def upsert_source_chunks(session: Any, source_id: int) -> dict[str, Any]:
+    """Embed and upsert a source's chunks into Qdrant.
+
+    SQL chunk rows remain authoritative; this only pushes vectors plus a thin
+    payload for retrieval. A chunk whose hash already matches an indexed
+    point is skipped, so re-running this after a partial failure is cheap.
+    Never raises for connectivity issues — returns a status dict instead so
+    the UI can show a clear message.
+    """
+    from app.chunk_store import list_source_chunks
+    from app.embedding_client import embed_text
+
+    chunks = list_source_chunks(session, source_id)
+    if chunks is None:
+        raise ValueError("source_not_found")
+    if not chunks:
+        return {"status": "ready", "indexed": 0, "skipped": 0, "failed": 0}
+
+    cfg = qdrant_config()
+    try:
+        from qdrant_client.http.models import PointStruct
+
+        client = _client()
+        ensure_scholar_collection()
+
+        ids = [chunk["id"] for chunk in chunks]
+        existing_hashes: dict[int, str] = {}
+        for record in client.retrieve(collection_name=cfg["collection"], ids=ids, with_payload=True):
+            payload = record.payload or {}
+            existing_hashes[record.id] = payload.get("chunk_hash", "")
+
+        indexed = skipped = failed = 0
+        points: list[PointStruct] = []
+        for chunk in chunks:
+            if chunk["chunk_hash"] and existing_hashes.get(chunk["id"]) == chunk["chunk_hash"]:
+                skipped += 1
+                continue
+            try:
+                vector = embed_text(chunk["body_text"])
+            except Exception:
+                failed += 1
+                continue
+            points.append(PointStruct(
+                id=chunk["id"],
+                vector=vector,
+                payload={
+                    "source_id": chunk["source_id"],
+                    "chunk_id": chunk["id"],
+                    "heading": chunk["heading"],
+                    "heading_path": chunk["heading_path"],
+                    "position": chunk["position"],
+                    "chunk_hash": chunk["chunk_hash"],
+                },
+            ))
+            indexed += 1
+
+        if points:
+            client.upsert(collection_name=cfg["collection"], points=points)
+        return {"status": "ready", "indexed": indexed, "skipped": skipped, "failed": failed}
+    except Exception as exc:
+        return {"status": "unavailable", "indexed": 0, "skipped": 0, "failed": len(chunks), "error": str(exc)}
+
+
+def search_chunks(query_text: str, source_ids: list[int], top_k: int = 6) -> list[dict[str, Any]]:
+    """Semantic search over already-indexed chunks, scoped to given sources.
+
+    Returns [] whenever there is nothing to search, or Qdrant/embeddings are
+    unavailable, rather than raising — RAG generation falls back to a
+    deterministic chunk order when this comes back empty.
+    """
+    if not source_ids or not (query_text or "").strip():
+        return []
+    try:
+        from app.embedding_client import embed_text
+        from qdrant_client.http.models import FieldCondition, Filter, MatchAny
+
+        vector = embed_text(query_text)
+        cfg = qdrant_config()
+        client = _client()
+        hits = client.search(
+            collection_name=cfg["collection"],
+            query_vector=vector,
+            query_filter=Filter(must=[FieldCondition(key="source_id", match=MatchAny(any=source_ids))]),
+            limit=top_k,
+        )
+        return [
+            {
+                "chunk_id": (hit.payload or {}).get("chunk_id", hit.id),
+                "source_id": (hit.payload or {}).get("source_id"),
+                "score": hit.score,
+            }
+            for hit in hits
+        ]
+    except Exception:
+        return []
+
+
 def get_memory_layers() -> dict[str, Any]:
     from app.embedding_client import get_embedding_health
+    from app.generation_client import get_generation_health
 
     qdrant = get_qdrant_health()
     embedding = get_embedding_health()
+    generation = get_generation_health()
     qdrant_status = qdrant.get("status", "unavailable")
     embedding_status = embedding.get("status", "unavailable")
+    generation_status = generation.get("status", "unavailable")
+    rag_ready = qdrant_status == "ready" and embedding_status == "ready" and generation_status == "ready"
     return {
-        "phase": "D",
+        "phase": "E",
         "active_layer": "qdrant",
         "layers": [
             {
@@ -128,21 +229,22 @@ def get_memory_layers() -> dict[str, Any]:
                 "id": "qdrant",
                 "label": "Qdrant Index",
                 "status": qdrant_status,
-                "description": "Semantic vector index for Scholar chunks. Embeddings/upserts land next.",
+                "description": "Semantic vector index for Scholar chunks.",
                 "details": qdrant,
             },
             {
                 "id": "embeddings",
                 "label": "Embeddings",
                 "status": embedding_status,
-                "description": "Ollama embedding layer using nomic-embed-text. Chunk upserts land next.",
+                "description": "Ollama embedding layer using nomic-embed-text.",
                 "details": embedding,
             },
             {
                 "id": "rag",
                 "label": "RAG Runtime",
-                "status": "planned",
-                "description": "Retrieval pipeline that will select chunks, build context, cite sources, and ground lesson answers.",
+                "status": "ready" if rag_ready else "unavailable",
+                "description": "Retrieval pipeline that selects chunks, builds context, and grounds generated lesson blocks.",
+                "details": {"generation": generation},
             },
             {
                 "id": "okf",

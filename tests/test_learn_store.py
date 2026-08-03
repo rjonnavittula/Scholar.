@@ -110,6 +110,16 @@ class TestLearnStore(unittest.TestCase):
         self.assertEqual(list_tracks(self.session), [])
         self.assertFalse(delete_track(self.session, tree["id"]))
 
+    def test_delete_track_with_linked_source_does_not_violate_fk(self):
+        from app.source_store import create_source, link_source_to_track
+
+        tree = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})
+        source = create_source(self.session, {"title": "Notes", "source_type": "text", "body_text": "x"})
+        link_source_to_track(self.session, tree["id"], source["id"], "primary")
+
+        self.assertTrue(delete_track(self.session, tree["id"]))
+        self.assertIsNone(get_track_tree(self.session, tree["id"]))
+
     def test_get_or_create_lesson_for_node_builds_starter_blocks(self):
         tree = create_track_from_spec(self.session, {
             "track_title": "Anatomy",
