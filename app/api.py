@@ -98,6 +98,23 @@ def create_key(label: str = Query(...), session: Session = Depends(get_session))
 AUTH = [Depends(require_api_key)]
 
 
+@auth_router.get("/keys", summary="List minted API keys (never the key itself)", dependencies=AUTH)
+def list_keys(session: Session = Depends(get_session)):
+    rows = session.exec(select(ApiKey).order_by(ApiKey.created_at.desc())).all()
+    return [{"id": k.id, "label": k.label, "created_at": k.created_at, "revoked": k.revoked} for k in rows]
+
+
+@auth_router.post("/keys/{key_id}/revoke", summary="Revoke an API key", dependencies=AUTH)
+def revoke_key(key_id: int, session: Session = Depends(get_session)):
+    key = session.get(ApiKey, key_id)
+    if not key:
+        raise HTTPException(404, "key_not_found")
+    key.revoked = True
+    session.add(key)
+    session.commit()
+    return {"id": key.id, "revoked": True}
+
+
 # ---- learn / forge --------------------------------------------------------- #
 class ParseSourceIn(BaseModel):
     text: str
@@ -782,6 +799,7 @@ def get_settings(session: Session = Depends(get_session)):
     st = session.get(Settings, 1) or Settings(id=1)
     out = st.model_dump()
     out["canvas_token"] = bool(st.canvas_token)  # never echo the secret
+    out["canvas_ics_url"] = bool(st.canvas_ics_url)  # ICS feed URLs embed a token too
     return out
 
 
@@ -822,14 +840,18 @@ def list_timezones(country: Optional[str] = None):
 
 @config_router.put("/settings")
 def put_settings(body: dict, session: Session = Depends(get_session)):
+    from app.crypto import encrypt_secret
     st = session.get(Settings, 1) or Settings(id=1)
     for k in ("min_block_min", "start_ahead_days", "yellow_threshold_pct",
               "day_start_min", "canvas_base_url", "canvas_token", "canvas_ics_url",
-              "home_tz", "school_tz", "week_start", "country", "onboarded",
+              "home_tz", "school_tz", "week_start", "country",
               "theme", "accent", "density", "fontscale", "default_view",
               "display_name", "canvas_autosync", "canvas_sync_hours"):
         if k in body and body[k] is not None:
-            setattr(st, k, body[k])
+            value = body[k]
+            if k in ("canvas_token", "canvas_ics_url") and isinstance(value, str):
+                value = encrypt_secret(value)
+            setattr(st, k, value)
     session.add(st); session.commit()
     return {"ok": True}
 

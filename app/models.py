@@ -121,7 +121,6 @@ class Settings(SQLModel, table=True):
     school_tz: str = "America/New_York"   # where due dates are anchored
     week_start: int = 6                   # 0=Mon .. 6=Sun (calendar week start)
     country: str = "US"                   # ISO-3166 for the location->tz picker
-    onboarded: bool = False
     theme: str = "light"
     accent: str = "#3D7DFF"
     density: float = 1.0

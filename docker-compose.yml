@@ -29,6 +29,11 @@ services:
     environment:
       HIVE_DATABASE_URL: postgresql+psycopg://${HIVE_DB_USER}:${HIVE_DB_PASSWORD}@hive-db:5432/hive
       TZ: America/New_York
+      # Optional: encrypts the Canvas token/ICS URL at rest instead of storing them
+      # plaintext. Generate one with:
+      #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      # then add HIVE_SECRET_KEY=<value> to your .env and uncomment the line below.
+      # HIVE_SECRET_KEY: ${HIVE_SECRET_KEY}
     ports:
       - "8077:8077"   # reach via Tailscale / your reverse proxy; keep off the open WAN
 
