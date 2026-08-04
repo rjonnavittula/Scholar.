@@ -1594,3 +1594,41 @@ body.theme-dark{
 @keyframes scholarCelebrate{0%,100%{transform:translateY(0) rotate(0deg);}30%{transform:translateY(-8px) rotate(-4deg);}60%{transform:translateY(-2px) rotate(3deg);}}
 @keyframes scholarThink{0%,100%{opacity:.35;}50%{opacity:1;}}
 @media (prefers-reduced-motion:reduce){ .forge-mascot.celebrating,.forge-mascot.thinking::after{ animation:none!important; } }
+
+/* === v33: tutor mode — setup modal + streaming chat === */
+.tutor-setup-seg{ display:flex; background:var(--f-bg-sunken); border:1px solid rgba(var(--f-accent-rgb),.14); border-radius:999px; padding:3px; margin-bottom:18px; }
+.tutor-setup-seg span{ flex:1; text-align:center; padding:8px 10px; border-radius:999px; font-size:11px; text-transform:uppercase; letter-spacing:.1em; color:var(--f-faint); cursor:pointer; transition:background .25s,color .25s; }
+.tutor-setup-seg span.on{ background:rgba(var(--f-accent-rgb),.14); color:var(--f-accent); }
+.tutor-setup-panel textarea{ min-height:120px; }
+.tutor-setup-panel [data-describe-gen]{ margin-top:10px; }
+.tutor-preset-card{ display:block; width:100%; text-align:left; background:var(--f-bg-sunken); border:1px solid rgba(var(--f-accent-rgb),.12); border-radius:14px; padding:14px 16px; margin-bottom:10px; cursor:pointer; transition:border-color .2s,background .2s; }
+.tutor-preset-card:hover{ border-color:rgba(var(--f-accent-rgb),.4); }
+.tutor-preset-card.sel{ border-color:var(--f-accent); background:rgba(var(--f-accent-rgb),.08); }
+.tutor-preset-card b{ display:block; color:var(--f-ink); font-size:14px; margin-bottom:4px; }
+.tutor-preset-card span{ color:var(--f-muted); font-size:12px; line-height:1.5; }
+.tutor-setup-review{ margin-top:18px; border-top:1px dashed rgba(var(--f-accent-rgb),.16); padding-top:16px; }
+.tutor-setup-review label{ display:block; font-size:11px; text-transform:uppercase; letter-spacing:.1em; color:var(--f-faint); margin-bottom:8px; }
+.tutor-setup-review textarea{ min-height:160px; }
+
+.tutor-panel-card p{ margin:0 0 4px; color:var(--f-muted); font-size:12px; line-height:1.5; }
+
+.tutor-shell{ height:100%; display:flex; flex-direction:column; background:var(--f-bg); color:var(--f-ink); overflow:hidden; }
+.tutor-topbar{ display:flex; align-items:center; gap:16px; padding:20px max(5vw,32px); flex:0 0 auto; }
+.tutor-topbar-title{ flex:1; }
+.tutor-topbar-title span{ font-size:10px; letter-spacing:.24em; text-transform:uppercase; color:var(--f-accent); }
+.tutor-topbar-title h2{ margin:4px 0 0; font-size:22px; }
+.tutor-thread{ flex:1; overflow:auto; padding:0 max(5vw,32px) 16px; display:flex; flex-direction:column; gap:14px; }
+.tutor-bubble{ max-width:min(680px,80%); }
+.tutor-bubble-user{ align-self:flex-end; }
+.tutor-bubble-assistant{ align-self:flex-start; }
+.tutor-bubble-content{ background:var(--f-surface); border-radius:18px; padding:14px 18px; line-height:1.65; font-size:14.5px; box-shadow:var(--f-shadow); }
+.tutor-bubble-user .tutor-bubble-content{ background:rgba(var(--f-accent-rgb),.16); color:var(--f-ink); }
+.tutor-bubble-content pre.tutor-code{ margin:10px 0; padding:12px 14px; background:var(--f-bg-sunken); border:1px solid rgba(var(--f-accent-rgb),.14); border-radius:12px; overflow:auto; font-family:ui-monospace,"SF Mono",Consolas,monospace; font-size:12.5px; line-height:1.6; }
+.tutor-bubble-content pre.tutor-code:first-child{ margin-top:0; }
+.tutor-bubble-content pre.tutor-code:last-child{ margin-bottom:0; }
+.tutor-error{ color:var(--f-danger); font-size:12.5px; margin:8px 0 0; }
+.tutor-composer{ flex:0 0 auto; display:flex; gap:10px; align-items:flex-end; padding:16px max(5vw,32px) 24px; border-top:1px solid rgba(var(--f-accent-rgb),.10); }
+.tutor-composer textarea{ flex:1; resize:none; background:var(--f-bg-sunken); border:1px solid rgba(var(--f-accent-rgb),.14); border-radius:14px; color:var(--f-ink); padding:12px 16px; font-size:14px; line-height:1.5; outline:none; font-family:inherit; }
+.tutor-composer textarea:focus{ border-color:rgba(var(--f-accent-rgb),.45); }
+.tutor-composer button{ border:0; background:var(--f-accent); color:var(--f-accent-ink,#fff); border-radius:14px; padding:12px 22px; font-weight:600; cursor:pointer; transition:opacity .2s; }
+.tutor-composer button:disabled{ opacity:.5; cursor:default; }

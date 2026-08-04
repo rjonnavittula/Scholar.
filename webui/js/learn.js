@@ -10,6 +10,7 @@ window.HiveCourses = (() => {
   let activeTrackId = null;
   let activeTrack = null;
   let activeLessonRef = null;
+  let activeTutorTrackId = null;
   let activeLesson = null;
   let activeSources = null;
   let activeSourcesTrackId = null;
@@ -162,6 +163,13 @@ window.HiveCourses = (() => {
           await loadLesson(Api, activeLessonRef.nodeId);
         }
         return renderLesson(el, activeLesson, S, Api);
+      }
+      if (activeTutorTrackId) {
+        if (!activeTrack || String(activeTrack.id) !== String(activeTutorTrackId)) {
+          setLoading(el, 'Opening tutor…');
+          await loadTrack(Api, activeTutorTrackId);
+        }
+        return HiveTutor.renderChat(el, activeTrack, Api, () => { activeTutorTrackId = null; render(el, S, Api); });
       }
       if (activeTrackId) {
         if (!activeTrack || String(activeTrack.id) !== String(activeTrackId)) {
@@ -396,6 +404,7 @@ Module 4: Async Programming"></textarea>
           </section>
           <aside class="forge-study-panel">
             ${renderFocusCard(track, modules)}
+            ${HiveTutor.studyPanelSection(track)}
             ${renderMemoryLayerTabs(memoryLayers)}
             ${renderSearchCard()}
             ${renderSourcePanel(sources)}
@@ -412,6 +421,10 @@ Module 4: Async Programming"></textarea>
     el.querySelectorAll('[data-memory-layer]').forEach((b) => b.onclick = () => { haptic('light'); activeMemoryLayer = b.dataset.memoryLayer; render(el, S, Api); });
     wireOkfExport(el, track, Api);
     wireSearchCard(el, track, Api);
+    HiveTutor.wireStudyPanelSection(el, S, Api, track, (opening) => {
+      if (opening) { activeTutorTrackId = String(track.id); render(el, S, Api); }
+      else { activeTrack = null; render(el, S, Api); }
+    });
     resetMicroMotion(el);
     const del = el.querySelector('[data-forge-delete]');
     if (del) del.onclick = async () => {
