@@ -35,6 +35,11 @@ docker compose up -d --build
 ```
 Local dev without Docker: `pip install -r requirements.txt && uvicorn app.main:app --reload --port 8077`
 
+The API also serves a first-party web UI at `http://<host>:8077/` (`webui/`,
+vanilla JS/CSS, no build step) — calendar, courses, analytics, settings, all
+against this same API. It's the simplest way to actually use the app today;
+Super Productivity remains an optional, separate client for whoever wants it.
+
 ## First calls
 ```bash
 # 1. mint a key (no auth required on this one endpoint for bootstrap — lock it
@@ -51,14 +56,19 @@ curl http://127.0.0.1:8077/cushion -H "X-API-Key: hive_xxx"
 ```
 
 ## What's built (v0) vs next
-**Built:** tasks/courses CRUD, API-key auth, Canvas ingest (upsert by external
-id), the EDF Cushion engine, OpenAPI docs, Docker self-host, `ma.` theme tokens.
-This is a scaffold — wired correctly but not yet runtime-tested end to end.
+**Built:** tasks/courses CRUD, API-key auth (mint/list/revoke), Canvas ingest
+(token sync, ICS calendar feed, bookmarklet import, upsert by external id),
+weighted grades, PDF/text syllabus parsing, the EDF Cushion engine, past/future
+analytics + CSV export, study streaks, Alembic migrations, a first-party web
+UI (`webui/`, calendar/courses/analytics/settings), and a full learning/RAG
+subsystem — source parsing/chunking, Ollama embeddings, Qdrant semantic
+search, retrieval-grounded lesson generation, and OKF course export/import.
+This has been runtime-tested end to end, not just wired.
 
-**Next (see roadmap in chat):**
+**Next:**
 - Phase 2: custom Super Productivity **SyncProvider** so the SP UI reads/writes
   this API instead of WebDAV — that's what makes SP a true client.
 - Phase 3: a **Cushion widget** inside SP's planner (the one feature SP lacks).
-- Weighted grades, PDF-syllabus parsing, per-day capacity config, JWT + users,
-  Alembic migrations, "available time" view, workload analytics.
+- Per-day capacity config, JWT + multi-user, an "available time" view,
+  write-back from SP to HIVE.
 ```
