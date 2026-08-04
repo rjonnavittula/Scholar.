@@ -16,6 +16,18 @@ window.HiveCourses = (() => {
   let memoryLayers = null;
   let activeMemoryLayer = 'qdrant';
 
+  function seededShuffle(seedStr, n) {
+    let seed = 0;
+    for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) >>> 0;
+    const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const arr = Array.from({ length: n }, (_, i) => i);
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
   function haptic(kind = 'light') {
     if (!window.navigator || typeof window.navigator.vibrate !== 'function') return;
     const pattern = kind === 'heavy' ? [18, 30, 18] : kind === 'resolve' ? [8, 22, 12] : 8;
@@ -195,7 +207,11 @@ window.HiveCourses = (() => {
       <main class="forge-dashboard">
         <header class="forge-dash-head">
           <div><p>Library</p><h2>${esc(dashboardTitle())}</h2></div>
-          <div class="forge-actions"><button data-forge-text-node>+ Create Course</button></div>
+          <div class="forge-actions">
+            <button data-forge-import-okf>Import OKF</button>
+            <input type="file" accept="application/json" data-forge-import-okf-file hidden />
+            <button data-forge-text-node>+ Create Course</button>
+          </div>
         </header>
         ${tracks.length ? renderTrackCards(tracks) : renderEmptyArchive()}
       </main>
@@ -269,6 +285,37 @@ window.HiveCourses = (() => {
     el.querySelectorAll('[data-forge-text-node]').forEach((b) => b.onclick = () => openTextModal(el, S, Api));
     const refresh = el.querySelector('[data-forge-refresh]');
     if (refresh) refresh.onclick = async () => { state = null; await render(el, S, Api); };
+    wireOkfImport(el, S, Api);
+  }
+
+  function wireOkfImport(el, S, Api) {
+    const btn = el.querySelector('[data-forge-import-okf]');
+    const file = el.querySelector('[data-forge-import-okf-file]');
+    if (!btn || !file) return;
+    btn.onclick = () => file.click();
+    file.onchange = async () => {
+      const picked = file.files && file.files[0];
+      if (!picked) return;
+      btn.disabled = true; btn.textContent = 'Importing…';
+      try {
+        const text = await picked.text();
+        const bundle = JSON.parse(text);
+        const result = await Api.post('/learn/okf/import', bundle);
+        haptic('resolve');
+        file.value = '';
+        await loadTracks(Api);
+        if (result?.track) {
+          activeCategory = categoryFor(result.track);
+          activeTrackId = String(result.track.id);
+          activeTrack = result.track;
+          activeSources = null; activeSourcesTrackId = null;
+        }
+        render(el, S, Api);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = 'Import OKF';
+        alert(e.message || e);
+      }
+    };
   }
 
   function modalHost(el) { return el.querySelector('.forge-modal-host') || el; }
@@ -350,6 +397,7 @@ Module 4: Async Programming"></textarea>
           <aside class="forge-study-panel">
             ${renderFocusCard(track, modules)}
             ${renderMemoryLayerTabs(memoryLayers)}
+            ${renderSearchCard()}
             ${renderSourcePanel(sources)}
             <button data-forge-source class="forge-source-add">+ Add Source</button>
           </aside>
@@ -362,6 +410,8 @@ Module 4: Async Programming"></textarea>
     if (addSource) addSource.onclick = () => openSourceModal(el, S, Api, track);
     wireSourcePanel(el, S, Api, track);
     el.querySelectorAll('[data-memory-layer]').forEach((b) => b.onclick = () => { haptic('light'); activeMemoryLayer = b.dataset.memoryLayer; render(el, S, Api); });
+    wireOkfExport(el, track, Api);
+    wireSearchCard(el, track, Api);
     resetMicroMotion(el);
     const del = el.querySelector('[data-forge-delete]');
     if (del) del.onclick = async () => {
@@ -450,7 +500,75 @@ Module 4: Async Programming"></textarea>
       ${active?.id === 'qdrant' ? `<small>${esc(detail.collection || 'hive_scholar_chunks')} · ${esc(detail.embedding_model || 'nomic-embed-text')} · ${esc(detail.url || 'Qdrant URL pending')}</small>` : ''}
       ${active?.id === 'embeddings' ? `<small>${esc(detail.model || 'nomic-embed-text')} · ${esc(detail.url || 'Ollama URL pending')} · ${esc(String(detail.expected_dim || 768))} dims</small>` : ''}
       ${active?.id === 'rag' && detail.generation ? `<small>${esc(detail.generation.model || 'llama3.1')} · ${esc(detail.generation.status || 'unavailable')} · ${esc(detail.generation.url || 'Ollama URL pending')}</small>` : ''}
+      ${active?.id === 'okf' ? '<div class="forge-memory-actions"><button data-forge-okf-export class="forge-index-action">Export this course</button></div>' : ''}
     </section>`;
+  }
+
+  function downloadJson(filename, data) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function wireOkfExport(el, track, Api) {
+    const btn = el.querySelector('[data-forge-okf-export]');
+    if (!btn) return;
+    btn.onclick = async () => {
+      btn.disabled = true; const label = btn.textContent; btn.textContent = 'Exporting…';
+      try {
+        const result = await Api.get(`/learn/tracks/${track.id}/okf/export`);
+        downloadJson(result.filename, result.json);
+        haptic('resolve');
+      } catch (e) {
+        alert(e.message || e);
+      } finally {
+        btn.disabled = false; btn.textContent = label;
+      }
+    };
+  }
+
+  let searchQuery = '';
+  let searchResults = null;
+
+  function renderSearchCard() {
+    return `<section class="forge-search-card">
+      <div class="forge-memory-head"><span>Search This Course</span></div>
+      <input type="text" data-forge-search-input placeholder="Search your indexed sources…" value="${esc(searchQuery)}" />
+      <div data-forge-search-results>${renderSearchResults()}</div>
+    </section>`;
+  }
+
+  function renderSearchResults() {
+    if (!searchResults) return '';
+    if (!searchResults.length) return '<p class="forge-search-empty">No matches yet — index a source, or try a different phrase.</p>';
+    return `<div class="forge-search-results">${searchResults.map((hit) => `<div class="forge-search-hit">
+      <b>${esc(hit.heading || 'Untitled section')}</b>
+      <small>${esc(hit.source_title || '')}</small>
+      <p>${esc(hit.snippet || '')}</p>
+    </div>`).join('')}</div>`;
+  }
+
+  function wireSearchCard(el, track, Api) {
+    const input = el.querySelector('[data-forge-search-input]');
+    const resultsHost = el.querySelector('[data-forge-search-results]');
+    if (!input || !resultsHost) return;
+    let timer = null;
+    input.oninput = () => {
+      searchQuery = input.value;
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        if (!searchQuery.trim()) { searchResults = null; resultsHost.innerHTML = renderSearchResults(); return; }
+        try {
+          searchResults = (await Api.get(`/learn/tracks/${track.id}/search?q=${encodeURIComponent(searchQuery)}`)).results;
+        } catch (e) {
+          searchResults = [];
+        }
+        resultsHost.innerHTML = renderSearchResults();
+      }, 320);
+    };
   }
 
   function renderSourcePanel(sources) {
@@ -757,6 +875,7 @@ Module 4: Async Programming"></textarea>
   let lessonStageForId = null;
   let lessonDirection = 'forward';
   const quizAnswers = {}; // `${lessonId}:${blockIndex}` -> selected option index
+  const orderedAnswers = {}; // `${lessonId}:${blockIndex}` -> { order: [origIndex...], correct: bool }
 
   function ensureLessonStage(lesson) {
     if (lessonStageForId === lesson.id) return;
@@ -765,7 +884,11 @@ Module 4: Async Programming"></textarea>
     lessonDirection = 'forward';
     if (lesson.status === 'completed') { lessonStage = 'complete'; return; }
     const hasSources = (activeSources || []).length > 0;
-    lessonStage = (lesson.status === 'draft' && hasSources) ? 'offer' : 'blocks';
+    // '/nodes/{id}/start' (called by loadLesson, right before this runs) always advances
+    // a fresh lesson from 'draft' to 'in_progress' — so 'not yet generated' has to include
+    // both, or the generate-offer screen would never be reachable through normal navigation.
+    const notYetGenerated = lesson.status === 'draft' || lesson.status === 'in_progress';
+    lessonStage = (notYetGenerated && hasSources) ? 'offer' : 'blocks';
   }
 
   function renderProgressSegments(total, done) {
@@ -789,11 +912,17 @@ Module 4: Async Programming"></textarea>
       return !!(sessionStorage.getItem(key) || '').trim();
     }
     if (type === 'quiz') return quizAnswers[`${lesson.id}:${index}`] !== undefined;
+    if (type === 'ordered_relation') {
+      const items = block.payload?.items || block.payload?.steps || block.payload?.labels || [];
+      if (items.length < 2) return true;
+      return orderedAnswers[`${lesson.id}:${index}`] !== undefined;
+    }
     return true;
   }
 
   function renderGenerateOfferCard(lesson) {
     return `<section class="forge-block forge-generate-card slide-up">
+      <div class="forge-mascot resting" aria-hidden="true"><i></i></div>
       <p>Grounded Lesson</p>
       <h2>Generate this lesson from your sources</h2>
       <div class="forge-prose">Scholar will read the sources linked to this course and write a short, source-grounded lesson with a quick check and a recall prompt.</div>
@@ -805,6 +934,7 @@ Module 4: Async Programming"></textarea>
   function renderCompleteCard(lesson) {
     const already = lesson.status === 'completed';
     return `<div class="forge-complete slide-up">
+      <div class="forge-mascot celebrating" aria-hidden="true"><i></i></div>
       <h2>${already ? 'Lesson Complete' : 'Nicely done'}</h2>
       <p>${already ? 'This lesson is completed and saved to Postgres.' : 'Mark this lesson complete to update mastery, unlock the next module, and return to the course map.'}</p>
       <button data-complete class="motion-button">${already ? 'Return to Course Map' : 'Finish & Return to Course Map'}</button>
@@ -872,6 +1002,8 @@ Module 4: Async Programming"></textarea>
       if (genBtn) genBtn.onclick = async () => {
         haptic('light');
         genBtn.disabled = true; genBtn.classList.add('is-loading'); genBtn.textContent = 'Reading sources…';
+        const mascotEl = el.querySelector('.forge-mascot');
+        if (mascotEl) mascotEl.classList.replace('resting', 'thinking');
         try {
           const result = await Api.post(`/learn/nodes/${activeLessonRef.nodeId}/generate`);
           activeLesson = result.lesson;
@@ -884,6 +1016,7 @@ Module 4: Async Programming"></textarea>
           render(el, S, Api);
         } catch (e) {
           genBtn.disabled = false; genBtn.classList.remove('is-loading'); genBtn.textContent = 'Generate Grounded Lesson';
+          if (mascotEl) mascotEl.classList.replace('thinking', 'resting');
           alert(e.message || e);
         }
       };
@@ -898,7 +1031,8 @@ Module 4: Async Programming"></textarea>
         if (lesson.status === 'completed') { activeLessonRef = null; activeLesson = null; render(el, S, Api); return; }
         btn.disabled = true; btn.textContent = 'Saving…';
         try {
-          const result = await Api.post(`/learn/nodes/${activeLessonRef.nodeId}/complete`, { mastery: 1.0 });
+          const mastery = computeLessonMastery(lesson, blocks);
+          const result = await Api.post(`/learn/nodes/${activeLessonRef.nodeId}/complete`, { mastery });
           if (result?.track) { activeTrack = result.track; activeTrackId = String(result.track.id); }
           haptic('resolve');
           activeLessonRef = null; activeLesson = null; state = null;
@@ -979,6 +1113,65 @@ Module 4: Async Programming"></textarea>
         };
       });
     }
+
+    if (type === 'ordered_relation') {
+      const answerKey = `${lesson.id}:${activeBlockIndex}`;
+      const list = el.querySelector('[data-order-list]');
+      const chips = list ? Array.from(list.querySelectorAll('[data-orig-index]')) : [];
+      if (list && chips.length) {
+        const already = orderedAnswers[answerKey];
+        if (already) {
+          chips
+            .slice()
+            .sort((a, b) => already.order.indexOf(Number(a.dataset.origIndex)) - already.order.indexOf(Number(b.dataset.origIndex)))
+            .forEach((chip, pos) => {
+              list.appendChild(chip);
+              chip.disabled = true;
+              chip.dataset.pickPos = String(pos + 1);
+              chip.classList.add(already.correct ? 'correct' : 'incorrect');
+            });
+          if (continueBtn) continueBtn.disabled = false;
+        } else {
+          const picked = [];
+          chips.forEach((chip) => {
+            chip.onclick = () => {
+              if (chip.disabled) return;
+              picked.push(Number(chip.dataset.origIndex));
+              chip.disabled = true;
+              chip.dataset.pickPos = String(picked.length);
+              haptic('light');
+              if (picked.length === chips.length) {
+                const correct = picked.every((origIndex, pos) => origIndex === pos);
+                orderedAnswers[answerKey] = { order: picked, correct };
+                chips.forEach((c) => c.classList.add(correct ? 'correct' : 'incorrect'));
+                haptic(correct ? 'resolve' : 'heavy');
+                if (continueBtn) continueBtn.disabled = false;
+              }
+            };
+          });
+        }
+      }
+    }
+  }
+
+  function computeLessonMastery(lesson, blocks) {
+    let scored = 0;
+    let correct = 0;
+    blocks.forEach((block, index) => {
+      const type = block.block_type || block.type || 'text';
+      const key = `${lesson.id}:${index}`;
+      if (type === 'quiz' && quizAnswers[key] !== undefined) {
+        const correctIndex = Number(block.payload?.correct_index);
+        if (!Number.isNaN(correctIndex)) {
+          scored += 1;
+          if (quizAnswers[key] === correctIndex) correct += 1;
+        }
+      } else if (type === 'ordered_relation' && orderedAnswers[key] !== undefined) {
+        scored += 1;
+        if (orderedAnswers[key].correct) correct += 1;
+      }
+    });
+    return scored > 0 ? correct / scored : 1.0;
   }
 
   function renderBlock(block, i) {
@@ -996,9 +1189,18 @@ Module 4: Async Programming"></textarea>
       const options = payload.options || [];
       return `<section class="forge-block slide-up" style="${delay}"><p>Misconception Check</p><h2>${esc(title)}</h2><h3>${esc(payload.question || '')}</h3><div class="forge-options">${options.map((o, j) => `<button data-answer="${j}">${esc(o)}</button>`).join('')}</div></section>`;
     }
-    if (type === 'ordered_relation' || type === 'diagram') {
+    if (type === 'ordered_relation') {
+      const items = (payload.items || payload.steps || payload.labels || []).map((x) => (x && x.label) || x);
+      if (items.length < 2) {
+        return `<section class="forge-block slide-up" style="${delay}"><p>Ordered Relation</p><h2>${esc(title)}</h2><div class="forge-safe-diagram">${items.map((x) => `<span>${esc(x)}</span>`).join('')}</div></section>`;
+      }
+      const order = seededShuffle(`${block.id || i}:${items.length}`, items.length);
+      const chips = order.map((origIndex) => `<button class="forge-order-chip" type="button" data-orig-index="${origIndex}">${esc(items[origIndex])}</button>`).join('');
+      return `<section class="forge-block interactive slide-up" style="${delay}"><p>Put In Order</p><h2>${esc(title)}</h2>${payload.prompt ? `<div class="forge-prose">${esc(payload.prompt)}</div>` : ''}<div class="forge-order-list" data-order-list>${chips}</div></section>`;
+    }
+    if (type === 'diagram') {
       const items = payload.items || payload.steps || payload.labels || [];
-      return `<section class="forge-block slide-up" style="${delay}"><p>${esc(type.replace(/_/g, ' '))}</p><h2>${esc(title)}</h2><div class="forge-safe-diagram">${items.map((x) => `<span>${esc(x.label || x)}</span>`).join('')}</div></section>`;
+      return `<section class="forge-block slide-up" style="${delay}"><p>Diagram</p><h2>${esc(title)}</h2><div class="forge-safe-diagram">${items.map((x) => `<span>${esc(x.label || x)}</span>`).join('')}</div></section>`;
     }
     if (type === 'case') {
       return `<section class="forge-block slide-up" style="${delay}"><p>Case Node</p><h2>${esc(title)}</h2><div class="forge-prose">${esc(payload.scenario || payload.body || '')}</div></section>`;
