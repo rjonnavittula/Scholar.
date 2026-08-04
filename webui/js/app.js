@@ -2427,7 +2427,8 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
         row('Start ahead', 'begin tasks this many days early', `<input id="m-ahead" type="number" value="${st.start_ahead_days}" /> <span class="unit">days</span>`) +
         row('Cushion turns yellow at', '% of needed time left', `<input id="m-yel" type="number" value="${st.yellow_threshold_pct}" /> <span class="unit">%</span>`) +
         row('Week starts on', '', `<select id="m-wkstart"><option value="6" ${sel(st.week_start, 6)}>Sunday</option><option value="0" ${sel(st.week_start, 0)}>Monday</option></select>`) +
-        row('Default view', '', `<select id="m-defview">${['week', 'day', 'month'].map((v) => `<option ${sel(st.default_view || 'week', v)}>${v}</option>`).join('')}</select>`)
+        row('Default view', '', `<select id="m-defview">${['week', 'day', 'month'].map((v) => `<option ${sel(st.default_view || 'week', v)}>${v}</option>`).join('')}</select>`) +
+        row('Calendar scrolls to', 'where the week/day view opens', `<input id="m-daystart" type="time" value="${pad(Math.floor((st.day_start_min ?? 480) / 60))}:${pad((st.day_start_min ?? 480) % 60)}" />`)
       ) + `<div class="sgroup-title">awake time</div>
         <div class="sgroup awake-block">
           <div class="awake-default">
@@ -2466,7 +2467,7 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
       ) + group('api key',
         row('Mint a new key', 'keys are shown once', `<button class="ghost" id="m-newkey">mint</button>`) +
         `<div class="srow" id="m-newkey-row" style="display:none"><div class="srow-l"><div class="srow-label">Your key</div></div><div class="srow-c"><code id="m-newkey-out"></code></div></div>`
-      );
+      ) + group('minted keys', `<div id="m-keylist" class="muted small">loading…</div>`);
 
     const SECTIONS = [
       ['term', 'Term', 'where you study and when the term runs', paneTerm],
@@ -2516,7 +2517,28 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
       try { const k = await Api.post('/auth/keys?label=ui'); out.textContent = k.api_key || '(minted)'; }
       catch (e) { out.textContent = 'mint failed: ' + e.message; }
       if (r) r.style.display = 'flex';
+      await renderKeyList(ov);
     };
+    if (ov.querySelector('#m-keylist')) await renderKeyList(ov);
+  }
+
+  async function renderKeyList(ov) {
+    const host = ov.querySelector('#m-keylist');
+    if (!host) return;
+    let keys;
+    try { keys = await Api.get('/auth/keys'); }
+    catch (e) { host.textContent = 'could not load keys'; return; }
+    if (!keys.length) { host.textContent = 'no keys minted yet'; return; }
+    host.innerHTML = keys.map((k) => `<div class="srow">
+        <div class="srow-l"><div class="srow-label">${esc(k.label)}</div>
+          <div class="srow-hint">${new Date(k.created_at).toLocaleString()}${k.revoked ? ' · revoked' : ''}</div></div>
+        <div class="srow-c">${k.revoked ? '' : `<button class="ghost xs" data-revoke="${k.id}">revoke</button>`}</div>
+      </div>`).join('');
+    host.querySelectorAll('[data-revoke]').forEach((b) => b.onclick = async () => {
+      b.disabled = true;
+      try { await Api.post(`/auth/keys/${b.dataset.revoke}/revoke`); await renderKeyList(ov); }
+      catch (e) { b.disabled = false; toast('revoke failed', true); }
+    });
   }
 
   async function saveSettings(ov) {
@@ -2526,6 +2548,10 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
       yellow_threshold_pct: +ov.querySelector('#m-yel').value || 40,
       week_start: +ov.querySelector('#m-wkstart').value,
       default_view: ov.querySelector('#m-defview').value,
+      day_start_min: (() => {
+        const [h, m] = (ov.querySelector('#m-daystart')?.value || '08:00').split(':').map(Number);
+        return h * 60 + m;
+      })(),
       theme: ov.querySelector('#m-theme').value,
       accent: ov.querySelector('#m-accent .swatch.sel')?.dataset.c || '#3D7DFF',
       density: +ov.querySelector('#m-density').value,
