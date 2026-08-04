@@ -21,7 +21,7 @@ class TestVectorStore(unittest.TestCase):
         self.assertEqual(cfg["vector_size"], 1024)
         self.assertEqual(cfg["embedding_model"], "test-embed")
 
-    def test_memory_layers_keep_okf_visible(self):
+    def test_memory_layers_okf_ready(self):
         with patch("app.vector_store.get_qdrant_health", return_value={
             "layer": "qdrant",
             "status": "missing_collection",
@@ -41,7 +41,7 @@ class TestVectorStore(unittest.TestCase):
         self.assertIn("rag", ids)
         self.assertIn("okf", ids)
         okf = next(layer for layer in layers["layers"] if layer["id"] == "okf")
-        self.assertEqual(okf["status"], "planned")
+        self.assertEqual(okf["status"], "ready")
 
     def test_memory_layers_rag_ready_only_when_all_layers_ready(self):
         ready = {"status": "ready"}
@@ -97,6 +97,21 @@ class TestVectorStore(unittest.TestCase):
     def test_search_chunks_returns_empty_on_failure(self):
         with patch("app.embedding_client.embed_text", side_effect=RuntimeError("down")):
             self.assertEqual(search_chunks("query", [1, 2]), [])
+
+    def test_search_chunks_maps_query_points_response(self):
+        # qdrant-client >=1.10 exposes query_points() (returning a .points list),
+        # not the old search() method — this pins that contract.
+        point = MagicMock(id=99, score=0.87, payload={"chunk_id": 7, "source_id": 1})
+        mock_response = MagicMock(points=[point])
+        mock_client = MagicMock()
+        mock_client.query_points.return_value = mock_response
+
+        with patch("app.vector_store._client", return_value=mock_client), \
+             patch("app.embedding_client.embed_text", return_value=[0.1, 0.2]):
+            results = search_chunks("query", [1])
+
+        mock_client.query_points.assert_called_once()
+        self.assertEqual(results, [{"chunk_id": 7, "source_id": 1, "score": 0.87}])
 
 
 if __name__ == "__main__":

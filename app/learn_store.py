@@ -508,6 +508,12 @@ def get_lesson_tree(session: Session, lesson_id: int) -> dict[str, Any] | None:
     }
 
 
+def get_lesson_for_node(session: Session, node_id: int) -> dict[str, Any] | None:
+    """Read-only lookup — unlike get_or_create_lesson_for_node, never creates a lesson."""
+    lesson = session.exec(select(LearningLesson).where(LearningLesson.node_id == node_id)).first()
+    return get_lesson_tree(session, lesson.id) if lesson else None  # type: ignore[arg-type]
+
+
 def get_or_create_lesson_for_node(session: Session, node_id: int) -> dict[str, Any] | None:
     node = session.get(LearningNode, node_id)
     if not node:

@@ -186,12 +186,13 @@ def search_chunks(query_text: str, source_ids: list[int], top_k: int = 6) -> lis
         vector = embed_text(query_text)
         cfg = qdrant_config()
         client = _client()
-        hits = client.search(
+        response = client.query_points(
             collection_name=cfg["collection"],
-            query_vector=vector,
+            query=vector,
             query_filter=Filter(must=[FieldCondition(key="source_id", match=MatchAny(any=source_ids))]),
             limit=top_k,
         )
+        hits = response.points
         return [
             {
                 "chunk_id": (hit.payload or {}).get("chunk_id", hit.id),
@@ -249,8 +250,8 @@ def get_memory_layers() -> dict[str, Any]:
             {
                 "id": "okf",
                 "label": "OKF Memory Layer",
-                "status": "planned",
-                "description": "Portable curated memory export/import layer for high-value H.I.V.E. knowledge. Tracked now so we do not forget it.",
+                "status": "ready",
+                "description": "Portable curated memory export/import for a course — download a course as a bundle, or import one back in.",
             },
         ],
     }

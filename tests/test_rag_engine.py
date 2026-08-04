@@ -6,7 +6,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from app.chunk_store import create_source_chunk
 from app.learn_store import create_track_from_spec, get_lesson_tree, get_or_create_lesson_for_node
 from app.models import LearningNode
-from app.rag_engine import _validate_blocks, gather_context, generate_lesson_blocks
+from app.rag_engine import _validate_blocks, gather_context, generate_lesson_blocks, search_track
 from app.source_store import create_source, link_source_to_track
 
 
@@ -102,6 +102,40 @@ class TestRagEngine(unittest.TestCase):
 
     def test_validate_blocks_returns_empty_for_non_list(self):
         self.assertEqual(_validate_blocks(None, "Topic"), [])
+
+    def test_validate_blocks_drops_ordered_relation_without_items(self):
+        raw = [{"block_type": "ordered_relation", "payload": {"items": ["only one"]}}]
+        self.assertEqual(_validate_blocks(raw, "Topic"), [])
+
+    def test_validate_blocks_keeps_valid_ordered_relation(self):
+        raw = [{"block_type": "ordered_relation", "payload": {"prompt": "Order these", "items": ["first", "second"]}}]
+        cleaned = _validate_blocks(raw, "Topic")
+        types = [b["block_type"] for b in cleaned]
+        self.assertIn("ordered_relation", types)
+
+    def test_search_track_returns_empty_without_linked_sources(self):
+        tree = create_track_from_spec(self.session, {"track_title": "Python Course", "modules": ["Basics"]})
+        self.assertEqual(search_track(self.session, tree["id"], "variables"), [])
+
+    def test_search_track_returns_empty_for_blank_query(self):
+        tree = create_track_from_spec(self.session, {"track_title": "Python Course", "modules": ["Basics"]})
+        source = create_source(self.session, {"title": "Notes", "source_type": "text", "body_text": "x"})
+        link_source_to_track(self.session, tree["id"], source["id"], "primary")
+        self.assertEqual(search_track(self.session, tree["id"], "   "), [])
+
+    def test_search_track_maps_hits_to_chunk_details(self):
+        tree = create_track_from_spec(self.session, {"track_title": "Python Course", "modules": ["Basics"]})
+        source = create_source(self.session, {"title": "Notes", "source_type": "text", "body_text": "x"})
+        link_source_to_track(self.session, tree["id"], source["id"], "primary")
+        chunk = create_source_chunk(self.session, {"source_id": source["id"], "position": 1, "heading": "Intro", "body_text": "Variables store references."})
+
+        with patch("app.vector_store.search_chunks", return_value=[{"chunk_id": chunk["id"], "source_id": source["id"], "score": 0.9}]):
+            results = search_track(self.session, tree["id"], "what is a variable")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["heading"], "Intro")
+        self.assertEqual(results[0]["source_title"], "Notes")
+        self.assertEqual(results[0]["score"], 0.9)
 
 
 if __name__ == "__main__":

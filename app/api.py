@@ -457,6 +457,32 @@ def create_learning_block(lesson_id: int, payload: LessonBlockIn, session: Sessi
     return lesson
 
 
+@learn_router.get("/tracks/{track_id}/search", summary="Semantic search over a course's indexed sources")
+def search_learning_track(track_id: int, q: str = "", session: Session = Depends(get_session)):
+    from app.rag_engine import search_track
+    return {"results": search_track(session, track_id, q)}
+
+
+@learn_router.get("/tracks/{track_id}/okf/export", summary="Export a course as a portable OKF bundle")
+def export_learning_track_okf(track_id: int, session: Session = Depends(get_session)):
+    from app.okf import export_filename, export_track_okf
+    bundle = export_track_okf(session, track_id)
+    if not bundle:
+        raise HTTPException(404, "track_not_found")
+    return {"filename": export_filename(bundle), "json": bundle}
+
+
+@learn_router.post("/okf/import", status_code=201, summary="Import a portable OKF bundle as a new course")
+def import_learning_track_okf(payload: dict, session: Session = Depends(get_session)):
+    from app.okf import import_track_okf
+    try:
+        return import_track_okf(session, payload)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"okf_import_failed: {e}")
+
+
 # ---- engine context helper -------------------------------------------------- #
 def engine_ctx(session: Session):
     st = session.get(Settings, 1) or Settings(id=1)

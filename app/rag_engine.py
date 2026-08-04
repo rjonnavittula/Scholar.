@@ -59,6 +59,47 @@ def gather_context(session: Session, node: LearningNode) -> dict[str, Any]:
     return {"chunks": ordered[:8], "track": track, "module": module}
 
 
+def search_track(session: Session, track_id: int, query: str, top_k: int = 10) -> list[dict[str, Any]]:
+    """Semantic search over a track's indexed chunks, for direct learner use.
+
+    Returns [] whenever there's nothing to search or Qdrant/embeddings are
+    unavailable — same no-raise contract as search_chunks itself.
+    """
+    from app.chunk_store import list_source_chunks
+    from app.source_store import list_track_sources
+    from app.vector_store import search_chunks
+
+    if not (query or "").strip():
+        return []
+
+    linked = list_track_sources(session, track_id) or []
+    source_ids = [int(item["id"]) for item in linked]
+    if not source_ids:
+        return []
+    source_title_by_id = {int(item["id"]): item["title"] for item in linked}
+
+    chunk_by_id: dict[int, dict[str, Any]] = {}
+    for source_id in source_ids:
+        for chunk in list_source_chunks(session, source_id) or []:
+            chunk_by_id[chunk["id"]] = chunk
+
+    hits = search_chunks(query, source_ids, top_k=top_k)
+    results: list[dict[str, Any]] = []
+    for hit in hits:
+        chunk = chunk_by_id.get(hit.get("chunk_id"))
+        if not chunk:
+            continue
+        results.append({
+            "chunk_id": chunk["id"],
+            "source_id": chunk["source_id"],
+            "source_title": source_title_by_id.get(chunk["source_id"], ""),
+            "heading": chunk["heading"],
+            "snippet": chunk["body_text"][:280],
+            "score": hit.get("score"),
+        })
+    return results
+
+
 def _validate_blocks(raw_blocks: Any, topic: str) -> list[dict[str, Any]]:
     from app.learn_store import ALLOWED_BLOCK_TYPES
 
@@ -84,6 +125,10 @@ def _validate_blocks(raw_blocks: Any, topic: str) -> list[dict[str, Any]]:
             if not isinstance(options, list) or len(options) < 2:
                 continue
             if not isinstance(correct, int) or not (0 <= correct < len(options)):
+                continue
+        if block_type == "ordered_relation":
+            items = payload.get("items")
+            if not isinstance(items, list) or len(items) < 2:
                 continue
 
         confidence_raw = item.get("confidence")
@@ -148,8 +193,11 @@ def generate_lesson_blocks(session: Session, node_id: int) -> dict[str, Any] | N
         '"source_refs" (list of the chunk ids you used), "confidence" (0-1 float). '
         'Include 3-6 blocks: at least one explanation ("definition" or "text"), one '
         '"quiz" block whose payload has "question", "options" (list of strings) and '
-        '"correct_index" (integer index into options), and one "recall_prompt" asking '
-        "the learner to explain the topic before moving on."
+        '"correct_index" (integer index into options), one "recall_prompt" asking '
+        "the learner to explain the topic before moving on, and optionally one "
+        '"ordered_relation" block whose payload has "prompt" and "items" (a list of '
+        "steps/stages already given in their correct order — the learner will see them "
+        "shuffled and has to put them back in this order)."
     )
     user_prompt = (
         f"Course: {context['track'].title if context['track'] else ''}\n"
