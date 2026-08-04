@@ -500,6 +500,85 @@ def import_learning_track_okf(payload: dict, session: Session = Depends(get_sess
         raise HTTPException(502, f"okf_import_failed: {e}")
 
 
+# ---- tutor mode ---------------------------------------------------------------#
+@learn_router.get("/tutor/presets", summary="Curated tutor persona presets")
+def list_tutor_presets():
+    from app.tutor_presets import list_presets
+    return list_presets()
+
+
+@learn_router.post("/tracks/{track_id}/tutor/generate-prompt", summary="Expand a description into a tutor system prompt (preview, not saved)")
+def generate_tutor_system_prompt(track_id: int, payload: dict, session: Session = Depends(get_session)):
+    from app.models import LearningTrack
+    from app.tutor_engine import generate_tutor_prompt
+    if not session.get(LearningTrack, track_id):
+        raise HTTPException(404, "track_not_found")
+    try:
+        return {"system_prompt": generate_tutor_prompt(payload.get("describe", ""))}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, f"generation_failed: {e}")
+
+
+@learn_router.post("/tracks/{track_id}/tutor/enable", summary="Enable tutor mode with a final system prompt")
+def enable_track_tutor(track_id: int, payload: dict, session: Session = Depends(get_session)):
+    from app.tutor_store import enable_tutor
+    try:
+        result = enable_tutor(session, track_id, payload.get("system_prompt", ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if result is None:
+        raise HTTPException(404, "track_not_found")
+    return result
+
+
+@learn_router.post("/tracks/{track_id}/tutor/disable", summary="Disable tutor mode (keeps history)")
+def disable_track_tutor(track_id: int, session: Session = Depends(get_session)):
+    from app.tutor_store import disable_tutor
+    result = disable_tutor(session, track_id)
+    if result is None:
+        raise HTTPException(404, "track_not_found")
+    return result
+
+
+@learn_router.get("/tracks/{track_id}/tutor/messages", summary="List a track's tutor conversation")
+def list_track_tutor_messages(track_id: int, session: Session = Depends(get_session)):
+    from app.tutor_store import list_messages
+    messages = list_messages(session, track_id)
+    if messages is None:
+        raise HTTPException(404, "track_not_found")
+    return messages
+
+
+@learn_router.delete("/tracks/{track_id}/tutor/messages", status_code=204, summary="Clear a track's tutor conversation")
+def clear_track_tutor_messages(track_id: int, session: Session = Depends(get_session)):
+    from app.tutor_store import clear_messages
+    if not clear_messages(session, track_id):
+        raise HTTPException(404, "track_not_found")
+    return None
+
+
+@learn_router.post("/tracks/{track_id}/tutor/messages", summary="Send a message, stream the tutor's reply")
+def send_track_tutor_message(track_id: int, payload: dict, session: Session = Depends(get_session)):
+    from fastapi.responses import StreamingResponse
+    from app.models import LearningTrack
+    from app.tutor_engine import run_tutor_turn
+
+    content = (payload.get("content") or "").strip()
+    if not content:
+        raise HTTPException(400, "content_required")
+    if not session.get(LearningTrack, track_id):
+        raise HTTPException(404, "track_not_found")
+
+    def _events():
+        import json as _json
+        for event in run_tutor_turn(track_id, content):
+            yield _json.dumps(event) + "\n"
+
+    return StreamingResponse(_events(), media_type="application/x-ndjson")
+
+
 # ---- engine context helper -------------------------------------------------- #
 def engine_ctx(session: Session):
     st = session.get(Settings, 1) or Settings(id=1)

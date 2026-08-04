@@ -186,8 +186,19 @@ class LearningTrack(SQLModel, table=True):
     role: str = ""
     source_hash: str = Field(default="", index=True)
     status: str = "draft"   # draft | active | archived
+    tutor_enabled: bool = False
+    tutor_system_prompt: str = ""
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class TutorMessage(SQLModel, table=True):
+    """One turn in a track's tutor conversation. role: system | user | assistant | tool."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    track_id: int = Field(foreign_key="learningtrack.id", index=True)
+    role: str = "user"
+    content: str = ""
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class LearningSource(SQLModel, table=True):

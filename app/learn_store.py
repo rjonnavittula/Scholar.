@@ -12,7 +12,9 @@ from typing import Any
 from sqlalchemy import delete, func
 from sqlmodel import Session, select
 
-from app.models import LearningBlock, LearningLesson, LearningModule, LearningNode, LearningTrack, LearningTrackSource
+from app.models import (
+    LearningBlock, LearningLesson, LearningModule, LearningNode, LearningTrack, LearningTrackSource, TutorMessage,
+)
 
 
 def _clean_title(value: object, fallback: str) -> str:
@@ -45,6 +47,7 @@ def _track_summary(session: Session, track: LearningTrack) -> dict[str, Any]:
         "role": track.role or None,
         "source_hash": track.source_hash,
         "status": track.status,
+        "tutor_enabled": track.tutor_enabled,
         **_progress_from_modules(modules),
         "module_titles": [module.title for module in modules[:4]],
         "created_at": track.created_at.isoformat(),
@@ -141,6 +144,8 @@ def get_track_tree(session: Session, track_id: int) -> dict[str, Any] | None:
         "role": track.role or None,
         "source_hash": track.source_hash,
         "status": track.status,
+        "tutor_enabled": track.tutor_enabled,
+        "tutor_system_prompt": track.tutor_system_prompt,
         **_progress_from_modules(modules),
         "created_at": track.created_at.isoformat(),
         "updated_at": track.updated_at.isoformat(),
@@ -277,6 +282,7 @@ def delete_track(session: Session, track_id: int) -> bool:
         session.exec(delete(LearningModule).where(LearningModule.id.in_(module_ids)))
 
     session.exec(delete(LearningTrackSource).where(LearningTrackSource.track_id == track_id))
+    session.exec(delete(TutorMessage).where(TutorMessage.track_id == track_id))
 
     session.delete(track)
     session.commit()
