@@ -232,22 +232,23 @@
     $('btn-add-activity').onclick = () => activityModal();
     $('btn-canvas-cfg').onclick = () => canvasModal();
     $('btn-canvas-sync').onclick = syncCanvas;
-    $('btn-settings').onclick = () => settingsModal();
-    const themeBtn = $('btn-theme');
-    if (themeBtn) {
-      const paintThemeIcon = () => { themeBtn.textContent = (S.settings.theme === 'light') ? '☀' : '☽'; };
+    for (const b of document.querySelectorAll('#btn-settings, #btn-settings-mobile')) b.onclick = () => settingsModal();
+    const themeBtns = [...document.querySelectorAll('#btn-theme, #btn-theme-mobile')];
+    if (themeBtns.length) {
+      const paintThemeIcon = () => { for (const b of themeBtns) b.textContent = (S.settings.theme === 'light') ? '☀' : '☽'; };
       paintThemeIcon();
-      themeBtn.onclick = async () => {
+      const onThemeClick = async () => {
         const next = (S.settings.theme === 'light') ? 'dark' : 'light';
         S.settings.theme = next;
         applyTheme(); paintThemeIcon();
         try { await Api.put('/config/settings', { theme: next }); } catch (e) {}
       };
+      for (const b of themeBtns) b.onclick = onThemeClick;
     }
-    document.querySelector('[data-view="insights"]').onclick = (e) => showView('insights', e.currentTarget);
-    document.querySelector('[data-view="home"]').onclick = (e) => showView('home', e.currentTarget);
-    const learnBtn = document.querySelector('[data-view="learn"]');
-    if (learnBtn) learnBtn.onclick = (e) => showView('learn', e.currentTarget);
+    // Both the rail and the mobile bottom nav share these data-view buttons.
+    for (const b of document.querySelectorAll('[data-view="insights"]')) b.onclick = (e) => showView('insights', e.currentTarget);
+    for (const b of document.querySelectorAll('[data-view="home"]')) b.onclick = (e) => showView('home', e.currentTarget);
+    for (const b of document.querySelectorAll('[data-view="learn"]')) b.onclick = (e) => showView('learn', e.currentTarget);
   }
 
 
@@ -1836,7 +1837,9 @@
   ];
 
   function showView(name, btn, tab) {
-    for (const b of document.querySelectorAll('.rail-btn[data-view]')) b.classList.toggle('active', b === btn);
+    // Match by view name, not element identity, so the rail and the mobile
+    // bottom nav (two separate elements per view) both reflect the active view.
+    for (const b of document.querySelectorAll('[data-view]')) b.classList.toggle('active', b.dataset.view === name);
     const insights = name === 'insights';
     const learn = name === 'learn';
     const home = !insights && !learn;

@@ -1,44 +1,51 @@
-/* scholar. — one shared skin: Brilliant-inspired, used everywhere (Courses included) */
+/* scholar. — one shared skin: navy/coral/teal/cream, used everywhere (Courses included) */
 :root {
   /* structural (theme-independent) */
-  --serif:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --serif:'Baloo 2',Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  --serif-weight:800;
+  --serif-weight:700;
   --pill:999px; --r:12px;
-  --radius-sm:12px; --radius-md:16px; --radius-lg:22px;
+  --radius-sm:12px; --radius-md:16px; --radius-lg:22px; --radius-xl:28px;
   --blur:14px;
   --hourH:46px; --gutter:52px; --calHeadH:74px; --calPadTop:10px;
   --fontscale:1; --density:1;
   --col-left:218px; --col-right:300px;   /* live widths (animated to 0 on collapse) */
+  /* fixed brand navy for the rail/bottom pill nav — same in both themes, not user-toggled */
+  --nav-navy:#1E2B4A; --nav-navy-deep:#16213A; --nav-fg:#F5F2EA;
 }
-/* light (default) — soft off-white + indigo, shared with Courses */
+/* light (default) — cream-white + navy text, coral/teal accents, shared with Courses */
 :root, body.theme-light {
-  --bg:#F6F5FB; --elev:#FFFFFF; --input:#EEECF7; --raise:#FAF9FF;
-  --fg:#1C1D2B; --muted:#6B6F88; --faint:#9296AB;
-  --line:rgba(91,95,239,.10); --line-mid:rgba(91,95,239,.16);
-  --green:#16A34A; --yellow:#F59E0B; --red:#E6484F; --sleep:#E9E9EC;
-  --accent:#5B5FEF; --accent-soft:rgba(91,95,239,.14);
-  --accent-rgb:91,95,239; --green-rgb:22,163,74; --yellow-rgb:245,158,11; --red-rgb:230,72,79;
+  --bg:#FBF8F3; --elev:#FFFFFF; --input:#F3EEE4; --raise:#FFFFFF;
+  --fg:#1E2B4A; --muted:#6B7488; --faint:#9BA3B8;
+  --line:rgba(30,43,74,.10); --line-mid:rgba(30,43,74,.16);
+  --green:#16A34A; --yellow:#F59E0B; --red:#E6484F; --sleep:#ECE7DC;
+  --accent:#F3907A; --accent-soft:rgba(243,144,122,.16);
+  --accent-rgb:243,144,122; --green-rgb:22,163,74; --yellow-rgb:245,158,11; --red-rgb:230,72,79;
+  --accent-2:#2F7E8C; --accent-2-soft:rgba(47,126,140,.14); --accent-2-rgb:47,126,140;
+  --highlight:#F0DEC3; --highlight-rgb:240,222,195;
   --legend-plan:#8E8E93;
-  --shadow-sm:0 1px 3px rgba(30,32,60,.06), 0 4px 12px rgba(30,32,60,.05);
-  --shadow-md:0 6px 18px rgba(30,32,60,.08), 0 16px 40px rgba(30,32,60,.08);
-  --shadow-lg:0 20px 50px rgba(30,32,60,.10), 0 30px 80px rgba(30,32,60,.10);
-  --scrim:rgba(20,20,32,.42);
-  --chrome-bg:rgba(255,255,255,.72);
+  --shadow-sm:0 1px 3px rgba(30,43,74,.07), 0 4px 12px rgba(30,43,74,.05);
+  --shadow-md:0 6px 18px rgba(30,43,74,.09), 0 16px 40px rgba(30,43,74,.08);
+  --shadow-lg:0 20px 50px rgba(30,43,74,.11), 0 30px 80px rgba(30,43,74,.10);
+  --scrim:rgba(20,24,40,.42);
+  --chrome-bg:rgba(255,255,255,.78);
 }
-/* dark — shared with Courses' dark palette */
+/* dark — navy page/chrome, coral/teal accents, shared with Courses' dark palette */
 body.theme-dark {
-  --bg:#15151F; --elev:#1D1E2C; --input:#0F0F18; --raise:#252739;
-  --fg:#F1F1F7; --muted:#9598B0; --faint:#71738C;
-  --line:rgba(130,133,255,.12); --line-mid:rgba(130,133,255,.18);
-  --green:#4ADE80; --yellow:#FBBF24; --red:#F87171; --sleep:#0A0A0C;
-  --accent:#8285FF; --accent-soft:rgba(130,133,255,.20);
-  --accent-rgb:130,133,255; --green-rgb:74,222,128; --yellow-rgb:251,191,36; --red-rgb:248,113,113;
+  --bg:#182544; --elev:#22314F; --input:#141D33; --raise:#2B3C60;
+  --fg:#F5F2EA; --muted:#B7BDD0; --faint:#8890A6;
+  --line:rgba(180,190,215,.14); --line-mid:rgba(180,190,215,.22);
+  --green:#4ADE80; --yellow:#FBBF24; --red:#F87171; --sleep:#0F1728;
+  --accent:#F3907A; --accent-soft:rgba(243,144,122,.20);
+  --accent-rgb:243,144,122; --green-rgb:74,222,128; --yellow-rgb:251,191,36; --red-rgb:248,113,113;
+  --accent-2:#4FB3C4; --accent-2-soft:rgba(79,179,196,.20); --accent-2-rgb:79,179,196;
+  --highlight:#F0DEC3; --highlight-rgb:240,222,195;
+  --legend-plan:#9BA3B8;
   --shadow-sm:0 1px 3px rgba(0,0,0,.35), 0 4px 14px rgba(0,0,0,.30);
   --shadow-md:0 6px 20px rgba(0,0,0,.38), 0 16px 40px rgba(0,0,0,.34);
   --shadow-lg:0 20px 50px rgba(0,0,0,.35), 0 30px 80px rgba(0,0,0,.45);
-  --scrim:rgba(0,0,0,.55);
-  --chrome-bg:rgba(29,30,44,.72);
+  --scrim:rgba(10,14,26,.6);
+  --chrome-bg:rgba(24,37,68,.78);
 }
 * { box-sizing:border-box; }
 html,body { height:100%; }
@@ -428,7 +435,7 @@ input:focus, select:focus { outline:none; border-color:var(--accent); }
 #collapse-left { left:0; }
 body.no-left  { --col-left:0px; }
 body.no-right { --col-right:0px; }
-.sidebar, .panel { overflow:hidden; transition:opacity .2s ease; }
+.sidebar, .panel { overflow:hidden; min-width:0; transition:opacity .2s ease; }
 body.no-left .sidebar, body.no-right .panel { opacity:0; pointer-events:none; }
 
 /* v4c animations */
@@ -1179,28 +1186,32 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 
 /* === v28: Courses tokens now alias the shared global palette (one system, not two) === */
 :root{
-  --f-bg:var(--bg); --f-bg-rgb:246,245,251; --f-bg-sunken:var(--input);
-  --f-surface:var(--elev); --f-surface-hover:#f2f1fb; --f-surface-raised:var(--raise);
-  --f-ink:var(--fg); --f-ink-soft:#3d3f57; --f-muted:var(--muted); --f-faint:var(--faint);
+  --f-bg:var(--bg); --f-bg-rgb:251,248,243; --f-bg-sunken:var(--input);
+  --f-surface:var(--elev); --f-surface-hover:#f3eee4; --f-surface-raised:var(--raise);
+  --f-ink:var(--fg); --f-ink-soft:#3d4a63; --f-muted:var(--muted); --f-faint:var(--faint);
   --f-accent:var(--accent); --f-accent-rgb:var(--accent-rgb); --f-accent-ink:#ffffff;
+  --f-accent-2:var(--accent-2); --f-accent-2-rgb:var(--accent-2-rgb);
+  --f-highlight:var(--highlight); --f-highlight-rgb:var(--highlight-rgb);
   --f-success:var(--green); --f-success-rgb:var(--green-rgb);
   --f-danger:var(--red); --f-danger-rgb:var(--red-rgb); --f-danger-hover:#c93b41;
   --f-amber:var(--yellow); --f-amber-rgb:var(--yellow-rgb);
-  --f-cat-programming:#5b5fef; --f-cat-programming-rgb:91,95,239;
-  --f-cat-medical:#e0578a; --f-cat-medical-rgb:224,87,138;
+  --f-cat-programming:var(--accent-2); --f-cat-programming-rgb:var(--accent-2-rgb);
+  --f-cat-medical:var(--accent); --f-cat-medical-rgb:var(--accent-rgb);
   --f-cat-general:#16a34a; --f-cat-general-rgb:22,163,74;
   --f-shadow:var(--shadow-md); --f-shadow-lg:var(--shadow-lg);
 }
 body.theme-dark{
-  --f-bg:var(--bg); --f-bg-rgb:21,21,31; --f-bg-sunken:var(--input);
-  --f-surface:var(--elev); --f-surface-hover:#242539; --f-surface-raised:var(--raise);
-  --f-ink:var(--fg); --f-ink-soft:#c9cadb; --f-muted:var(--muted); --f-faint:var(--faint);
-  --f-accent:var(--accent); --f-accent-rgb:var(--accent-rgb); --f-accent-ink:#0f0f18;
+  --f-bg:var(--bg); --f-bg-rgb:24,37,68; --f-bg-sunken:var(--input);
+  --f-surface:var(--elev); --f-surface-hover:#2b3c60; --f-surface-raised:var(--raise);
+  --f-ink:var(--fg); --f-ink-soft:#d6dbe8; --f-muted:var(--muted); --f-faint:var(--faint);
+  --f-accent:var(--accent); --f-accent-rgb:var(--accent-rgb); --f-accent-ink:#182544;
+  --f-accent-2:var(--accent-2); --f-accent-2-rgb:var(--accent-2-rgb);
+  --f-highlight:var(--highlight); --f-highlight-rgb:var(--highlight-rgb);
   --f-success:var(--green); --f-success-rgb:var(--green-rgb);
   --f-danger:var(--red); --f-danger-rgb:var(--red-rgb); --f-danger-hover:#fb9a9a;
   --f-amber:var(--yellow); --f-amber-rgb:var(--yellow-rgb);
-  --f-cat-programming:#8285ff; --f-cat-programming-rgb:130,133,255;
-  --f-cat-medical:#f472b6; --f-cat-medical-rgb:244,114,182;
+  --f-cat-programming:var(--accent-2); --f-cat-programming-rgb:var(--accent-2-rgb);
+  --f-cat-medical:var(--accent); --f-cat-medical-rgb:var(--accent-rgb);
   --f-cat-general:#4ade80; --f-cat-general-rgb:74,222,128;
   --f-shadow:var(--shadow-md); --f-shadow-lg:var(--shadow-lg);
 }
@@ -1632,3 +1643,64 @@ body.theme-dark{
 .tutor-composer textarea:focus{ border-color:rgba(var(--f-accent-rgb),.45); }
 .tutor-composer button{ border:0; background:var(--f-accent); color:var(--f-accent-ink,#fff); border-radius:14px; padding:12px 22px; font-weight:600; cursor:pointer; transition:opacity .2s; }
 .tutor-composer button:disabled{ opacity:.5; cursor:default; }
+
+/* === v35: navy/coral/teal/cream re-theme — pill nav, progress, cards === */
+
+/* -- desktop rail -> floating pill dock, fixed navy brand color -- */
+.rail{
+  background:var(--nav-navy) !important; border-right:0 !important;
+  backdrop-filter:none !important; -webkit-backdrop-filter:none !important;
+  margin:16px 4px 16px 6px; border-radius:var(--pill); box-shadow:var(--shadow-lg);
+  padding:14px 4px; gap:8px; height:calc(100% - 32px);
+}
+.rail-logo{ color:var(--nav-fg); font-size:18px; }
+.rail-btn{ width:32px; height:32px; color:rgba(245,242,234,.55); }
+.rail-btn:hover{ background:rgba(255,255,255,.10) !important; color:var(--nav-fg) !important; }
+.rail-btn.active{
+  background:var(--accent) !important; color:var(--nav-navy-deep) !important;
+  box-shadow:0 6px 14px rgba(var(--accent-rgb),.55); transform:scale(1.1);
+}
+
+/* -- mobile bottom pill nav (hidden on desktop, shown under the existing 1000px breakpoint) -- */
+.bottom-nav{
+  display:none; position:fixed; left:50%; bottom:16px; transform:translateX(-50%);
+  z-index:60; background:var(--nav-navy); border-radius:var(--pill); box-shadow:var(--shadow-lg);
+  padding:10px 14px; align-items:center; gap:6px;
+}
+.bn-btn{
+  width:38px; height:38px; border:0; border-radius:50%; background:transparent;
+  color:rgba(245,242,234,.6); font-size:16px; cursor:pointer; transition:background .16s,color .16s,transform .16s;
+}
+.bn-btn:hover{ background:rgba(255,255,255,.10); color:var(--nav-fg); }
+.bn-btn.active{ background:rgba(255,255,255,.10); color:var(--nav-fg); }
+.bn-home{
+  width:52px; height:52px; margin-top:-22px; background:var(--accent); color:var(--nav-navy-deep);
+  box-shadow:0 8px 18px rgba(var(--accent-rgb),.55); font-size:20px;
+}
+.bn-home:hover, .bn-home.active{ background:var(--accent); color:var(--nav-navy-deep); transform:scale(1.06); }
+@media (max-width:1000px){
+  .rail{ display:none; }
+  .bottom-nav{ display:flex; }
+  .app{ grid-template-columns:0 0 1fr 0 !important; }
+  .sidebar, .panel{ width:0 !important; padding:0 !important; border:0 !important; }
+}
+
+/* -- progress bars: rounder + teal secondary accent on the forge mastery meter -- */
+.rw-bar{ border-radius:var(--pill); }
+.rw-fill{ border-radius:var(--pill); }
+.an-tbar, .an-tbar > span{ border-radius:var(--pill); }
+.cu-bar, .cu-fill{ border-radius:var(--pill); }
+.forge-focus-meter i{ background:var(--f-accent-2); }
+
+/* -- pill checklist rows -- */
+.sub-row{ border-radius:var(--pill); padding:8px 14px; background:var(--input); }
+.sub-row.timing{ background:var(--accent-soft); }
+
+/* -- hero cards: generous rounding + soft blob accent -- */
+.tcard, .modal, .forge-course-card{ border-radius:var(--radius-xl) !important; }
+.forge-course-card::before{
+  border-radius:var(--radius-xl) var(--radius-xl) 0 0;
+  background:radial-gradient(120% 180% at 15% 0%, rgba(var(--f-accent-2-rgb),.55), transparent 60%),
+             radial-gradient(120% 180% at 85% 0%, rgba(var(--f-accent-rgb),.55), transparent 60%),
+             var(--f-cat);
+}
