@@ -65,12 +65,21 @@ window.HiveCourses = (() => {
   function activateCourseWorkspace(el) {
     if (el) el.classList.add('forge-active');
     const body = document.body;
+    if (!body) return;
+    let changed = false;
     const rightToggle = document.getElementById('collapse-right');
-    if (body && !body.classList.contains('no-right')) {
+    if (!body.classList.contains('no-right')) {
       body.classList.add('no-right');
       if (rightToggle) rightToggle.textContent = '‹';
-      window.dispatchEvent(new Event('resize'));
+      changed = true;
     }
+    const leftToggle = document.getElementById('collapse-left');
+    if (!body.classList.contains('no-left')) {
+      body.classList.add('no-left');
+      if (leftToggle) leftToggle.textContent = '›';
+      changed = true;
+    }
+    if (changed) window.dispatchEvent(new Event('resize'));
   }
 
   const icons = {
