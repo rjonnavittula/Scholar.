@@ -65,9 +65,10 @@ button.primary { background:var(--accent-soft); border-color:var(--accent); colo
 button.ghost { background:transparent; border-color:var(--line); }
 button.small-btn { padding:3px 10px; font-size:11px; margin-top:6px; }
 .link-btn { background:none; border:none; padding:0; color:var(--accent); font-size:11px; }
-input, select { font:inherit; color:var(--fg); background:var(--input);
+input, select, textarea { font:inherit; color:var(--fg); background:var(--input);
   border:1px solid var(--line); border-radius:var(--pill); padding:7px 12px; }
-input:focus, select:focus { outline:none; border-color:var(--accent); }
+textarea { border-radius:var(--radius-sm); }
+input:focus, select:focus, textarea:focus { outline:none; border-color:var(--accent-2); }
 ::selection { background:var(--accent-soft); }
 * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
 *:hover { scrollbar-color: var(--line-mid) transparent; }
