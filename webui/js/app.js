@@ -267,6 +267,49 @@
     });
   }
 
+  // Groups activity rows by name+color alone (not time) - one entry per
+  // uniquely-named activity, with per-day time variation surfaced as
+  // "clusters" (byTime) rather than fragmenting into separate groups. The
+  // largest cluster is promoted to the group's own start_min/end_min as the
+  // "base" time, for callers that just want a single representative time.
+  // Exposed on window so calendar.js's courseClassGroups() can share it -
+  // this used to be three separately-maintained copies of the same key.
+  function groupActivities(activities) {
+    const groups = {};
+    for (const a of activities) {
+      const k = `${a.title}|${a.color}`;
+      const g = (groups[k] ??= { title: a.title, color: a.color, course_id: a.course_id ?? null, ids: [], days: [], byTime: [] });
+      g.ids.push(a.id);
+      g.days.push(a.weekday);
+      let cluster = g.byTime.find((c) => c.start_min === a.start_min && c.end_min === a.end_min);
+      if (!cluster) { cluster = { start_min: a.start_min, end_min: a.end_min, days: [], ids: [] }; g.byTime.push(cluster); }
+      cluster.days.push(a.weekday);
+      cluster.ids.push(a.id);
+    }
+    return Object.values(groups).map((g) => {
+      g.byTime.sort((x, y) => y.days.length - x.days.length);
+      g.start_min = g.byTime[0].start_min;
+      g.end_min = g.byTime[0].end_min;
+      return g;
+    });
+  }
+  window.HiveActivityGroups = groupActivities;
+
+  const FULL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  function dayLabel(ds) {
+    const s = [...new Set(ds)].sort((a, b) => a - b);
+    if (s.length === 7) return 'Daily';
+    if (s.length === 5 && s.every((d, i) => d === i)) return 'Weekdays';
+    if (s.length === 2 && s[0] === 5 && s[1] === 6) return 'Weekends';
+    const contig = s.every((d, i) => i === 0 || d === s[i - 1] + 1);
+    if (contig && s.length >= 3) return `${FULL_DAYS[s[0]]}–${FULL_DAYS[s[s.length - 1]]}`;
+    return s.map((d) => FULL_DAYS[d]).join(' ');
+  }
+  function fmt12(m) { const h = Math.floor(m / 60); return `${((h + 11) % 12) + 1}:${pad(m % 60)} ${h < 12 ? 'AM' : 'PM'}`; }
+  function activitySubtitle(g) {
+    return g.byTime.map((c) => `${dayLabel(c.days)} · ${fmt12(c.start_min)}–${fmt12(c.end_min)}`).join(', ');
+  }
+
   function renderSidebar() {
     $('course-list').innerHTML = sortedCourses().map((c) => `
       <div class="side-item clickable" draggable="true" data-edit-course="${c.id}" data-cid="${c.id}">
@@ -277,25 +320,8 @@
       </div>`).join('') || '<p class="muted small">no courses yet</p>';
     wireCourseReorder();
 
-    const actGroups = {};
-    for (const a of S.activities) {
-      const k = `${a.title}|${a.start_min}|${a.end_min}|${a.color}`;
-      (actGroups[k] ??= { ...a, ids: [], days: [] });
-      actGroups[k].ids.push(a.id);
-      actGroups[k].days.push(a.weekday);
-    }
-    const FULL = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const dayLabel = (ds) => {
-      const s = [...new Set(ds)].sort((a, b) => a - b);
-      if (s.length === 7) return 'Daily';
-      if (s.length === 5 && s.every((d, i) => d === i)) return 'Weekdays';
-      if (s.length === 2 && s[0] === 5 && s[1] === 6) return 'Weekends';
-      const contig = s.every((d, i) => i === 0 || d === s[i - 1] + 1);
-      if (contig && s.length >= 3) return `${FULL[s[0]]}\u2013${FULL[s[s.length - 1]]}`;
-      return s.map((d) => FULL[d]).join(' ');
-    };
-    const fmt12 = (m) => { const h = Math.floor(m / 60); return `${((h + 11) % 12) + 1}:${pad(m % 60)} ${h < 12 ? 'AM' : 'PM'}`; };
-    $('activity-list').innerHTML = Object.values(actGroups)
+    const actGroups = groupActivities(S.activities);
+    $('activity-list').innerHTML = actGroups
       .sort((a, b) => Math.min(...a.days) - Math.min(...b.days) || a.start_min - b.start_min)
       .map((g) => `
       <div class="side-item act clickable" draggable="true" data-edit-act="${g.ids.join(',')}"
@@ -304,7 +330,7 @@
         <span class="dot" style="background:${g.color}"></span>
         <span class="side-txt">
           <span class="nm" title="${esc(g.title)}">${esc(g.title)}</span>
-          <span class="meta">${dayLabel(g.days)} \u00b7 ${fmt12(g.start_min)}\u2013${fmt12(g.end_min)}</span>
+          <span class="meta">${activitySubtitle(g)}</span>
         </span>
         <button class="x" data-del-act="${g.ids.join(',')}">\u2715</button>
       </div>`).join('') || '<p class="muted small">no activities yet</p>';
@@ -331,7 +357,10 @@
         if (c) courseModal(c); };
     for (const row of document.querySelectorAll('[data-edit-act]'))
       row.onclick = (e) => { if (e.target.closest('.x')) return;
-        activityModal({
+        // Look up the live group (not the dataset snapshot) so byTime is
+        // present - that's what lets the modal prefill per-day overrides.
+        const group = groupActivities(S.activities).find((g) => g.ids.join(',') === row.dataset.editAct);
+        activityModal(group || {
           ids: row.dataset.editAct.split(',').map(Number),
           title: row.dataset.title, color: row.dataset.color,
           days: row.dataset.days.split(',').map(Number),
@@ -883,13 +912,7 @@
   // activity block on the calendar opens the exact same edit view as
   // clicking its row in the sidebar.
   function activityGroupFor(a) {
-    const key = (x) => `${x.title}|${x.start_min}|${x.end_min}|${x.color}`;
-    const matches = S.activities.filter((x) => key(x) === key(a));
-    return {
-      ids: matches.map((x) => x.id), title: a.title, color: a.color,
-      days: matches.map((x) => x.weekday),
-      start_min: a.start_min, end_min: a.end_min, course_id: a.course_id ?? null,
-    };
+    return groupActivities(S.activities).find((g) => g.ids.includes(a.id));
   }
   function onActivityMenu(actId) {
     const a = S.activities.find((x) => x.id === actId);
@@ -1608,26 +1631,18 @@
 
   // ----- course class-time scheduling -----
   function courseClassGroups(course) {
-    const groups = {};
-    for (const a of S.activities.filter((x) => x.course_id === course.id)) {
-      const k = `${a.title}|${a.start_min}|${a.end_min}|${a.color}`;
-      (groups[k] ??= { ...a, ids: [], days: [] });
-      groups[k].ids.push(a.id);
-      groups[k].days.push(a.weekday);
-    }
-    return Object.values(groups).sort((a, b) => a.start_min - b.start_min);
+    return groupActivities(S.activities.filter((x) => x.course_id === course.id))
+      .sort((a, b) => a.start_min - b.start_min);
   }
 
   function courseScheduleModal(course) {
-    const ABBR = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const fmt12 = (m) => { const h = Math.floor(m / 60); return `${((h + 11) % 12) + 1}:${pad(m % 60)} ${h < 12 ? 'AM' : 'PM'}`; };
     const groups = courseClassGroups(course);
     const rows = groups.map((g) => `
       <div class="side-item clickable" data-gk="${g.ids.join(',')}">
         <span class="dot" style="background:${g.color}"></span>
         <span class="side-txt">
           <span class="nm">${esc(g.title)}</span>
-          <span class="meta">${g.days.slice().sort((a, b) => a - b).map((d) => ABBR[d]).join(' · ')} · ${fmt12(g.start_min)}–${fmt12(g.end_min)}</span>
+          <span class="meta">${activitySubtitle(g)}</span>
         </span>
       </div>`).join('') || '<p class="muted small">no class times scheduled yet — add one below.</p>';
     const { ov } = modal(`
@@ -1745,6 +1760,15 @@
       { key: 'workout', label: 'Workout', title: 'Workout', color: '#5F6B5A', s: '17:00', e: '18:00', days: [0, 2, 4] },
       { key: 'dinner',  label: 'Dinner',  title: 'Dinner',  color: '#7A5A4A', s: '18:30', e: '19:30', days: [0, 1, 2, 3, 4, 5, 6] },
     ];
+    // A day's own time only shows as an override when it differs from the
+    // group's base (largest-cluster) time - inheriting is the default, so
+    // uniform-time groups (the common case) prefill with no overrides at all.
+    const dayOverride = (i) => {
+      if (!existing) return null;
+      const cluster = existing.byTime?.find((c) => c.days.includes(i));
+      if (!cluster || (cluster.start_min === existing.start_min && cluster.end_min === existing.end_min)) return null;
+      return cluster;
+    };
     const initColor = existing?.color || courseCtx?.color || '#5F6B5A';
     const heading = courseCtx
       ? `${existing ? 'edit' : 'new'} class time · ${esc(courseCtx.name)}`
@@ -1755,7 +1779,15 @@
         <div class="apresets">${PRESETS.map((p) => `<button type="button" class="apz" data-p="${p.key}">${p.label}</button>`).join('')}<button type="button" class="apz" data-p="custom">Custom</button></div></div>`}
       <div class="frow"><label>title</label><input id="m-name" value="${esc(existing?.title || '')}" placeholder="${courseCtx ? 'Lecture, Lab, Discussion…' : 'CMPEN 331 lecture / lunch / workout'}" /></div>
       <div class="frow"><label>days</label>
-        <div class="daypick">${DAYS.map((d, i) => `<button data-d="${i}" class="${initDays.has(i) ? 'sel' : ''}">${d}</button>`).join('')}</div></div>
+        <div class="daypick">${DAYS.map((d, i) => { const ov = dayOverride(i); return `
+          <div class="daychip${initDays.has(i) ? ' show-ov' : ''}" data-d="${i}">
+            <button type="button" class="d-btn${initDays.has(i) ? ' sel' : ''}" data-d="${i}">${d}</button>
+            <button type="button" class="d-ov-toggle${ov ? ' on' : ''}" data-d="${i}" title="different time on ${d}?">±</button>
+            <span class="d-ov-times${ov ? ' show' : ''}">
+              <input type="time" class="d-ov-s" data-d="${i}" value="${ov ? minToHM(ov.start_min) : ''}" />
+              <input type="time" class="d-ov-e" data-d="${i}" value="${ov ? minToHM(ov.end_min) : ''}" />
+            </span>
+          </div>`; }).join('')}</div></div>
       <div class="frow">
         <div><label>start</label><input id="m-s" type="time" value="${existing ? minToHM(existing.start_min) : nowHM()}" /></div>
         <div><label>end</label><input id="m-e" type="time" value="${existing ? minToHM(existing.end_min) : plusHM(50)}" /></div>
@@ -1772,13 +1804,23 @@
           return toast('activity deleted');
         }
         if (act !== 'save') return;
-        const days = [...ovEl.querySelectorAll('.daypick button.sel')].map((b) => +b.dataset.d);
+        const days = [...ovEl.querySelectorAll('.daypick .d-btn.sel')].map((b) => +b.dataset.d);
         const s = hmToMin(ovEl.querySelector('#m-s').value);
         const e = hmToMin(ovEl.querySelector('#m-e').value);
         if (!days.length || e <= s) return toast('pick days and a valid time range', true);
         const title = ovEl.querySelector('#m-name').value.trim() || (courseCtx ? courseCtx.name : 'activity');
         const color = ovEl.querySelector('.swatch.sel')?.dataset.c || '#5F6B5A';
         const courseId = courseCtx?.id ?? existing?.course_id ?? null;
+        // A day with its override toggle on uses its own mini start/end
+        // instead of the shared time - "special ones here and there" that
+        // still belong to the same named activity, not a separate one.
+        const timeFor = (d) => {
+          const chip = ovEl.querySelector(`.daychip[data-d="${d}"]`);
+          if (!chip?.querySelector('.d-ov-toggle')?.classList.contains('on')) return { s, e };
+          const os = hmToMin(chip.querySelector('.d-ov-s').value);
+          const oe = hmToMin(chip.querySelector('.d-ov-e').value);
+          return (oe > os) ? { s: os, e: oe } : { s, e };
+        };
         // Update in place where a day is kept (same id, atomic PATCH — no
         // delete+recreate churn, and no window for a duplicate if this
         // ever fires twice), only delete days that were unchecked, only
@@ -1787,11 +1829,11 @@
           const idByDay = new Map(existing.days.map((d, i) => [d, existing.ids[i]]));
           const keep = new Set(days);
           await Promise.all(existing.days.filter((d) => !keep.has(d)).map((d) => Api.del('/activities/' + idByDay.get(d))));
-          await Promise.all(days.map((d) => idByDay.has(d)
-            ? Api.patch('/activities/' + idByDay.get(d), { title, color, start_min: s, end_min: e, course_id: courseId })
-            : Api.post('/activities', { title, color, weekday: d, start_min: s, end_min: e, course_id: courseId })));
+          await Promise.all(days.map((d) => { const t = timeFor(d); return idByDay.has(d)
+            ? Api.patch('/activities/' + idByDay.get(d), { title, color, start_min: t.s, end_min: t.e, course_id: courseId })
+            : Api.post('/activities', { title, color, weekday: d, start_min: t.s, end_min: t.e, course_id: courseId }); }));
         } else {
-          await Promise.all(days.map((d) => Api.post('/activities', { title, color, weekday: d, start_min: s, end_min: e, course_id: courseId })));
+          await Promise.all(days.map((d) => { const t = timeFor(d); return Api.post('/activities', { title, color, weekday: d, start_min: t.s, end_min: t.e, course_id: courseId }); }));
         }
         await loadAll();
         if (onDone) return onDone();
@@ -1807,7 +1849,7 @@
     const chip = ov.querySelector('#achip');
     const updatePreview = () => {
       const title = ov.querySelector('#m-name').value.trim() || 'activity';
-      const sel = [...ov.querySelectorAll('.daypick button.sel')].map((b) => +b.dataset.d).sort((a, b) => a - b);
+      const sel = [...ov.querySelectorAll('.daypick .d-btn.sel')].map((b) => +b.dataset.d).sort((a, b) => a - b);
       const dtxt = sel.length ? sel.map((d) => ABBR[d]).join(' · ') : 'pick days';
       const color = ov.querySelector('.swatch.sel')?.dataset.c || '#5F6B5A';
       chip.style.borderLeftColor = color;
@@ -1817,8 +1859,23 @@
 
     wireSwatches(ov);
     for (const sw of ov.querySelectorAll('.swatch')) sw.addEventListener('click', updatePreview);
-    for (const b of ov.querySelectorAll('.daypick button'))
-      b.onclick = () => { b.classList.toggle('sel'); updatePreview(); };
+    for (const b of ov.querySelectorAll('.daypick .d-btn'))
+      b.onclick = () => {
+        b.classList.toggle('sel');
+        b.closest('.daychip').classList.toggle('show-ov', b.classList.contains('sel'));
+        updatePreview();
+      };
+    for (const t of ov.querySelectorAll('.d-ov-toggle'))
+      t.onclick = () => {
+        t.classList.toggle('on');
+        const times = t.closest('.daychip').querySelector('.d-ov-times');
+        times.classList.toggle('show', t.classList.contains('on'));
+        if (t.classList.contains('on')) {
+          const [si, ei] = times.querySelectorAll('input');
+          if (!si.value) si.value = ov.querySelector('#m-s').value;
+          if (!ei.value) ei.value = ov.querySelector('#m-e').value;
+        }
+      };
     for (const id of ['m-name', 'm-s', 'm-e']) ov.querySelector('#' + id).addEventListener('input', updatePreview);
 
     for (const z of ov.querySelectorAll('.apz')) z.onclick = () => {
@@ -1827,7 +1884,11 @@
       if (!p) { ov.querySelector('#m-name').value = ''; ov.querySelector('#m-name').focus(); updatePreview(); return; }
       ov.querySelector('#m-name').value = p.title;
       ov.querySelector('#m-s').value = p.s; ov.querySelector('#m-e').value = p.e;
-      ov.querySelectorAll('.daypick button').forEach((b) => b.classList.toggle('sel', p.days.includes(+b.dataset.d)));
+      ov.querySelectorAll('.daychip').forEach((chip) => {
+        const on = p.days.includes(+chip.dataset.d);
+        chip.querySelector('.d-btn').classList.toggle('sel', on);
+        chip.classList.toggle('show-ov', on);
+      });
       ov.querySelectorAll('.swatch').forEach((sw) => sw.classList.toggle('sel', sw.dataset.c === p.color));
       updatePreview();
     };

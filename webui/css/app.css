@@ -321,8 +321,17 @@ input:focus, select:focus, textarea:focus { outline:none; border-color:var(--acc
 .swatch.sel { border-color:var(--fg); }
 .daypick { display:flex; gap:5px; flex-wrap:wrap; }
 .daypick button { padding:4px 10px; font-size:11px; }
-.daypick button.sel { background:var(--accent-soft); border-color:var(--accent);
+.daypick .d-btn.sel { background:var(--accent-soft); border-color:var(--accent);
   color:var(--accent); }
+/* per-day "different time?" override - hidden until that day is picked */
+.daychip { display:flex; flex-direction:column; align-items:center; gap:3px; }
+.daychip .d-ov-toggle { display:none; width:18px; height:18px; padding:0; font-size:10px;
+  line-height:1; border-radius:50%; opacity:.5; }
+.daychip.show-ov .d-ov-toggle { display:inline-flex; align-items:center; justify-content:center; }
+.daychip .d-ov-toggle.on { opacity:1; background:var(--accent-2-soft); border-color:var(--accent-2); color:var(--accent-2); }
+.d-ov-times { display:none; gap:3px; }
+.d-ov-times.show { display:flex; }
+.d-ov-times input[type="time"] { width:76px; padding:2px 3px; font-size:10px; }
 @media (max-width:1000px) {
   .app { --col-left:0px; --col-right:0px; grid-template-columns:48px 0 1fr 0; }
 }
