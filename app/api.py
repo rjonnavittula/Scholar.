@@ -754,6 +754,16 @@ def delete_task(tid: int, session: Session = Depends(get_session)):
 activities_router = APIRouter(prefix="/activities", tags=["activities"], dependencies=AUTH)
 
 
+class ActivityPatch(BaseModel):
+    title: Optional[str] = None
+    color: Optional[str] = None
+    weekday: Optional[int] = None
+    start_min: Optional[int] = None
+    end_min: Optional[int] = None
+    tz: Optional[str] = None
+    course_id: Optional[int] = None
+
+
 @activities_router.get("")
 def list_activities(session: Session = Depends(get_session)):
     return session.exec(select(Activity)).all()
@@ -761,6 +771,20 @@ def list_activities(session: Session = Depends(get_session)):
 
 @activities_router.post("", status_code=201)
 def create_activity(a: Activity, session: Session = Depends(get_session)):
+    if not (0 <= a.start_min < a.end_min <= 1440):
+        raise HTTPException(400, "bad_time_range")
+    session.add(a); session.commit(); session.refresh(a)
+    return a
+
+
+@activities_router.patch("/{aid}")
+def update_activity(aid: int, payload: ActivityPatch, session: Session = Depends(get_session)):
+    a = session.get(Activity, aid)
+    if not a:
+        raise HTTPException(404, "activity_not_found")
+    patch = payload.model_dump(exclude_unset=True)
+    for k, v in patch.items():
+        setattr(a, k, v)
     if not (0 <= a.start_min < a.end_min <= 1440):
         raise HTTPException(400, "bad_time_range")
     session.add(a); session.commit(); session.refresh(a)

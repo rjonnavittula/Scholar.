@@ -401,16 +401,24 @@
     try {
       if (act.ids.length === 1) {
         // dragging/resizing a single concrete occurrence directly on the
-        // calendar — this always replaces that exact occurrence (even a
-        // same-day move is just "retime it in place").
-        await Api.del('/activities/' + act.ids[0]);
+        // calendar — update it in place (same id, atomic PATCH), including
+        // a weekday change if it was dragged into a different column. No
+        // delete+recreate here: that pattern is what let a double-fired
+        // drag (or any retry) silently leave a duplicate behind, since
+        // DELETE on an already-gone id is a harmless no-op server-side.
+        await Api.patch('/activities/' + act.ids[0], { weekday, start_min: newStartMin, end_min: newEndMin });
       } else {
         // dragging the sidebar card for a multi-day group — only the one
-        // day you dropped on changes; every other day stays put.
+        // day you dropped on changes; every other day stays put. If that
+        // day already has an occurrence, patch it in place; only a
+        // genuinely new day (not yet in the pattern) needs a fresh row.
         const idx = act.days.indexOf(weekday);
-        if (idx !== -1) await Api.del('/activities/' + act.ids[idx]);
+        if (idx !== -1) {
+          await Api.patch('/activities/' + act.ids[idx], { start_min: newStartMin, end_min: newEndMin });
+        } else {
+          await Api.post('/activities', { title: act.title, color: act.color, weekday, start_min: newStartMin, end_min: newEndMin, course_id: act.course_id ?? null });
+        }
       }
-      await Api.post('/activities', { title: act.title, color: act.color, weekday, start_min: newStartMin, end_min: newEndMin, course_id: act.course_id ?? null });
       await loadAll();
       toast(`${act.title} · ${DAY_NAMES[weekday]} · ${minToHM(newStartMin)}–${minToHM(newEndMin)}`);
     } catch (e) { toast('could not place activity', true); loadAll(); }
@@ -1771,9 +1779,20 @@
         const title = ovEl.querySelector('#m-name').value.trim() || (courseCtx ? courseCtx.name : 'activity');
         const color = ovEl.querySelector('.swatch.sel')?.dataset.c || '#5F6B5A';
         const courseId = courseCtx?.id ?? existing?.course_id ?? null;
-        if (existing) await Promise.all(existing.ids.map((id) => Api.del('/activities/' + id)));
-        for (const d of days)
-          await Api.post('/activities', { title, color, weekday: d, start_min: s, end_min: e, course_id: courseId });
+        // Update in place where a day is kept (same id, atomic PATCH — no
+        // delete+recreate churn, and no window for a duplicate if this
+        // ever fires twice), only delete days that were unchecked, only
+        // create days that are newly checked.
+        if (existing) {
+          const idByDay = new Map(existing.days.map((d, i) => [d, existing.ids[i]]));
+          const keep = new Set(days);
+          await Promise.all(existing.days.filter((d) => !keep.has(d)).map((d) => Api.del('/activities/' + idByDay.get(d))));
+          await Promise.all(days.map((d) => idByDay.has(d)
+            ? Api.patch('/activities/' + idByDay.get(d), { title, color, start_min: s, end_min: e, course_id: courseId })
+            : Api.post('/activities', { title, color, weekday: d, start_min: s, end_min: e, course_id: courseId })));
+        } else {
+          await Promise.all(days.map((d) => Api.post('/activities', { title, color, weekday: d, start_min: s, end_min: e, course_id: courseId })));
+        }
         await loadAll();
         if (onDone) return onDone();
         toast(`${existing ? 'updated' : 'blocked'} \u00b7 ${title}`);
