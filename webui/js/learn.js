@@ -748,6 +748,7 @@ Module 4: Async Programming"></textarea>
       </div>
       <div class="forge-modal-actions"><button data-close-bottom>Cancel</button><button data-save>Create & Link</button></div>
     </div></div>`;
+    window.HiveEnhanceSelects && window.HiveEnhanceSelects(host);
 
     const close = () => { host.innerHTML = ''; };
     host.querySelector('[data-close]').onclick = close;

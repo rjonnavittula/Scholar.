@@ -206,6 +206,7 @@
       b.onclick = () => setCalView(b.dataset.view);
     const vn = document.getElementById('view-n');
     if (vn) vn.onchange = () => { if (vn.value) { S.viewN = +vn.value; setCalView('nextN'); } };
+    enhanceSelects(document);
     $('nav-today').onclick = () => { S.weekStart = mondayOf(new Date()); loadAll(); };
     $('nav-prev').onclick = () => { navBy(-1); };
     $('nav-next').onclick = () => { navBy(1); };
@@ -879,6 +880,7 @@
         </div>
       </div>`;
     const { ov } = modal(html);
+    enhanceSelects(ov);
     ov.querySelector('#pm-start').onclick = () => {
       const sel = ov.querySelector('#pomo-task');
       Pomo.start(+(sel && sel.value), sel && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : '');
@@ -1200,6 +1202,97 @@
                           s.classList.add('sel'); };
   }
 
+  // Native <select> popups can't be restyled with CSS (OS/browser chrome) -
+  // this wraps each one in a themed trigger+listbox that mirrors it exactly
+  // (value/selectedIndex/change events), so every existing call site that
+  // reads .value or listens for 'change' keeps working untouched, including
+  // ones that repopulate <option>s asynchronously (watched via MutationObserver).
+  function enhanceSelects(root) {
+    (root || document).querySelectorAll('select:not([data-enhanced])').forEach(enhanceSelect);
+  }
+  window.HiveEnhanceSelects = enhanceSelects;
+  function enhanceSelect(sel) {
+    sel.dataset.enhanced = '1';
+    sel.tabIndex = -1;
+    sel.classList.add('csel-native');
+    const wrap = document.createElement('span');
+    wrap.className = 'csel';
+    sel.parentNode.insertBefore(wrap, sel);
+    wrap.appendChild(sel);
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button'; trigger.className = 'csel-trigger';
+    const label = document.createElement('span');
+    label.className = 'csel-label';
+    trigger.appendChild(label);
+    wrap.appendChild(trigger);
+
+    // nested inside trigger (not a sibling) so .csel-trigger's position:relative
+    // actually anchors it - .csel is display:contents, so siblings here don't
+    // share a containing block and position:absolute falls back to the viewport.
+    const list = document.createElement('div');
+    list.className = 'csel-list'; list.hidden = true;
+    trigger.appendChild(list);
+
+    let hi = -1;
+    const highlightRow = () => {
+      list.querySelectorAll('.csel-opt').forEach((el, i) => el.classList.toggle('hi', i === hi));
+      list.children[hi]?.scrollIntoView({ block: 'nearest' });
+    };
+    const sync = () => {
+      label.textContent = sel.options[sel.selectedIndex]?.textContent || '';
+      trigger.disabled = sel.disabled;
+      list.innerHTML = [...sel.options].map((o, i) =>
+        `<div class="csel-opt${i === sel.selectedIndex ? ' sel' : ''}" data-i="${i}">${esc(o.textContent)}</div>`).join('');
+    };
+    const onOutside = (e) => { if (!wrap.contains(e.target)) close(); };
+    const open = () => {
+      sync(); list.hidden = false; wrap.classList.add('open'); trigger.focus();
+      hi = sel.selectedIndex; highlightRow();
+      document.addEventListener('pointerdown', onOutside, true);
+    };
+    const close = () => {
+      list.hidden = true; wrap.classList.remove('open');
+      document.removeEventListener('pointerdown', onOutside, true);
+    };
+    const pick = (i) => {
+      if (i < 0 || i >= sel.options.length) return;
+      sel.selectedIndex = i;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      sync(); close(); trigger.focus();
+    };
+
+    trigger.onclick = () => { if (sel.disabled) return; list.hidden ? open() : close(); };
+    trigger.onkeydown = (e) => {
+      if (sel.disabled) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (list.hidden) { open(); return; }
+        hi = Math.max(0, Math.min(sel.options.length - 1, hi + (e.key === 'ArrowDown' ? 1 : -1)));
+        highlightRow();
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        list.hidden ? open() : pick(hi);
+      } else if (e.key === 'Escape' && !list.hidden) {
+        // stop here so Escape closes just the dropdown, not the modal
+        // underneath it too - modal() has its own global Escape-to-close.
+        e.stopPropagation(); close();
+      }
+    };
+    list.addEventListener('click', (e) => {
+      e.stopPropagation(); // list is nested inside trigger for positioning; don't let this re-toggle trigger.onclick
+      const o = e.target.closest('.csel-opt'); if (o) pick(+o.dataset.i);
+    });
+    list.addEventListener('pointermove', (e) => {
+      const o = e.target.closest('.csel-opt');
+      if (o) { hi = +o.dataset.i; highlightRow(); }
+    });
+
+    new MutationObserver(sync).observe(sel, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
+    sel.addEventListener('change', sync);
+    sync();
+  }
+
   function taskModal(t) {
     const isNew = !t;
     const subs = (t?.subtasks || []);
@@ -1270,6 +1363,7 @@
         <p class="muted small">save the task first to add subtasks.</p>
         ${ACTIONS('save')}`, saveHandler);
       initTzPicker(ov, dueTz);
+      enhanceSelects(ov);
       if (!rolled) wireStepper(ov.querySelector('#m-need'));
       ov.querySelector('#m-title').focus();
       return;
@@ -1337,6 +1431,7 @@
       ov.querySelector('#m-due-t').value = Api.fmtInZone(t.due_at, dueTz, { hour: '2-digit', minute: '2-digit', hour12: false });
     }
     initTzPicker(ov, dueTz);
+    enhanceSelects(ov);
     if (!rolled) wireStepper(ov.querySelector('#m-need'));
 
     // work-zone stopwatch follows whichever family member is timing
@@ -1964,6 +2059,7 @@
       </div>
       <div class="an-body" id="an-body"><p class="muted small">loading\u2026</p></div>`;
     el.querySelector('.an-range').onchange = (e) => { anRange = e.target.value; if (anMode === 'future') loadFuture(); else loadPast(); };
+    enhanceSelects(el);
     const ex = el.querySelector('#an-export');
     if (ex) ex.onclick = async () => {
       try {
@@ -2593,6 +2689,7 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
     wireSwatches(ov);
     wireAwake(ov);
     await initSettingsTz(ov);
+    enhanceSelects(ov);
 
     const mk = ov.querySelector('#m-newkey');
     if (mk) mk.onclick = async () => {
