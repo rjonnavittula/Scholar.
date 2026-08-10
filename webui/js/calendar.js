@@ -50,6 +50,7 @@ const Cal = (() => {
   function setView(v, n) { VIEW = v; if (n) VIEWN = n; }
 
   function render() {
+    closeDayPopover();
     if (VIEW === 'month') return renderMonth();
     return renderWeek();
   }
@@ -63,25 +64,128 @@ const Cal = (() => {
     const dows = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const order = [...Array(7)].map((_, i) => dows[(i + ws) % 7]);
     let html = '<div class="month-head">' + order.map((d) => `<div>${d}</div>`).join('') + '</div>';
-    html += '<div class="month-grid">';
+    html += '<div class="month-grid mgrid-in">';
     for (let i = 0; i < 42; i++) {
       const d = new Date(gridStart); d.setDate(gridStart.getDate() + i);
       const iso = isoOf(d);
+      const wd = (d.getDay() + 6) % 7;
       const dim = d.getMonth() !== first.getMonth() ? 'dim' : '';
       const today = iso === S.todayIso ? 'today' : '';
-      const due = S.tasks.filter((t) => t.status !== 'done' && t.due_at &&
-        dayInSchool(t.due_at) === iso);
-      html += `<div class="month-cell ${dim} ${today}"><div class="dom"><span>${d.getDate()}</span></div>` +
-        due.slice(0, 3).map((t) => `<div class="mev"><span class="due">●</span> ${esc(t.title)}</div>`).join('') +
-        (due.length > 3 ? `<div class="mev">+${due.length - 3} more</div>` : '') + '</div>';
+      const items = dayItems(iso, wd);
+      const shown = items.slice(0, 3);
+      html += `<div class="month-cell ${dim} ${today}" data-iso="${iso}" data-wd="${wd}">
+        <div class="dom"><span>${d.getDate()}</span></div>
+        <div class="mev-list">${shown.map(pillHtml).join('')}</div>
+        ${items.length > 3 ? `<div class="mev-more" data-iso="${iso}">+${items.length - 3} more</div>` : ''}
+      </div>`;
     }
     html += '</div>';
     root.innerHTML = html;
+    wireMonth();
   }
 
   function dayInSchool(iso) {
     const z = (S.settings && S.settings.school_tz) || 'America/New_York';
     return zoneDay(iso, z);
+  }
+
+  // ---------- month view: real content (activities/planned/due), not just due-flags ----------
+  function dayItems(iso, wd) {
+    const items = [];
+    for (const a of S.activities.filter((x) => x.weekday === wd)) {
+      items.push({ kind: 'activity', id: a.id, title: a.title, color: a.color, notes: a.notes,
+        start_min: a.start_min, sub: `${minToHM(a.start_min)}–${minToHM(a.end_min)}` });
+    }
+    for (const p of S.planned.filter((x) => zoneDay(x.start_at, tz().home) === iso)) {
+      const t = taskOf(p.task_id) || {};
+      const c = courseOf(t);
+      const sMin = zoneMin(p.start_at, tz().home);
+      const eMin = zoneMin(p.end_at, tz().home) || 1440;
+      items.push({ kind: 'planned', id: p.id, title: t.title || '?', color: c?.color || '#5B5FEF', notes: t.notes,
+        start_min: sMin, sub: `${minToHM(sMin)}–${minToHM(eMin)}` });
+    }
+    for (const t of S.tasks.filter((x) => x.status !== 'done' && x.due_at && dayInSchool(x.due_at) === iso)) {
+      const c = courseOf(t);
+      const m = zoneMin(t.due_at, tz().school);
+      items.push({ kind: 'due', id: t.id, title: t.title, color: c?.color || '#8E8E93', notes: t.notes,
+        start_min: m, sub: `due ${minToHM(m)}` });
+    }
+    return items.sort((x, y) => x.start_min - y.start_min);
+  }
+
+  function pillHtml(it) {
+    return `<div class="mev mev-${it.kind}" data-kind="${it.kind}" data-id="${it.id}"
+      style="background:${hexA(it.color, 0.16)};border-color:${hexA(it.color, 0.4)}">
+      <span class="dot" style="background:${it.color}"></span><span class="tt">${esc(it.title)}</span></div>`;
+  }
+
+  function openItem(kind, id) {
+    if (kind === 'activity') H.onActivityMenu(id);
+    else if (kind === 'planned') { const b = S.planned.find((p) => p.id === id); if (b) H.onBlockMenu(b); }
+    else if (kind === 'due') H.onTaskMenu(id);
+  }
+
+  function wireMonth() {
+    const grid = root.querySelector('.month-grid');
+    if (!grid) return;
+    grid.addEventListener('click', (e) => {
+      const pill = e.target.closest('.mev');
+      if (pill) { openItem(pill.dataset.kind, +pill.dataset.id); return; }
+      const cell = e.target.closest('.month-cell');
+      if (cell) openDayPopover(cell);
+    });
+  }
+
+  // ---------- month view: day popover (agenda + quick add) ----------
+  let dayPop = null;
+  function closeDayPopover() {
+    if (dayPop) { dayPop.remove(); dayPop = null; }
+    document.removeEventListener('pointerdown', onDayPopOutside, true);
+    document.removeEventListener('keydown', onDayPopKey, true);
+  }
+  function onDayPopOutside(e) { if (dayPop && !dayPop.contains(e.target)) closeDayPopover(); }
+  function onDayPopKey(e) { if (e.key === 'Escape') closeDayPopover(); }
+
+  function openDayPopover(cellEl) {
+    closeDayPopover();
+    const iso = cellEl.dataset.iso, wd = +cellEl.dataset.wd;
+    const items = dayItems(iso, wd);
+    const heading = new Date(iso + 'T00:00').toLocaleDateString(undefined,
+      { weekday: 'long', month: 'long', day: 'numeric' });
+    const pop = document.createElement('div');
+    pop.className = 'day-pop';
+    pop.innerHTML = `
+      <div class="day-pop-head">${heading}</div>
+      <div class="day-pop-list">${items.length ? items.map((it) => `
+        <div class="day-pop-row" data-kind="${it.kind}" data-id="${it.id}">
+          <span class="dot" style="background:${it.color}"></span>
+          <span class="dp-txt"><b>${esc(it.title)}</b><span class="dp-sub">${esc(it.sub)}</span></span>
+        </div>`).join('') : '<p class="muted small">nothing scheduled</p>'}</div>
+      <div class="day-pop-actions">
+        <button type="button" class="ghost" data-add="task">+ add task</button>
+        <button type="button" class="ghost" data-add="activity">+ add activity</button>
+      </div>`;
+    document.body.appendChild(pop);
+    dayPop = pop;
+
+    pop.querySelectorAll('.day-pop-row').forEach((row) => {
+      row.onclick = () => { closeDayPopover(); openItem(row.dataset.kind, +row.dataset.id); };
+    });
+    pop.querySelector('[data-add="task"]').onclick = () => { closeDayPopover(); H.onNewTask(iso); };
+    pop.querySelector('[data-add="activity"]').onclick = () => { closeDayPopover(); H.onNewActivity(wd); };
+
+    // anchor under the clicked cell; flip left/up rather than overflow the viewport
+    const r = cellEl.getBoundingClientRect();
+    const pr = pop.getBoundingClientRect();
+    let top = r.bottom + 6, left = r.left;
+    if (left + pr.width > window.innerWidth - 8) left = window.innerWidth - pr.width - 8;
+    if (top + pr.height > window.innerHeight - 8) top = r.top - pr.height - 6;
+    top = Math.max(8, top); left = Math.max(8, left);
+    pop.style.top = top + 'px';
+    pop.style.left = left + 'px';
+
+    document.addEventListener('pointerdown', onDayPopOutside, true);
+    document.addEventListener('keydown', onDayPopKey, true);
   }
 
   function renderWeek() {

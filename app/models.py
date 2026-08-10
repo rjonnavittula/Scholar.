@@ -85,6 +85,7 @@ class Activity(SQLModel, table=True):
     end_min: int
     tz: Optional[str] = None          # IANA zone; None = use home_tz
     course_id: Optional[int] = Field(default=None, foreign_key="course.id")
+    notes: str = ""
 
 
 class PlannedBlock(SQLModel, table=True):

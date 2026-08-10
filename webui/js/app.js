@@ -49,7 +49,7 @@
     try { await Api.get('/config/settings'); } catch (e) { return showGate(); }
     $('gate').classList.add('hidden');
     $('app').classList.remove('hidden');
-    Cal.mount($('calendar'), S, { onPlan, onMovePlanned, onBlockMenu, onMoveActivity, onActivityMenu });
+    Cal.mount($('calendar'), S, { onPlan, onMovePlanned, onBlockMenu, onMoveActivity, onActivityMenu, onTaskMenu, onNewTask, onNewActivity });
     Panel.mount($('task-groups'), S, { onTaskAction, onPlanQuick, onTaskEdit });
     wireChrome();
     await loadAll();
@@ -343,10 +343,11 @@
     $('btn-canvas-sync').classList.toggle('hidden', !S.canvas.configured);
 
     for (const b of document.querySelectorAll('[data-del-course]'))
-      b.onclick = async () => { if (confirm('Delete course (and keep its tasks)?'))
+      b.onclick = async () => { if (await confirmModal('Delete course (and keep its tasks)?'))
         { await Api.del('/courses/' + b.dataset.delCourse); loadAll(); } };
     for (const b of document.querySelectorAll('[data-del-act]'))
       b.onclick = async () => {
+        if (!await confirmModal('Delete this activity?')) return;
         const ids = b.dataset.delAct.split(',');
         await Promise.all(ids.map((id) => Api.del('/activities/' + id)));
         loadAll();
@@ -922,6 +923,12 @@
     const course = a.course_id ? S.courses.find((c) => c.id === a.course_id) : null;
     activityModal(activityGroupFor(a), course ? { courseCtx: course } : undefined);
   }
+  function onTaskMenu(taskId) {
+    const t = S.tasks.find((x) => x.id === taskId);
+    if (t) taskModal(t);
+  }
+  function onNewTask(dateIso) { taskModal(null, dateIso); }
+  function onNewActivity(weekday) { activityModal(null, { prefillWeekday: weekday }); }
 
   // The timer modal reflects the GLOBAL timer. It shows what you're timing
   // (task or subtask, with its parent), logs on stop, and completing is separate.
@@ -1190,6 +1197,44 @@
        <button class="ghost" data-m="cancel">cancel</button>
        <button class="primary" data-m="${saveAttr}">${saveLabel}</button></div>`;
 
+  // Styled replacement for the browser's native confirm() - resolves true
+  // only on the explicit confirm click, false on every dismissal path
+  // (cancel/Escape/overlay-click). modal()'s own cancel button short-circuits
+  // past onAction entirely, so a MutationObserver on #modal-root (fires once
+  // the dialog actually leaves the DOM, no matter which path closed it) is
+  // what makes every dismissal path resolve false, not just the button.
+  // Its own overlay layer (not #modal-root) so it stacks ON TOP of whatever
+  // modal is already open (e.g. confirming delete from inside activityModal)
+  // instead of wiping it out - modal() always does a full #modal-root
+  // replace, which would destroy the parent modal's DOM out from under it.
+  function confirmModal(message, confirmLabel = 'delete') {
+    return new Promise((resolve) => {
+      let done = false;
+      const wrap = document.createElement('div');
+      wrap.className = 'overlay confirm-overlay';
+      wrap.innerHTML = `<div class="modal confirm-modal">
+        <p class="confirm-msg">${esc(message)}</p>
+        <div class="actions"><span class="spacer"></span>
+          <button class="ghost" data-m="cancel">cancel</button>
+          <button class="primary danger-btn" data-m="ok">${esc(confirmLabel)}</button>
+        </div>
+      </div>`;
+      document.body.appendChild(wrap);
+      const onKey = (e) => { if (e.key === 'Escape') finish(false); };
+      function finish(v) {
+        if (done) return;
+        done = true;
+        wrap.remove();
+        document.removeEventListener('keydown', onKey);
+        resolve(v);
+      }
+      wrap.addEventListener('click', (e) => { if (e.target === wrap) finish(false); });
+      wrap.querySelector('[data-m="cancel"]').onclick = () => finish(false);
+      wrap.querySelector('[data-m="ok"]').onclick = () => finish(true);
+      document.addEventListener('keydown', onKey);
+    });
+  }
+
 
   function swatchHtml(sel) {
     return `<div class="swatches">${PALETTE.map((c) =>
@@ -1293,7 +1338,7 @@
     sync();
   }
 
-  function taskModal(t) {
+  function taskModal(t, prefillDate) {
     const isNew = !t;
     const subs = (t?.subtasks || []);
     const rolled = subs.length > 0;
@@ -1364,6 +1409,7 @@
         ${ACTIONS('save')}`, saveHandler);
       initTzPicker(ov, dueTz);
       enhanceSelects(ov);
+      if (prefillDate) ov.querySelector('#m-due-d').value = prefillDate;
       if (!rolled) wireStepper(ov.querySelector('#m-need'));
       ov.querySelector('#m-title').focus();
       return;
@@ -1524,7 +1570,7 @@
       await Api.patch('/tasks/' + t.id, { status: 'done' }); await loadAll(); close();
     };
     ov.querySelector('#rw-trash').onclick = async () => {
-      if (!confirm('Delete task?')) return;
+      if (!await confirmModal('Delete task?')) return;
       await Api.del('/tasks/' + t.id); await loadAll(); close();
     };
   }
@@ -1697,10 +1743,9 @@
       <div class="frow"><label>credits</label><input id="m-cr" type="number" min="0" max="12" step="0.5" value="${course?.credits ?? ''}" placeholder="3" /></div>
       <div class="frow"><label>color</label>${swatchHtml(sel)}</div>
       <div class="frow"><label>notes</label><textarea id="m-notes" rows="3" placeholder="office hours, policies, reading sources…">${esc(course?.notes || '')}</textarea></div>
-      ${course ? '<div class="actions left"><button class="ghost danger-btn" data-m="del">delete</button><button class="ghost" id="m-grades" type="button">grades…</button><button class="ghost" id="m-schedule" type="button">class times…</button></div>' : ''}
+      ${course ? '<div class="actions left"><button class="ghost danger-btn" id="m-del-course" type="button">delete</button><button class="ghost" id="m-grades" type="button">grades…</button><button class="ghost" id="m-schedule" type="button">class times…</button></div>' : ''}
       ${ACTIONS(course ? 'save' : 'add')}`,
       async (act, ov) => {
-        if (act === 'del') { await Api.del('/courses/' + course.id); await loadAll(); return toast('course deleted'); }
         if (act !== 'save') return;
         const nm = ov.querySelector('#m-name').value.trim() || 'course';
         const color = ov.querySelector('.swatch.sel')?.dataset.c || PALETTE[0];
@@ -1721,6 +1766,12 @@
     if (gb) gb.onclick = () => gradesModal(course);
     const sb = m.ov.querySelector('#m-schedule');
     if (sb) sb.onclick = () => courseScheduleModal(course);
+    const db = m.ov.querySelector('#m-del-course');
+    if (db) db.onclick = async () => {
+      if (!await confirmModal('Delete course (and keep its tasks)?')) return;
+      await Api.del('/courses/' + course.id); await loadAll(); m.close();
+      toast('course deleted');
+    };
     wireSwatches($('modal-root'));
   }
 
@@ -1847,8 +1898,8 @@
   }
 
   function activityModal(existing, opts) {
-    const { courseCtx, onDone } = opts || {};
-    const initDays = new Set(existing?.days || []);
+    const { courseCtx, onDone, prefillWeekday } = opts || {};
+    const initDays = new Set(existing?.days || (prefillWeekday != null ? [prefillWeekday] : []));
     const PRESETS = [
       { key: 'class',   label: 'Class',   title: 'Class',   color: '#56646E', s: '10:00', e: '10:50', days: [] },
       { key: 'lunch',   label: 'Lunch',   title: 'Lunch',   color: '#B59B5B', s: '12:00', e: '13:00', days: [0, 1, 2, 3, 4] },
@@ -1868,7 +1919,7 @@
     const heading = courseCtx
       ? `${existing ? 'edit' : 'new'} class time · ${esc(courseCtx.name)}`
       : `${existing ? 'edit activity' : 'new activity'}`;
-    const { ov } = modal(`
+    const { ov, close } = modal(`
       <h2>${heading}</h2>
       ${existing || courseCtx ? '' : `<div class="frow"><label>start from a preset</label>
         <div class="apresets">${PRESETS.map((p) => `<button type="button" class="apz" data-p="${p.key}">${p.label}</button>`).join('')}<button type="button" class="apz" data-p="custom">Custom</button></div></div>`}
@@ -1888,16 +1939,11 @@
         <div><label>end</label><input id="m-e" type="time" value="${existing ? minToHM(existing.end_min) : plusHM(50)}" /></div>
       </div>
       <div class="frow"><label>color</label>${swatchHtml(initColor)}</div>
+      <div class="frow"><label>notes</label><textarea id="m-anotes" rows="2" placeholder="details, location, links…">${esc(existing?.notes || '')}</textarea></div>
       <div class="apreview"><div class="apl">PREVIEW · how it lands on your week</div><div class="achip" id="achip"></div></div>
-      ${existing ? '<div class="actions left"><button class="ghost danger-btn" data-m="del">delete</button></div>' : ''}
+      ${existing ? '<div class="actions left"><button class="ghost danger-btn" id="m-del-activity" type="button">delete</button></div>' : ''}
       ${ACTIONS(existing ? 'save' : (courseCtx ? 'add class time' : 'block it'))}`,
       async (act, ovEl) => {
-        if (act === 'del') {
-          await Promise.all((existing.ids).map((id) => Api.del('/activities/' + id)));
-          await loadAll();
-          if (onDone) return onDone();
-          return toast('activity deleted');
-        }
         if (act !== 'save') return;
         const days = [...ovEl.querySelectorAll('.daypick .d-btn.sel')].map((b) => +b.dataset.d);
         const s = hmToMin(ovEl.querySelector('#m-s').value);
@@ -1905,6 +1951,7 @@
         if (!days.length || e <= s) return toast('pick days and a valid time range', true);
         const title = ovEl.querySelector('#m-name').value.trim() || (courseCtx ? courseCtx.name : 'activity');
         const color = ovEl.querySelector('.swatch.sel')?.dataset.c || '#5F6B5A';
+        const notes = ovEl.querySelector('#m-anotes').value;
         const courseId = courseCtx?.id ?? existing?.course_id ?? null;
         // A day with its override toggle on uses its own mini start/end
         // instead of the shared time - "special ones here and there" that
@@ -1925,10 +1972,10 @@
           const keep = new Set(days);
           await Promise.all(existing.days.filter((d) => !keep.has(d)).map((d) => Api.del('/activities/' + idByDay.get(d))));
           await Promise.all(days.map((d) => { const t = timeFor(d); return idByDay.has(d)
-            ? Api.patch('/activities/' + idByDay.get(d), { title, color, start_min: t.s, end_min: t.e, course_id: courseId })
-            : Api.post('/activities', { title, color, weekday: d, start_min: t.s, end_min: t.e, course_id: courseId }); }));
+            ? Api.patch('/activities/' + idByDay.get(d), { title, color, notes, start_min: t.s, end_min: t.e, course_id: courseId })
+            : Api.post('/activities', { title, color, notes, weekday: d, start_min: t.s, end_min: t.e, course_id: courseId }); }));
         } else {
-          await Promise.all(days.map((d) => { const t = timeFor(d); return Api.post('/activities', { title, color, weekday: d, start_min: t.s, end_min: t.e, course_id: courseId }); }));
+          await Promise.all(days.map((d) => { const t = timeFor(d); return Api.post('/activities', { title, color, notes, weekday: d, start_min: t.s, end_min: t.e, course_id: courseId }); }));
         }
         await loadAll();
         if (onDone) return onDone();
@@ -1952,6 +1999,15 @@
       chip.innerHTML = `<b>${esc(title)}</b><span>${dtxt} \u00b7 ${fmt12(ov.querySelector('#m-s').value)}\u2013${fmt12(ov.querySelector('#m-e').value)}</span>`;
     };
 
+    const delBtn = ov.querySelector('#m-del-activity');
+    if (delBtn) delBtn.onclick = async () => {
+      if (!await confirmModal('Delete this activity?')) return;
+      await Promise.all(existing.ids.map((id) => Api.del('/activities/' + id)));
+      await loadAll();
+      close();
+      if (onDone) return onDone();
+      toast('activity deleted');
+    };
     wireSwatches(ov);
     for (const sw of ov.querySelectorAll('.swatch')) sw.addEventListener('click', updatePreview);
     for (const b of ov.querySelectorAll('.daypick .d-btn'))

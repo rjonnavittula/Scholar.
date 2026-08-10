@@ -623,8 +623,15 @@ def update_course(cid: int, body: dict, session: Session = Depends(get_session))
 @courses_router.delete("/{cid}", status_code=204)
 def delete_course(cid: int, session: Session = Depends(get_session)):
     c = session.get(Course, cid)
-    if c:
-        session.delete(c); session.commit()
+    if not c:
+        return
+    # "delete course, keep its tasks" - null out the FK on everything that
+    # references this course first, or the delete hits a FK violation.
+    for t in session.exec(select(Task).where(Task.course_id == cid)):
+        t.course_id = None; session.add(t)
+    for a in session.exec(select(Activity).where(Activity.course_id == cid)):
+        a.course_id = None; session.add(a)
+    session.delete(c); session.commit()
 
 
 # ---- tasks ------------------------------------------------------------------#
@@ -762,6 +769,7 @@ class ActivityPatch(BaseModel):
     end_min: Optional[int] = None
     tz: Optional[str] = None
     course_id: Optional[int] = None
+    notes: Optional[str] = None
 
 
 @activities_router.get("")
