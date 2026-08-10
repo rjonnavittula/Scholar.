@@ -222,7 +222,6 @@ const Cal = (() => {
       const [as, ae] = a.awake || [480, 1410];
       html += `<div class="sleep" style="top:0;height:${hPx(as)}px"></div>`;
       html += `<div class="sleep" style="top:${y(ae)}px;height:${hPx(1440 - ae)}px"></div>`;
-      html += `<div class="awake-tint" style="top:${y(as)}px;height:${hPx(ae - as)}px"></div>`;
 
       // activities for this weekday
       const wd = (d.getDay() + 6) % 7;
