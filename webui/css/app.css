@@ -281,6 +281,7 @@ input:focus, select:focus, textarea:focus { outline:none; border-color:var(--acc
 .panel-tools { display:flex; gap:6px; margin:10px 0 12px; }
 .ptool { width:36px; height:30px; background:var(--input); border:1px solid var(--line);
   border-radius:9px; color:var(--muted); cursor:pointer; font-size:14px;
+  display:flex; align-items:center; justify-content:center; padding:0; line-height:1;
   transition:background .15s ease, color .15s ease, border-color .15s ease; }
 .ptool:hover { color:var(--fg); border-color:var(--accent); }
 .ptool.busy { animation:spin .8s linear infinite; pointer-events:none; }
@@ -292,6 +293,7 @@ input:focus, select:focus, textarea:focus { outline:none; border-color:var(--acc
 .pp-sec { display:flex; flex-direction:column; gap:6px; padding:6px 2px; }
 .pp-sec + .pp-sec { border-top:1px solid var(--line); margin-top:2px; }
 .pp-sec label { font-size:12px; color:var(--fg); display:flex; gap:8px; align-items:center; cursor:pointer; }
+.pp-sec input[type=radio] { accent-color:var(--accent); width:14px; height:14px; margin:0; flex:0 0 auto; }
 .pp-keys .sk { text-align:left; background:none; border:none; color:var(--muted);
   padding:6px 8px; border-radius:7px; font-size:12px; cursor:pointer; }
 .pp-keys .sk:hover { background:var(--input); color:var(--fg); }
