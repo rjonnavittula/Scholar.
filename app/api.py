@@ -977,7 +977,9 @@ def get_term(session: Session = Depends(get_session)):
 @config_router.put("/term")
 def put_term(body: dict, session: Session = Depends(get_session)):
     term = session.exec(select(Term)).first() or Term()
-    for k in ("name", "classes_start", "classes_end", "exam_end"):
+    if "name" in body and body["name"] is not None:
+        term.name = body["name"]
+    for k in ("classes_start", "classes_end", "exam_end"):
         if k in body:
             v = body[k]
             setattr(term, k, date.fromisoformat(v) if isinstance(v, str) and v else (v or None))
@@ -985,8 +987,14 @@ def put_term(body: dict, session: Session = Depends(get_session)):
     return {"ok": True}
 
 
+class HolidayIn(BaseModel):
+    day: date
+    name: str = ""
+
+
 @config_router.post("/holidays", status_code=201)
-def add_holiday(h: Holiday, session: Session = Depends(get_session)):
+def add_holiday(payload: HolidayIn, session: Session = Depends(get_session)):
+    h = Holiday(**payload.model_dump())
     session.add(h); session.commit(); session.refresh(h)
     return h
 
