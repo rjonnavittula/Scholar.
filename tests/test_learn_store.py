@@ -131,6 +131,17 @@ class TestLearnStore(unittest.TestCase):
         self.assertTrue(delete_track(self.session, tree["id"]))
         self.assertIsNone(get_track_tree(self.session, tree["id"]))
 
+    def test_delete_track_with_dynamic_tools_does_not_violate_fk(self):
+        from app.tutor_store import enable_tutor, upsert_dynamic_tool
+
+        tree = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})
+        enable_tutor(self.session, tree["id"], "You are a tutor.")
+        upsert_dynamic_tool(self.session, tree["id"], "double", "doubles a number",
+                             "def double(n):\n    return n * 2", "{}")
+
+        self.assertTrue(delete_track(self.session, tree["id"]))
+        self.assertIsNone(get_track_tree(self.session, tree["id"]))
+
     def test_get_or_create_lesson_for_node_builds_starter_blocks(self):
         tree = create_track_from_spec(self.session, {
             "track_title": "Anatomy",

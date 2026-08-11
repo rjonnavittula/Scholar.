@@ -213,6 +213,176 @@ class TestTutorEngine(unittest.TestCase):
         text = "".join(e["content"] for e in events if e["type"] == "text_delta")
         self.assertEqual(text, "never mind.")
 
+    # ---- run_tutor_turn: dynamic tool authoring (Phase 4) ----
+
+    def test_tools_for_track_includes_base_tools_plus_stored_dynamic_tools(self):
+        from app.tutor_engine import _tools_for_track
+        from app.tutor_store import upsert_dynamic_tool
+
+        upsert_dynamic_tool(
+            self.session, self.track["id"], "double", "doubles a number",
+            "def double(n):\n    return n * 2",
+            json.dumps({"type": "object", "properties": {"n": {"type": "number"}}, "required": ["n"]}),
+        )
+
+        tools = _tools_for_track(self.session, self.track["id"])
+        names = [t["function"]["name"] for t in tools]
+        self.assertIn("run_python", names)
+        self.assertIn("define_tool", names)
+        self.assertIn("double", names)
+
+        double_tool = next(t for t in tools if t["function"]["name"] == "double")
+        self.assertEqual(double_tool["function"]["description"], "doubles a number")
+        self.assertEqual(double_tool["function"]["parameters"]["properties"]["n"]["type"], "number")
+
+    def test_run_tutor_turn_defines_a_tool_then_calls_it_in_a_later_round(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        define_args = {
+            "name": "c_to_f",
+            "description": "Convert Celsius to Fahrenheit.",
+            "parameters_schema": json.dumps(
+                {"type": "object", "properties": {"c": {"type": "number"}}, "required": ["c"]}
+            ),
+            "code": "def c_to_f(c):\n    return c * 9 / 5 + 32",
+        }
+        define_call = [{"function": {"name": "define_tool", "arguments": define_args}}]
+        use_call = [{"function": {"name": "c_to_f", "arguments": {"c": 100}}}]
+
+        round1 = iter([{"message": {"content": "", "tool_calls": define_call}, "done": True}])
+        round2 = iter([{"message": {"content": "", "tool_calls": use_call}, "done": True}])
+        round3 = iter([{"message": {"content": "100C is 212F."}, "done": True}])
+
+        sandbox = MagicMock()
+        # 1st sandbox.run: define_tool's smoke test (just loading the def).
+        # 2nd sandbox.run: the actual composed call to the new tool.
+        sandbox.run.side_effect = [
+            SandboxResult(stdout="", stderr="", exit_code=0, timed_out=False),
+            SandboxResult(stdout="212.0\n", stderr="", exit_code=0, timed_out=False),
+        ]
+
+        with patch("app.db.engine", self.engine), \
+             patch("app.generation_client.stream_chat", side_effect=[round1, round2, round3]), \
+             patch("app.rag_engine.search_track", return_value=[]), \
+             patch("app.sandbox_client.get_sandbox_provider", return_value=sandbox):
+            events = list(run_tutor_turn(self.track["id"], "define and use a celsius to fahrenheit tool"))
+
+        self.assertEqual(sandbox.run.call_count, 2)
+        smoke_code = sandbox.run.call_args_list[0].args[0]
+        self.assertIn("def c_to_f", smoke_code)
+        call_code = sandbox.run.call_args_list[1].args[0]
+        self.assertIn("c_to_f(**{'c': 100})", call_code)
+
+        from app.tutor_store import list_dynamic_tools
+        stored = list_dynamic_tools(self.session, self.track["id"])
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]["name"], "c_to_f")
+
+        text = "".join(e["content"] for e in events if e["type"] == "text_delta")
+        self.assertEqual(text, "100C is 212F.")
+
+    def test_run_tutor_turn_define_tool_syntax_error_is_reported_and_not_stored(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        define_args = {
+            "name": "broken",
+            "description": "broken on purpose",
+            "parameters_schema": "{}",
+            "code": "this is not valid python(",
+        }
+        define_call = [{"function": {"name": "define_tool", "arguments": define_args}}]
+        round1 = iter([{"message": {"content": "", "tool_calls": define_call}, "done": True}])
+        round2 = iter([{"message": {"content": "let me fix that."}, "done": True}])
+
+        with patch("app.db.engine", self.engine), \
+             patch("app.generation_client.stream_chat", side_effect=[round1, round2]), \
+             patch("app.rag_engine.search_track", return_value=[]):
+            events = list(run_tutor_turn(self.track["id"], "define a broken tool"))
+
+        result = next(e for e in events if e["type"] == "tool_result")
+        self.assertEqual(result["exit_code"], 1)
+        self.assertIn("syntax error", result["stderr"])
+
+        from app.tutor_store import list_dynamic_tools
+        self.assertEqual(list_dynamic_tools(self.session, self.track["id"]), [])
+
+    def test_run_tutor_turn_define_tool_redefine_upserts_instead_of_duplicating(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        first_args = {"name": "half", "description": "halves a number", "parameters_schema": "{}",
+                       "code": "def half(n):\n    return n / 2"}
+        second_args = {"name": "half", "description": "halves a number (fixed)", "parameters_schema": "{}",
+                        "code": "def half(n):\n    return float(n) / 2"}
+        round1 = iter([{"message": {"content": "", "tool_calls":
+                        [{"function": {"name": "define_tool", "arguments": first_args}}]}, "done": True}])
+        round2 = iter([{"message": {"content": "", "tool_calls":
+                        [{"function": {"name": "define_tool", "arguments": second_args}}]}, "done": True}])
+        round3 = iter([{"message": {"content": "done."}, "done": True}])
+
+        sandbox = MagicMock()
+        sandbox.run.return_value = SandboxResult(stdout="", stderr="", exit_code=0, timed_out=False)
+
+        with patch("app.db.engine", self.engine), \
+             patch("app.generation_client.stream_chat", side_effect=[round1, round2, round3]), \
+             patch("app.rag_engine.search_track", return_value=[]), \
+             patch("app.sandbox_client.get_sandbox_provider", return_value=sandbox):
+            list(run_tutor_turn(self.track["id"], "define half, then redefine it"))
+
+        from app.tutor_store import list_dynamic_tools
+        stored = list_dynamic_tools(self.session, self.track["id"])
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]["description"], "halves a number (fixed)")
+
+    # ---- run_tutor_turn: render_plot (Phase 4 Part B) ----
+
+    def test_run_tutor_turn_render_plot_saves_media_and_persists_a_url_reference(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        plot_code = "import matplotlib.pyplot as plt\nplt.plot([1,2,3])\nplt.savefig('/tmp/output.png')"
+        tool_calls = [{"function": {"name": "render_plot", "arguments": {"code": plot_code}}}]
+        round1 = iter([{"message": {"content": "", "tool_calls": tool_calls}, "done": True}])
+        round2 = iter([{"message": {"content": "Here's the plot."}, "done": True}])
+
+        sandbox = MagicMock()
+        sandbox.run.return_value = SandboxResult(
+            stdout="", stderr="", exit_code=0, timed_out=False,
+            media_kind="image/png", media_base64="aGVsbG8=",
+        )
+
+        with patch("app.db.engine", self.engine), \
+             patch("app.generation_client.stream_chat", side_effect=[round1, round2]), \
+             patch("app.rag_engine.search_track", return_value=[]), \
+             patch("app.sandbox_client.get_sandbox_provider", return_value=sandbox), \
+             patch("app.media_store.save_media", return_value="/learn/tutor/media/abc123.png") as mock_save:
+            events = list(run_tutor_turn(self.track["id"], "plot y=x"))
+
+        sandbox.run.assert_called_once_with(plot_code, timeout_s=15, capture_media=True)
+        mock_save.assert_called_once_with(self.track["id"], "image/png", b"hello")
+
+        result_event = next(e for e in events if e["type"] == "tool_result")
+        self.assertEqual(result_event["media_url"], "/learn/tutor/media/abc123.png")
+        self.assertEqual(result_event["media_kind"], "image/png")
+
+        from app.tutor_store import list_messages
+        history = list_messages(self.session, self.track["id"])
+        tool_msg = next(m for m in history if m["role"] == "tool")
+        self.assertIn("/learn/tutor/media/abc123.png", tool_msg["content"])
+
+    def test_run_tutor_turn_render_plot_without_savefig_reports_no_image_produced(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        tool_calls = [{"function": {"name": "render_plot", "arguments": {"code": "print('oops, forgot savefig')"}}}]
+        round1 = iter([{"message": {"content": "", "tool_calls": tool_calls}, "done": True}])
+        round2 = iter([{"message": {"content": "let me fix that."}, "done": True}])
+
+        sandbox = MagicMock()
+        sandbox.run.return_value = SandboxResult(stdout="oops, forgot savefig\n", stderr="", exit_code=0, timed_out=False)
+
+        with patch("app.db.engine", self.engine), \
+             patch("app.generation_client.stream_chat", side_effect=[round1, round2]), \
+             patch("app.rag_engine.search_track", return_value=[]), \
+             patch("app.sandbox_client.get_sandbox_provider", return_value=sandbox):
+            events = list(run_tutor_turn(self.track["id"], "plot something"))
+
+        result_event = next(e for e in events if e["type"] == "tool_result")
+        self.assertNotIn("media_url", result_event)
+        self.assertEqual(result_event["exit_code"], 0)
+
     def test_run_tutor_turn_parses_string_encoded_tool_arguments(self):
         enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
         tool_calls = [{"function": {"name": "run_python", "arguments": json.dumps({"code": "print(42)"})}}]

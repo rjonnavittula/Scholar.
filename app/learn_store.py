@@ -13,7 +13,8 @@ from sqlalchemy import delete, func
 from sqlmodel import Session, select
 
 from app.models import (
-    LearningBlock, LearningLesson, LearningModule, LearningNode, LearningTrack, LearningTrackSource, TutorMessage,
+    LearningBlock, LearningLesson, LearningModule, LearningNode, LearningTrack, LearningTrackSource,
+    TutorDynamicTool, TutorMessage,
 )
 
 
@@ -283,6 +284,7 @@ def delete_track(session: Session, track_id: int) -> bool:
 
     session.exec(delete(LearningTrackSource).where(LearningTrackSource.track_id == track_id))
     session.exec(delete(TutorMessage).where(TutorMessage.track_id == track_id))
+    session.exec(delete(TutorDynamicTool).where(TutorDynamicTool.track_id == track_id))
 
     session.delete(track)
     session.commit()

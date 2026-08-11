@@ -206,6 +206,21 @@ class TutorMessage(SQLModel, table=True):
     tool_name: Optional[str] = None
 
 
+class TutorDynamicTool(SQLModel, table=True):
+    """A tool the tutor model authored for itself mid-conversation (Phase 4).
+    Uniqueness on (track_id, name) is enforced in tutor_store.upsert_dynamic_tool
+    (look-up-then-update), not a DB constraint - matches this file's existing
+    style of application-level rather than schema-level invariants."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    track_id: int = Field(foreign_key="learningtrack.id", index=True)
+    name: str
+    description: str = ""
+    parameters_schema: str = "{}"  # JSON Schema, as text
+    code: str = ""
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
 class LearningSource(SQLModel, table=True):
     """Trusted material registered for Scholar learning. Parsing/RAG comes later."""
     id: Optional[int] = Field(default=None, primary_key=True)

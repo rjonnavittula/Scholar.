@@ -579,6 +579,18 @@ def send_track_tutor_message(track_id: int, payload: dict, session: Session = De
     return StreamingResponse(_events(), media_type="application/x-ndjson")
 
 
+@learn_router.get("/tutor/media/{filename}", summary="Fetch a tutor-generated media file (plot image, etc.)")
+def get_tutor_media(filename: str):
+    from fastapi import Response
+
+    from app.media_store import media_content_type, read_media
+
+    raw = read_media(filename)
+    if raw is None:
+        raise HTTPException(404, "media_not_found")
+    return Response(content=raw, media_type=media_content_type(filename))
+
+
 # ---- engine context helper -------------------------------------------------- #
 def engine_ctx(session: Session):
     st = session.get(Settings, 1) or Settings(id=1)

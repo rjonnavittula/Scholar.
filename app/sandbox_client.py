@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
-from typing import Protocol
+from typing import Optional, Protocol
 
 from pydantic import BaseModel
 
@@ -25,10 +25,15 @@ class SandboxResult(BaseModel):
     stderr: str
     exit_code: int
     timed_out: bool
+    # set when capture_media=True and the run wrote /tmp/output.png - see
+    # render_plot in tutor_engine.py (Phase 4 Part B: visual tutoring).
+    media_kind: Optional[str] = None
+    media_base64: Optional[str] = None
 
 
 class SandboxProvider(Protocol):
-    def run(self, code: str, language: str = "python", timeout_s: int = 10) -> SandboxResult: ...
+    def run(self, code: str, language: str = "python", timeout_s: int = 10,
+            capture_media: bool = False) -> SandboxResult: ...
 
 
 def _post_json(url: str, payload: dict, *, timeout: float) -> dict:
@@ -45,11 +50,12 @@ class DockerSandboxProvider:
     def __init__(self, base_url: str | None = None):
         self.base_url = (base_url or os.getenv("HIVE_SANDBOX_URL") or DEFAULT_SANDBOX_URL).rstrip("/")
 
-    def run(self, code: str, language: str = "python", timeout_s: int = 10) -> SandboxResult:
+    def run(self, code: str, language: str = "python", timeout_s: int = 10,
+            capture_media: bool = False) -> SandboxResult:
         try:
             data = _post_json(
                 f"{self.base_url}/run",
-                {"code": code, "language": language, "timeout_s": timeout_s},
+                {"code": code, "language": language, "timeout_s": timeout_s, "capture_media": capture_media},
                 timeout=timeout_s + 10,  # give the HTTP hop room beyond the runner's own execution ceiling
             )
         except Exception as exc:
@@ -67,7 +73,8 @@ class ProxmoxSandboxProvider:
     at untested API calls.
     """
 
-    def run(self, code: str, language: str = "python", timeout_s: int = 10) -> SandboxResult:
+    def run(self, code: str, language: str = "python", timeout_s: int = 10,
+            capture_media: bool = False) -> SandboxResult:
         raise NotImplementedError(
             "ProxmoxSandboxProvider isn't implemented yet - the Proxmox host was "
             "offline when this was scaffolded, so nothing here has been verified "

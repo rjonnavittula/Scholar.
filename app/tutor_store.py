@@ -1,12 +1,13 @@
 """CRUD for tutor mode: enabling/disabling a track's tutor and its message log."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import delete
 from sqlmodel import Session, select
 
-from app.models import LearningTrack, TutorMessage
+from app.models import LearningTrack, TutorDynamicTool, TutorMessage
 
 
 def _track_tutor_dict(track: LearningTrack) -> dict[str, Any]:
@@ -85,3 +86,46 @@ def clear_messages(session: Session, track_id: int) -> bool:
     session.exec(delete(TutorMessage).where(TutorMessage.track_id == track_id))
     session.commit()
     return True
+
+
+def _dynamic_tool_to_dict(tool: TutorDynamicTool) -> dict[str, Any]:
+    return {
+        "id": tool.id,
+        "name": tool.name,
+        "description": tool.description,
+        "parameters_schema": tool.parameters_schema,
+        "code": tool.code,
+    }
+
+
+def list_dynamic_tools(session: Session, track_id: int) -> list[dict[str, Any]]:
+    rows = session.exec(
+        select(TutorDynamicTool).where(TutorDynamicTool.track_id == track_id).order_by(TutorDynamicTool.name)
+    ).all()
+    return [_dynamic_tool_to_dict(t) for t in rows]
+
+
+def get_dynamic_tool(session: Session, track_id: int, name: str) -> dict[str, Any] | None:
+    tool = session.exec(
+        select(TutorDynamicTool).where(TutorDynamicTool.track_id == track_id, TutorDynamicTool.name == name)
+    ).first()
+    return _dynamic_tool_to_dict(tool) if tool else None
+
+
+def upsert_dynamic_tool(session: Session, track_id: int, name: str, description: str,
+                         code: str, parameters_schema: str) -> dict[str, Any]:
+    tool = session.exec(
+        select(TutorDynamicTool).where(TutorDynamicTool.track_id == track_id, TutorDynamicTool.name == name)
+    ).first()
+    if tool:
+        tool.description = description
+        tool.code = code
+        tool.parameters_schema = parameters_schema
+        tool.updated_at = datetime.now()
+    else:
+        tool = TutorDynamicTool(track_id=track_id, name=name, description=description,
+                                 code=code, parameters_schema=parameters_schema)
+    session.add(tool)
+    session.commit()
+    session.refresh(tool)
+    return _dynamic_tool_to_dict(tool)

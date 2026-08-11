@@ -25,12 +25,30 @@ class TestDockerSandboxProvider(unittest.TestCase):
             result = provider.run("print(1+1)", timeout_s=5)
 
         self.assertEqual(captured["url"], "http://sandbox-runner:8090/run")
-        self.assertEqual(captured["payload"], {"code": "print(1+1)", "language": "python", "timeout_s": 5})
+        self.assertEqual(captured["payload"],
+                          {"code": "print(1+1)", "language": "python", "timeout_s": 5, "capture_media": False})
         self.assertGreater(captured["timeout"], 5)  # HTTP timeout must exceed the runner's own execution ceiling
         self.assertIsInstance(result, SandboxResult)
         self.assertEqual(result.stdout, "2\n")
         self.assertEqual(result.exit_code, 0)
         self.assertFalse(result.timed_out)
+        self.assertIsNone(result.media_kind)
+        self.assertIsNone(result.media_base64)
+
+    def test_run_passes_capture_media_through_and_returns_media_fields(self):
+        captured = {}
+
+        def fake_post_json(url, payload, *, timeout):
+            captured["payload"] = payload
+            return {"stdout": "", "stderr": "", "exit_code": 0, "timed_out": False,
+                     "media_kind": "image/png", "media_base64": "Zm9v"}
+
+        with patch("app.sandbox_client._post_json", side_effect=fake_post_json):
+            result = DockerSandboxProvider().run("plt.savefig('/tmp/output.png')", capture_media=True)
+
+        self.assertTrue(captured["payload"]["capture_media"])
+        self.assertEqual(result.media_kind, "image/png")
+        self.assertEqual(result.media_base64, "Zm9v")
 
     def test_run_reports_timeout_from_the_runner(self):
         with patch("app.sandbox_client._post_json",

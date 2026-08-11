@@ -32,6 +32,13 @@ window.HiveTutor = (() => {
   // before its tool_result has come back yet.
   function toolCallPendingBubble(id, name, args) {
     const code = (args && args.code) || '';
+    if (name === 'define_tool') {
+      const toolName = (args && args.name) || '?';
+      return `<div class="tutor-bubble tutor-tool-bubble tutor-tool-pending" data-tool-id="${esc(id)}">
+        <div class="tutor-tool-head"><span class="tutor-tool-spin">⚙</span> defining a new tool: <code>${esc(toolName)}</code>…</div>
+        ${code ? `<pre class="tutor-code">${esc(code)}</pre>` : ''}
+      </div>`;
+    }
     return `<div class="tutor-bubble tutor-tool-bubble tutor-tool-pending" data-tool-id="${esc(id)}">
       <div class="tutor-tool-head"><span class="tutor-tool-spin">⚙</span> running <code>${esc(name)}</code>…</div>
       ${code ? `<pre class="tutor-code">${esc(code)}</pre>` : ''}
@@ -44,18 +51,28 @@ window.HiveTutor = (() => {
     const ok = evt.exit_code === 0 && !evt.timed_out;
     const status = evt.timed_out ? 'timed out' : (ok ? 'ok' : `exit ${evt.exit_code}`);
     const out = [evt.stdout, evt.stderr].filter(Boolean).join('\n');
+    const head = evt.name === 'define_tool'
+      ? `🔧 defining a new tool — ${esc(status)}`
+      : `🔧 <code>${esc(evt.name)}</code> — ${esc(status)}`;
     return `<div class="tutor-bubble tutor-tool-bubble ${ok ? 'tutor-tool-ok' : 'tutor-tool-err'}" data-tool-id="${esc(id)}">
-      <div class="tutor-tool-head">🔧 <code>${esc(evt.name)}</code> — ${esc(status)}</div>
+      <div class="tutor-tool-head">${head}</div>
       ${evt.code ? `<pre class="tutor-code">${esc(evt.code)}</pre>` : ''}
+      ${evt.media_url ? `<img class="tutor-tool-media" src="${esc(evt.media_url)}" alt="rendered plot">` : ''}
       ${out ? `<pre class="tutor-code tutor-tool-output">${esc(out)}</pre>` : ''}
     </div>`;
   }
 
   // History replay only has the flattened `content` string persisted for a
-  // role="tool" message (no separate stdout/stderr) - simpler rendering.
+  // role="tool" message (no separate stdout/stderr, no media_url field) -
+  // render_plot's content embeds the media URL as plain text (see
+  // _handle_render_plot in tutor_engine.py), so pull it back out here.
+  const MEDIA_URL_RE = /\/learn\/tutor\/media\/\S+/;
+
   function toolHistoryBubble(m) {
+    const mediaMatch = MEDIA_URL_RE.exec(m.content || '');
     return `<div class="tutor-bubble tutor-tool-bubble" data-msg-id="${esc(m.id || '')}">
       <div class="tutor-tool-head">🔧 <code>${esc(m.tool_name || 'tool')}</code></div>
+      ${mediaMatch ? `<img class="tutor-tool-media" src="${esc(mediaMatch[0])}" alt="rendered plot">` : ''}
       <pre class="tutor-code tutor-tool-output">${esc(m.content)}</pre>
     </div>`;
   }

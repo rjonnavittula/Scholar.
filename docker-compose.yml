@@ -36,6 +36,8 @@ services:
       #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
       # then add HIVE_SECRET_KEY=<value> to your .env and uncomment the line below.
       # HIVE_SECRET_KEY: ${HIVE_SECRET_KEY}
+    volumes:
+      - hive-tutor-media:/app/media
     ports:
       - "8077:8077"   # reach via Tailscale / your reverse proxy; keep off the open WAN
 
@@ -63,3 +65,4 @@ services:
 
 volumes:
   hive-db-data:
+  hive-tutor-media:
