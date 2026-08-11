@@ -52,6 +52,18 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
+  # Build-only: tags the heavier Manim/LaTeX image render_animation calls
+  # run in (Phase 4 Part C). Never started as a container - `profiles` keeps
+  # it out of a normal `docker compose up`; build/refresh it explicitly with
+  # `docker compose build sandbox-visual-image`. sandbox-runner just checks
+  # for the tag at request time and errors clearly if it isn't there yet.
+  sandbox-visual-image:
+    build:
+      context: ./sandbox-runner/images
+      dockerfile: visual.Dockerfile
+    image: hive-sandbox-visual:latest
+    profiles: ["build-only"]
+
   # Super Productivity web (PWA) — the client UI. Mount the H.I.V.E. theme
   # and (later) point its custom sync provider at hive-api.
   superproductivity:

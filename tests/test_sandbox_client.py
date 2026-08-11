@@ -25,8 +25,10 @@ class TestDockerSandboxProvider(unittest.TestCase):
             result = provider.run("print(1+1)", timeout_s=5)
 
         self.assertEqual(captured["url"], "http://sandbox-runner:8090/run")
-        self.assertEqual(captured["payload"],
-                          {"code": "print(1+1)", "language": "python", "timeout_s": 5, "capture_media": False})
+        self.assertEqual(captured["payload"], {
+            "code": "print(1+1)", "language": "python", "timeout_s": 5,
+            "capture_media": False, "capture_video": False, "scene_name": "",
+        })
         self.assertGreater(captured["timeout"], 5)  # HTTP timeout must exceed the runner's own execution ceiling
         self.assertIsInstance(result, SandboxResult)
         self.assertEqual(result.stdout, "2\n")
@@ -49,6 +51,23 @@ class TestDockerSandboxProvider(unittest.TestCase):
         self.assertTrue(captured["payload"]["capture_media"])
         self.assertEqual(result.media_kind, "image/png")
         self.assertEqual(result.media_base64, "Zm9v")
+
+    def test_run_passes_capture_video_and_scene_name_through(self):
+        captured = {}
+
+        def fake_post_json(url, payload, *, timeout):
+            captured["payload"] = payload
+            return {"stdout": "", "stderr": "", "exit_code": 0, "timed_out": False,
+                     "media_kind": "video/mp4", "media_base64": "Zm9v"}
+
+        with patch("app.sandbox_client._post_json", side_effect=fake_post_json):
+            result = DockerSandboxProvider().run(
+                "class MyScene(Scene): pass", timeout_s=60, capture_video=True, scene_name="MyScene",
+            )
+
+        self.assertTrue(captured["payload"]["capture_video"])
+        self.assertEqual(captured["payload"]["scene_name"], "MyScene")
+        self.assertEqual(result.media_kind, "video/mp4")
 
     def test_run_reports_timeout_from_the_runner(self):
         with patch("app.sandbox_client._post_json",

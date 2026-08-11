@@ -33,7 +33,8 @@ class SandboxResult(BaseModel):
 
 class SandboxProvider(Protocol):
     def run(self, code: str, language: str = "python", timeout_s: int = 10,
-            capture_media: bool = False) -> SandboxResult: ...
+            capture_media: bool = False, capture_video: bool = False,
+            scene_name: str = "") -> SandboxResult: ...
 
 
 def _post_json(url: str, payload: dict, *, timeout: float) -> dict:
@@ -51,11 +52,13 @@ class DockerSandboxProvider:
         self.base_url = (base_url or os.getenv("HIVE_SANDBOX_URL") or DEFAULT_SANDBOX_URL).rstrip("/")
 
     def run(self, code: str, language: str = "python", timeout_s: int = 10,
-            capture_media: bool = False) -> SandboxResult:
+            capture_media: bool = False, capture_video: bool = False,
+            scene_name: str = "") -> SandboxResult:
         try:
             data = _post_json(
                 f"{self.base_url}/run",
-                {"code": code, "language": language, "timeout_s": timeout_s, "capture_media": capture_media},
+                {"code": code, "language": language, "timeout_s": timeout_s, "capture_media": capture_media,
+                 "capture_video": capture_video, "scene_name": scene_name},
                 timeout=timeout_s + 10,  # give the HTTP hop room beyond the runner's own execution ceiling
             )
         except Exception as exc:
@@ -74,7 +77,8 @@ class ProxmoxSandboxProvider:
     """
 
     def run(self, code: str, language: str = "python", timeout_s: int = 10,
-            capture_media: bool = False) -> SandboxResult:
+            capture_media: bool = False, capture_video: bool = False,
+            scene_name: str = "") -> SandboxResult:
         raise NotImplementedError(
             "ProxmoxSandboxProvider isn't implemented yet - the Proxmox host was "
             "offline when this was scaffolded, so nothing here has been verified "

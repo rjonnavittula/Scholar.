@@ -21,6 +21,43 @@ window.HiveTutor = (() => {
 
   function modalHost(el) { return el.querySelector('.forge-modal-host') || el; }
 
+  // Media (plot images, animation videos) lives behind the same X-API-Key
+  // auth as everything else, so a plain <img src="..."> / <video src="...">
+  // can't load it - the browser never attaches custom headers to those
+  // requests. Instead the tag gets a data-media-url and this fetches it
+  // with the header, then swaps in a blob: URL the element CAN load bare.
+  function mediaTagHtml(url, kind) {
+    if (!url) return '';
+    if (kind === 'text/html' || /\.html($|\?)/i.test(url)) {
+      // No allow-same-origin: the framed doc gets a unique opaque origin no
+      // matter that it's served from this app's own domain - it genuinely
+      // cannot reach this page's cookies, localStorage, or DOM.
+      return `<iframe class="tutor-tool-media tutor-tool-interactive" data-media-url="${esc(url)}" sandbox="allow-scripts" title="interactive visual"></iframe>`;
+    }
+    const isVideo = (kind && kind.startsWith('video/')) || /\.mp4($|\?)/i.test(url);
+    return isVideo
+      ? `<video class="tutor-tool-media" data-media-url="${esc(url)}" controls></video>`
+      : `<img class="tutor-tool-media" data-media-url="${esc(url)}" alt="rendered visual">`;
+  }
+
+  async function hydrateMedia(root) {
+    const els = root.querySelectorAll('[data-media-url]');
+    for (const el of els) {
+      const url = el.getAttribute('data-media-url');
+      if (!url || el.getAttribute('src') || el.getAttribute('srcdoc')) continue;
+      try {
+        const resp = await fetch(url, { headers: { 'X-API-Key': localStorage.getItem('hive-key') || '' } });
+        if (!resp.ok) continue;
+        if (el.tagName === 'IFRAME') {
+          el.srcdoc = await resp.text();
+        } else {
+          const blob = await resp.blob();
+          el.src = URL.createObjectURL(blob);
+        }
+      } catch (e) { /* leave unhydrated - not fatal, rest of the bubble still renders */ }
+    }
+  }
+
   function bubble(msg) {
     const role = msg.role === 'user' ? 'user' : 'assistant';
     return `<div class="tutor-bubble tutor-bubble-${role}" data-msg-id="${esc(msg.id || '')}">
@@ -57,7 +94,7 @@ window.HiveTutor = (() => {
     return `<div class="tutor-bubble tutor-tool-bubble ${ok ? 'tutor-tool-ok' : 'tutor-tool-err'}" data-tool-id="${esc(id)}">
       <div class="tutor-tool-head">${head}</div>
       ${evt.code ? `<pre class="tutor-code">${esc(evt.code)}</pre>` : ''}
-      ${evt.media_url ? `<img class="tutor-tool-media" src="${esc(evt.media_url)}" alt="rendered plot">` : ''}
+      ${mediaTagHtml(evt.media_url, evt.media_kind)}
       ${out ? `<pre class="tutor-code tutor-tool-output">${esc(out)}</pre>` : ''}
     </div>`;
   }
@@ -72,7 +109,7 @@ window.HiveTutor = (() => {
     const mediaMatch = MEDIA_URL_RE.exec(m.content || '');
     return `<div class="tutor-bubble tutor-tool-bubble" data-msg-id="${esc(m.id || '')}">
       <div class="tutor-tool-head">🔧 <code>${esc(m.tool_name || 'tool')}</code></div>
-      ${mediaMatch ? `<img class="tutor-tool-media" src="${esc(mediaMatch[0])}" alt="rendered plot">` : ''}
+      ${mediaMatch ? mediaTagHtml(mediaMatch[0]) : ''}
       <pre class="tutor-code tutor-tool-output">${esc(m.content)}</pre>
     </div>`;
   }
@@ -222,6 +259,7 @@ window.HiveTutor = (() => {
       }).join('');
       threadEl.innerHTML = html || '<p class="muted small">Say hello to start.</p>';
       threadEl.scrollTop = threadEl.scrollHeight;
+      hydrateMedia(threadEl);
     }
 
     el.querySelector('[data-tutor-clear]').onclick = async () => {
@@ -289,7 +327,11 @@ window.HiveTutor = (() => {
               threadEl.scrollTop = threadEl.scrollHeight;
             } else if (event.type === 'tool_result') {
               const pendingEl = pendingToolId && threadEl.querySelector(`[data-tool-id="${pendingToolId}"]`);
-              if (pendingEl) pendingEl.outerHTML = toolResultBubbleHtml(pendingToolId, event);
+              if (pendingEl) {
+                pendingEl.outerHTML = toolResultBubbleHtml(pendingToolId, event);
+                const resultEl = threadEl.querySelector(`[data-tool-id="${pendingToolId}"]`);
+                if (resultEl) hydrateMedia(resultEl);
+              }
               pendingToolId = null;
               threadEl.scrollTop = threadEl.scrollHeight;
               newAssistantBubble(); // whatever text comes next belongs after this result

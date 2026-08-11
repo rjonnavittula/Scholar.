@@ -383,6 +383,108 @@ class TestTutorEngine(unittest.TestCase):
         self.assertNotIn("media_url", result_event)
         self.assertEqual(result_event["exit_code"], 0)
 
+    # ---- run_tutor_turn: render_animation (Phase 4 Part C) ----
+
+    def test_run_tutor_turn_render_animation_saves_a_video_and_persists_a_url_reference(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        manim_code = "from manim import *\nclass MyScene(Scene):\n    def construct(self):\n        pass"
+        tool_calls = [{"function": {"name": "render_animation",
+                                     "arguments": {"manim_code": manim_code, "scene_name": "MyScene"}}}]
+        round1 = iter([{"message": {"content": "", "tool_calls": tool_calls}, "done": True}])
+        round2 = iter([{"message": {"content": "Here's the animation."}, "done": True}])
+
+        sandbox = MagicMock()
+        sandbox.run.return_value = SandboxResult(
+            stdout="", stderr="", exit_code=0, timed_out=False,
+            media_kind="video/mp4", media_base64="aGVsbG8=",
+        )
+
+        with patch("app.db.engine", self.engine), \
+             patch("app.generation_client.stream_chat", side_effect=[round1, round2]), \
+             patch("app.rag_engine.search_track", return_value=[]), \
+             patch("app.sandbox_client.get_sandbox_provider", return_value=sandbox), \
+             patch("app.media_store.save_media", return_value="/learn/tutor/media/abc123.mp4") as mock_save:
+            events = list(run_tutor_turn(self.track["id"], "animate something"))
+
+        sandbox.run.assert_called_once_with(manim_code, timeout_s=90, capture_video=True, scene_name="MyScene")
+        mock_save.assert_called_once_with(self.track["id"], "video/mp4", b"hello")
+
+        result_event = next(e for e in events if e["type"] == "tool_result")
+        self.assertEqual(result_event["media_url"], "/learn/tutor/media/abc123.mp4")
+        self.assertEqual(result_event["media_kind"], "video/mp4")
+
+        from app.tutor_store import list_messages
+        history = list_messages(self.session, self.track["id"])
+        tool_msg = next(m for m in history if m["role"] == "tool")
+        self.assertIn("/learn/tutor/media/abc123.mp4", tool_msg["content"])
+
+    def test_run_tutor_turn_render_animation_requires_manim_code_and_scene_name(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        tool_calls = [{"function": {"name": "render_animation", "arguments": {"manim_code": "from manim import *"}}}]
+        round1 = iter([{"message": {"content": "", "tool_calls": tool_calls}, "done": True}])
+        round2 = iter([{"message": {"content": "let me fix that."}, "done": True}])
+
+        with patch("app.db.engine", self.engine), \
+             patch("app.generation_client.stream_chat", side_effect=[round1, round2]), \
+             patch("app.rag_engine.search_track", return_value=[]):
+            events = list(run_tutor_turn(self.track["id"], "animate without a scene name"))
+
+        result_event = next(e for e in events if e["type"] == "tool_result")
+        self.assertEqual(result_event["exit_code"], 1)
+        self.assertIn("scene_name", result_event["stderr"])
+
+    # ---- run_tutor_turn: render_interactive (Phase 4 Part C) ----
+
+    def test_run_tutor_turn_render_interactive_saves_html_and_persists_a_url_reference(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        html = "<!doctype html><html><body><button onclick=\"alert(1)\">go</button></body></html>"
+        tool_calls = [{"function": {"name": "render_interactive", "arguments": {"html": html}}}]
+        round1 = iter([{"message": {"content": "", "tool_calls": tool_calls}, "done": True}])
+        round2 = iter([{"message": {"content": "Here's an interactive demo."}, "done": True}])
+
+        with patch("app.db.engine", self.engine), \
+             patch("app.generation_client.stream_chat", side_effect=[round1, round2]), \
+             patch("app.rag_engine.search_track", return_value=[]), \
+             patch("app.media_store.save_media", return_value="/learn/tutor/media/xyz789.html") as mock_save:
+            events = list(run_tutor_turn(self.track["id"], "show me something interactive"))
+
+        mock_save.assert_called_once_with(self.track["id"], "text/html", html.encode("utf-8"))
+        result_event = next(e for e in events if e["type"] == "tool_result")
+        self.assertEqual(result_event["media_url"], "/learn/tutor/media/xyz789.html")
+        self.assertEqual(result_event["media_kind"], "text/html")
+
+    def test_run_tutor_turn_render_interactive_rejects_empty_html(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        tool_calls = [{"function": {"name": "render_interactive", "arguments": {"html": "   "}}}]
+        round1 = iter([{"message": {"content": "", "tool_calls": tool_calls}, "done": True}])
+        round2 = iter([{"message": {"content": "let me fix that."}, "done": True}])
+
+        with patch("app.db.engine", self.engine), \
+             patch("app.generation_client.stream_chat", side_effect=[round1, round2]), \
+             patch("app.rag_engine.search_track", return_value=[]):
+            events = list(run_tutor_turn(self.track["id"], "show me nothing"))
+
+        result_event = next(e for e in events if e["type"] == "tool_result")
+        self.assertEqual(result_event["exit_code"], 1)
+        self.assertIn("no html provided", result_event["stderr"])
+
+    def test_run_tutor_turn_render_interactive_rejects_oversized_html(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        from app.tutor_engine import MAX_INTERACTIVE_HTML_BYTES
+        huge_html = "<html>" + ("x" * (MAX_INTERACTIVE_HTML_BYTES + 1)) + "</html>"
+        tool_calls = [{"function": {"name": "render_interactive", "arguments": {"html": huge_html}}}]
+        round1 = iter([{"message": {"content": "", "tool_calls": tool_calls}, "done": True}])
+        round2 = iter([{"message": {"content": "too big."}, "done": True}])
+
+        with patch("app.db.engine", self.engine), \
+             patch("app.generation_client.stream_chat", side_effect=[round1, round2]), \
+             patch("app.rag_engine.search_track", return_value=[]):
+            events = list(run_tutor_turn(self.track["id"], "show me something huge"))
+
+        result_event = next(e for e in events if e["type"] == "tool_result")
+        self.assertEqual(result_event["exit_code"], 1)
+        self.assertIn("too large", result_event["stderr"])
+
     def test_run_tutor_turn_parses_string_encoded_tool_arguments(self):
         enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
         tool_calls = [{"function": {"name": "run_python", "arguments": json.dumps({"code": "print(42)"})}}]

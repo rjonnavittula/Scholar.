@@ -10,6 +10,10 @@ track - reusing the same run_python sandbox path, not a new primitive.
 Phase 4 Part B adds `render_plot` (visual tutoring, tier 1): matplotlib
 code run in the sandbox with capture_media=True, the resulting PNG saved
 via app/media_store.py and referenced by URL rather than inlined.
+Phase 4 Part C adds visual tutoring tier 2: `render_animation` (Manim,
+in a separate heavier sandbox image, capture_video=True) and
+`render_interactive` (self-contained HTML/SVG/JS, no sandbox execution at
+all - just stored and rendered client-side in a sandboxed iframe).
 """
 from __future__ import annotations
 
@@ -106,6 +110,58 @@ BASE_TUTOR_TOOLS = [{
                 },
             },
             "required": ["code"],
+        },
+    },
+}, {
+    "type": "function",
+    "function": {
+        "name": "render_animation",
+        "description": (
+            "Render a short math/concept animation with Manim and show it to the "
+            "learner - use for anything better explained as motion than as a static "
+            "picture (a transformation, a proof unfolding, a graph being built up "
+            "step by step). Write a Manim Scene subclass: `from manim import *` "
+            "then `class <SceneName>(Scene): def construct(self): ...`. Keep it "
+            "SHORT (a few seconds of animation) - renders are slow, low-quality, "
+            "and capped at ~90s."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "manim_code": {
+                    "type": "string",
+                    "description": "Full Manim scene source, including the class definition.",
+                },
+                "scene_name": {
+                    "type": "string",
+                    "description": "The exact class name of the Scene to render.",
+                },
+            },
+            "required": ["manim_code", "scene_name"],
+        },
+    },
+}, {
+    "type": "function",
+    "function": {
+        "name": "render_interactive",
+        "description": (
+            "Show the learner a small interactive visual (a diagram, a mini "
+            "simulation, a click-to-reveal explanation) as a self-contained HTML "
+            "document - inline <style> and <script> only, no external resources or "
+            "network requests (it renders in a sandboxed iframe with no network "
+            "access and no access to this app's page, cookies, or storage). Use for "
+            "something genuinely interactive; for a static picture use render_plot, "
+            "for a math animation use render_animation."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "html": {
+                    "type": "string",
+                    "description": "A complete, self-contained HTML document (inline <style>/<script> only).",
+                },
+            },
+            "required": ["html"],
         },
     },
 }]
@@ -227,6 +283,57 @@ def _handle_render_plot(track_id: int, args: dict[str, Any]) -> tuple[str, dict[
     return content, extra
 
 
+def _handle_render_animation(track_id: int, args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    code = (args.get("manim_code") or "").strip() if isinstance(args, dict) else ""
+    scene_name = (args.get("scene_name") or "").strip() if isinstance(args, dict) else ""
+    if not code or not scene_name:
+        return _error_tool_result("error: manim_code and scene_name are both required")
+
+    from app.sandbox_client import get_sandbox_provider
+    result = get_sandbox_provider().run(code, timeout_s=90, capture_video=True, scene_name=scene_name)
+
+    if not result.media_base64:
+        content, extra = _sandbox_result_to_tool(result)
+        if result.exit_code == 0 and not result.timed_out:
+            content += "\n(no video was produced - check that scene_name matches the Scene class exactly)"
+        return content, extra
+
+    import base64
+
+    from app.media_store import save_media
+    media_url = save_media(track_id, result.media_kind or "video/mp4", base64.b64decode(result.media_base64))
+
+    content = f"animation rendered: {media_url}"
+    if result.stdout:
+        content += f"\nstdout:\n{result.stdout}"
+    extra = {
+        "stdout": result.stdout, "stderr": result.stderr,
+        "exit_code": result.exit_code, "timed_out": result.timed_out,
+        "media_url": media_url, "media_kind": result.media_kind,
+    }
+    return content, extra
+
+
+# generous but bounded - this is a diagram/mini-sim, not a general file host.
+MAX_INTERACTIVE_HTML_BYTES = 200_000
+
+
+def _handle_render_interactive(track_id: int, args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    html = (args.get("html") or "") if isinstance(args, dict) else ""
+    if not html.strip():
+        return _error_tool_result("error: no html provided")
+    raw = html.encode("utf-8")
+    if len(raw) > MAX_INTERACTIVE_HTML_BYTES:
+        return _error_tool_result(f"error: html too large ({len(raw)} bytes, max {MAX_INTERACTIVE_HTML_BYTES})")
+
+    from app.media_store import save_media
+    media_url = save_media(track_id, "text/html", raw)
+    content = f"interactive visual rendered: {media_url}"
+    extra = {"stdout": content, "stderr": "", "exit_code": 0, "timed_out": False,
+              "media_url": media_url, "media_kind": "text/html"}
+    return content, extra
+
+
 def _run_tool(session: Session, track_id: int, name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Execute one requested tool call.
 
@@ -238,6 +345,10 @@ def _run_tool(session: Session, track_id: int, name: str, args: dict[str, Any]) 
         return _handle_define_tool(session, track_id, args if isinstance(args, dict) else {})
     if name == "render_plot":
         return _handle_render_plot(track_id, args if isinstance(args, dict) else {})
+    if name == "render_animation":
+        return _handle_render_animation(track_id, args if isinstance(args, dict) else {})
+    if name == "render_interactive":
+        return _handle_render_interactive(track_id, args if isinstance(args, dict) else {})
 
     from app.sandbox_client import get_sandbox_provider
 

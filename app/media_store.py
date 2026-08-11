@@ -15,7 +15,7 @@ from pathlib import Path
 
 MEDIA_ROOT = Path(os.getenv("HIVE_MEDIA_DIR", "/app/media"))
 
-_EXT_BY_KIND = {"image/png": ".png"}
+_EXT_BY_KIND = {"image/png": ".png", "video/mp4": ".mp4", "text/html": ".html"}
 _KIND_BY_EXT = {v: k for k, v in _EXT_BY_KIND.items()}
 
 
