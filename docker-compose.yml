@@ -29,6 +29,8 @@ services:
     environment:
       HIVE_DATABASE_URL: postgresql+psycopg://${HIVE_DB_USER}:${HIVE_DB_PASSWORD}@hive-db:5432/hive
       TZ: America/New_York
+      HIVE_SANDBOX_PROVIDER: docker
+      HIVE_SANDBOX_URL: http://sandbox-runner:8090
       # Optional: encrypts the Canvas token/ICS URL at rest instead of storing them
       # plaintext. Generate one with:
       #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -36,6 +38,17 @@ services:
       # HIVE_SECRET_KEY: ${HIVE_SECRET_KEY}
     ports:
       - "8077:8077"   # reach via Tailscale / your reverse proxy; keep off the open WAN
+
+  # sandbox-runner — the only container with Docker socket access in this
+  # stack. Executes tutor-mode code snippets in throwaway, network-less,
+  # resource-capped containers. Not published to the host; hive-api reaches
+  # it at http://sandbox-runner:8090 over the compose-internal network.
+  sandbox-runner:
+    build: ./sandbox-runner
+    container_name: sandbox-runner
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
   # Super Productivity web (PWA) — the client UI. Mount the H.I.V.E. theme
   # and (later) point its custom sync provider at hive-api.
