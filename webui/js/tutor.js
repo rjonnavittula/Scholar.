@@ -28,6 +28,38 @@ window.HiveTutor = (() => {
     </div>`;
   }
 
+  // "🔧 running…" placeholder shown the instant a tool_call event arrives,
+  // before its tool_result has come back yet.
+  function toolCallPendingBubble(id, name, args) {
+    const code = (args && args.code) || '';
+    return `<div class="tutor-bubble tutor-tool-bubble tutor-tool-pending" data-tool-id="${esc(id)}">
+      <div class="tutor-tool-head"><span class="tutor-tool-spin">⚙</span> running <code>${esc(name)}</code>…</div>
+      ${code ? `<pre class="tutor-code">${esc(code)}</pre>` : ''}
+    </div>`;
+  }
+
+  // Replaces the pending bubble once the live tool_result event arrives —
+  // has structured stdout/stderr/exit_code, so it can show pass/fail state.
+  function toolResultBubbleHtml(id, evt) {
+    const ok = evt.exit_code === 0 && !evt.timed_out;
+    const status = evt.timed_out ? 'timed out' : (ok ? 'ok' : `exit ${evt.exit_code}`);
+    const out = [evt.stdout, evt.stderr].filter(Boolean).join('\n');
+    return `<div class="tutor-bubble tutor-tool-bubble ${ok ? 'tutor-tool-ok' : 'tutor-tool-err'}" data-tool-id="${esc(id)}">
+      <div class="tutor-tool-head">🔧 <code>${esc(evt.name)}</code> — ${esc(status)}</div>
+      ${evt.code ? `<pre class="tutor-code">${esc(evt.code)}</pre>` : ''}
+      ${out ? `<pre class="tutor-code tutor-tool-output">${esc(out)}</pre>` : ''}
+    </div>`;
+  }
+
+  // History replay only has the flattened `content` string persisted for a
+  // role="tool" message (no separate stdout/stderr) - simpler rendering.
+  function toolHistoryBubble(m) {
+    return `<div class="tutor-bubble tutor-tool-bubble" data-msg-id="${esc(m.id || '')}">
+      <div class="tutor-tool-head">🔧 <code>${esc(m.tool_name || 'tool')}</code></div>
+      <pre class="tutor-code tutor-tool-output">${esc(m.content)}</pre>
+    </div>`;
+  }
+
   function openSetupModal(el, S, Api, track, onEnabled) {
     const host = modalHost(el);
     host.innerHTML = `<div class="forge-modal modal-overlay fade-in"><div class="forge-modal-card motion-pop">
@@ -163,8 +195,15 @@ window.HiveTutor = (() => {
 
     async function loadHistory() {
       const messages = await Api.get(`/learn/tracks/${track.id}/tutor/messages`);
-      const visible = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
-      threadEl.innerHTML = visible.length ? visible.map(bubble).join('') : '<p class="muted small">Say hello to start.</p>';
+      const visible = messages.filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool');
+      const html = visible.map((m) => {
+        if (m.role === 'tool') return toolHistoryBubble(m);
+        // an assistant message that only requested a tool call (no visible
+        // text) has nothing to show on its own - the tool bubble covers it
+        if (m.role === 'assistant' && m.tool_calls_json && !String(m.content || '').trim()) return '';
+        return bubble(m);
+      }).join('');
+      threadEl.innerHTML = html || '<p class="muted small">Say hello to start.</p>';
       threadEl.scrollTop = threadEl.scrollHeight;
     }
 
@@ -181,11 +220,26 @@ window.HiveTutor = (() => {
       sendBtn.disabled = true;
       if (threadEl.querySelector('.muted.small')) threadEl.innerHTML = '';
       threadEl.insertAdjacentHTML('beforeend', bubble({ role: 'user', content: text }));
-      const liveId = 'live-' + Date.now();
-      threadEl.insertAdjacentHTML('beforeend', `<div class="tutor-bubble tutor-bubble-assistant" data-msg-id="${liveId}"><div class="tutor-bubble-content"></div></div>`);
-      threadEl.scrollTop = threadEl.scrollHeight;
-      const contentEl = threadEl.querySelector(`[data-msg-id="${liveId}"] .tutor-bubble-content`);
+
+      // A turn can span multiple assistant text spans with tool calls
+      // interleaved between them (see tutor_engine.py's round loop) - each
+      // gets its own bubble so the DOM stays in chronological order instead
+      // of text-before and text-after a tool call fighting over one bubble.
+      let contentEl = null;
       let raw = '';
+      let pendingToolId = null;
+      const newAssistantBubble = () => {
+        // drop the previous bubble if the model went straight to a tool
+        // call and never put any text in it - otherwise every tool call
+        // leaves a stray empty bubble behind it in the thread
+        if (contentEl && !contentEl.innerHTML.trim()) contentEl.closest('.tutor-bubble')?.remove();
+        const liveId = 'live-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+        threadEl.insertAdjacentHTML('beforeend', `<div class="tutor-bubble tutor-bubble-assistant" data-msg-id="${liveId}"><div class="tutor-bubble-content"></div></div>`);
+        contentEl = threadEl.querySelector(`[data-msg-id="${liveId}"] .tutor-bubble-content`);
+        raw = '';
+      };
+      newAssistantBubble();
+      threadEl.scrollTop = threadEl.scrollHeight;
 
       try {
         const resp = await fetch(`/learn/tracks/${track.id}/tutor/messages`, {
@@ -212,6 +266,16 @@ window.HiveTutor = (() => {
               raw += event.content;
               contentEl.innerHTML = renderMarkdownLite(raw);
               threadEl.scrollTop = threadEl.scrollHeight;
+            } else if (event.type === 'tool_call') {
+              pendingToolId = 'tool-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+              threadEl.insertAdjacentHTML('beforeend', toolCallPendingBubble(pendingToolId, event.name, event.args));
+              threadEl.scrollTop = threadEl.scrollHeight;
+            } else if (event.type === 'tool_result') {
+              const pendingEl = pendingToolId && threadEl.querySelector(`[data-tool-id="${pendingToolId}"]`);
+              if (pendingEl) pendingEl.outerHTML = toolResultBubbleHtml(pendingToolId, event);
+              pendingToolId = null;
+              threadEl.scrollTop = threadEl.scrollHeight;
+              newAssistantBubble(); // whatever text comes next belongs after this result
             } else if (event.type === 'error') {
               contentEl.innerHTML += `<p class="tutor-error">could not reply: ${esc(event.content)}</p>`;
             }
@@ -220,6 +284,9 @@ window.HiveTutor = (() => {
       } catch (err) {
         contentEl.innerHTML += `<p class="tutor-error">${esc(err.message || err)}</p>`;
       } finally {
+        // drop a trailing bubble that never got any text (e.g. the turn
+        // ended right after a tool result with nothing further to say)
+        if (contentEl && !contentEl.innerHTML.trim()) contentEl.closest('.tutor-bubble')?.remove();
         sendBtn.disabled = false;
         input.focus();
       }

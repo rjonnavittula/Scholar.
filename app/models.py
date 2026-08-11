@@ -200,6 +200,10 @@ class TutorMessage(SQLModel, table=True):
     role: str = "user"
     content: str = ""
     created_at: datetime = Field(default_factory=datetime.now)
+    # set on an "assistant" message that requested tool call(s) - raw JSON array
+    tool_calls_json: Optional[str] = None
+    # set on a "tool" message - which tool produced this result
+    tool_name: Optional[str] = None
 
 
 class LearningSource(SQLModel, table=True):

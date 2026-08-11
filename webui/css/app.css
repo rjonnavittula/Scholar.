@@ -1710,6 +1710,21 @@ body.theme-dark{
 .tutor-bubble-content pre.tutor-code:first-child{ margin-top:0; }
 .tutor-bubble-content pre.tutor-code:last-child{ margin-bottom:0; }
 .tutor-error{ color:var(--f-danger); font-size:12.5px; margin:8px 0 0; }
+/* tool-call bubbles: same slot as an assistant bubble, own visual identity */
+.tutor-tool-bubble{ align-self:flex-start; max-width:min(680px,80%); background:var(--f-surface);
+  border:1px solid rgba(var(--f-accent-rgb),.16); border-radius:16px; padding:12px 16px; box-shadow:var(--f-shadow); }
+.tutor-tool-bubble.tutor-tool-ok{ border-color:rgba(var(--f-success-rgb),.35); }
+.tutor-tool-bubble.tutor-tool-err{ border-color:rgba(var(--f-danger-rgb),.4); }
+.tutor-tool-head{ font-size:12px; font-weight:600; color:var(--f-muted); display:flex; align-items:center; gap:6px; }
+.tutor-tool-bubble.tutor-tool-ok .tutor-tool-head{ color:var(--f-success); }
+.tutor-tool-bubble.tutor-tool-err .tutor-tool-head{ color:var(--f-danger); }
+.tutor-tool-head code{ font-family:ui-monospace,"SF Mono",Consolas,monospace; }
+.tutor-tool-spin{ display:inline-block; animation:spin .9s linear infinite; }
+.tutor-tool-bubble pre.tutor-code{ margin:8px 0 0; padding:12px 14px; background:var(--f-bg-sunken);
+  border:1px solid rgba(var(--f-accent-rgb),.14); border-radius:12px; overflow:auto;
+  font-family:ui-monospace,"SF Mono",Consolas,monospace; font-size:12.5px; line-height:1.6; white-space:pre-wrap; }
+.tutor-tool-bubble pre.tutor-code:first-child{ margin-top:0; }
+.tutor-tool-bubble .tutor-tool-output{ color:var(--f-ink-soft); }
 .tutor-composer{ flex:0 0 auto; display:flex; gap:10px; align-items:flex-end; padding:16px max(5vw,32px) 24px; border-top:1px solid rgba(var(--f-accent-rgb),.10); }
 .tutor-composer textarea{ flex:1; resize:none; background:var(--f-bg-sunken); border:1px solid rgba(var(--f-accent-rgb),.14); border-radius:14px; color:var(--f-ink); padding:12px 16px; font-size:14px; line-height:1.5; outline:none; font-family:inherit; }
 .tutor-composer textarea:focus{ border-color:rgba(var(--f-accent-rgb),.45); }

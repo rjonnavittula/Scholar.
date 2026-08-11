@@ -55,6 +55,8 @@ def _message_to_dict(msg: TutorMessage) -> dict[str, Any]:
         "role": msg.role,
         "content": msg.content,
         "created_at": msg.created_at.isoformat(),
+        "tool_calls_json": msg.tool_calls_json,
+        "tool_name": msg.tool_name,
     }
 
 
@@ -67,8 +69,10 @@ def list_messages(session: Session, track_id: int) -> list[dict[str, Any]] | Non
     return [_message_to_dict(m) for m in rows]
 
 
-def add_message(session: Session, track_id: int, role: str, content: str) -> dict[str, Any]:
-    msg = TutorMessage(track_id=track_id, role=role, content=content)
+def add_message(session: Session, track_id: int, role: str, content: str,
+                 *, tool_calls_json: str | None = None, tool_name: str | None = None) -> dict[str, Any]:
+    msg = TutorMessage(track_id=track_id, role=role, content=content,
+                        tool_calls_json=tool_calls_json, tool_name=tool_name)
     session.add(msg)
     session.commit()
     session.refresh(msg)
