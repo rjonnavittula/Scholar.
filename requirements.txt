@@ -9,3 +9,5 @@ pypdf>=4.0
 python-multipart>=0.0.9
 qdrant-client>=1.12
 cryptography>=42.0
+proxmoxer>=2.1
+paramiko>=3.4

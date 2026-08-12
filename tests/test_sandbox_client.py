@@ -1,6 +1,6 @@
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.sandbox_client import (
     DockerSandboxProvider,
@@ -90,9 +90,137 @@ class TestDockerSandboxProvider(unittest.TestCase):
 
 
 class TestProxmoxSandboxProvider(unittest.TestCase):
-    def test_run_raises_not_implemented_rather_than_guessing(self):
-        with self.assertRaises(NotImplementedError):
-            ProxmoxSandboxProvider().run("print(1)")
+    def _cfg(self):
+        return MagicMock(template_vmid=9000, plot_template_vmid=9001, visual_template_vmid=9002)
+
+    def test_run_reports_a_clear_error_when_not_configured(self):
+        with patch("app.proxmox_client.load_config",
+                    side_effect=ValueError("proxmox_not_configured: missing HIVE_PROXMOX_HOST")):
+            result = ProxmoxSandboxProvider().run("print(1)")
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("proxmox_not_configured", result.stderr)
+
+    def test_run_requires_scene_name_for_capture_video(self):
+        result = ProxmoxSandboxProvider().run("manim code", capture_video=True)
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("scene_name", result.stderr)
+
+    def test_run_clones_execs_and_destroys_on_success(self):
+        cfg = self._cfg()
+        ssh = MagicMock()
+        with patch("app.proxmox_client.load_config", return_value=cfg), \
+             patch("app.proxmox_client.api_client", return_value="API") as mock_api_client, \
+             patch("app.proxmox_client.clone_template", return_value=9100) as mock_clone, \
+             patch("app.proxmox_client.start_container") as mock_start, \
+             patch("app.proxmox_client.ssh_client", return_value=ssh), \
+             patch("app.proxmox_client.pct_exec", return_value=("hi\n", "", 0, False)) as mock_exec, \
+             patch("app.proxmox_client.destroy_container") as mock_destroy:
+            result = ProxmoxSandboxProvider().run("print('hi')", timeout_s=5)
+
+        mock_api_client.assert_called_once_with(cfg)
+        mock_clone.assert_called_once_with("API", cfg, cfg.template_vmid)
+        mock_start.assert_called_once_with("API", cfg, 9100)
+        mock_exec.assert_called_once_with(ssh, 9100, "print('hi')", 5)
+        mock_destroy.assert_called_once_with("API", cfg, 9100)
+        ssh.close.assert_called_once()
+        self.assertEqual(result.stdout, "hi\n")
+        self.assertEqual(result.exit_code, 0)
+        self.assertIsNone(result.media_kind)
+
+    def test_run_always_destroys_the_clone_even_if_exec_raises(self):
+        cfg = self._cfg()
+        with patch("app.proxmox_client.load_config", return_value=cfg), \
+             patch("app.proxmox_client.api_client", return_value="API"), \
+             patch("app.proxmox_client.clone_template", return_value=9100), \
+             patch("app.proxmox_client.start_container"), \
+             patch("app.proxmox_client.ssh_client", return_value=MagicMock()), \
+             patch("app.proxmox_client.pct_exec", side_effect=RuntimeError("ssh broke")), \
+             patch("app.proxmox_client.destroy_container") as mock_destroy:
+            result = ProxmoxSandboxProvider().run("print(1)")
+
+        mock_destroy.assert_called_once_with("API", cfg, 9100)
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("proxmox_exec_failed", result.stderr)
+
+    def test_run_always_destroys_the_clone_even_if_provisioning_of_the_clone_itself_fails_after_creation(self):
+        # clone_template succeeds (we have a vmid) but start_container blows up -
+        # destroy must still run so nothing is left behind.
+        cfg = self._cfg()
+        with patch("app.proxmox_client.load_config", return_value=cfg), \
+             patch("app.proxmox_client.api_client", return_value="API"), \
+             patch("app.proxmox_client.clone_template", return_value=9100), \
+             patch("app.proxmox_client.start_container", side_effect=RuntimeError("start failed")), \
+             patch("app.proxmox_client.destroy_container") as mock_destroy:
+            result = ProxmoxSandboxProvider().run("print(1)")
+
+        mock_destroy.assert_called_once_with("API", cfg, 9100)
+        self.assertEqual(result.exit_code, 1)
+
+    def test_run_does_not_attempt_cleanup_when_cloning_itself_fails(self):
+        # no vmid was ever created, so there is nothing to destroy() - and
+        # destroy_container isn't even importable-safe to call without one.
+        cfg = self._cfg()
+        with patch("app.proxmox_client.load_config", return_value=cfg), \
+             patch("app.proxmox_client.api_client", return_value="API"), \
+             patch("app.proxmox_client.clone_template", side_effect=RuntimeError("no next id")), \
+             patch("app.proxmox_client.destroy_container") as mock_destroy:
+            result = ProxmoxSandboxProvider().run("print(1)")
+
+        mock_destroy.assert_not_called()
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("proxmox_provision_failed", result.stderr)
+
+    def test_run_uses_the_plot_template_and_pulls_output_png_when_capture_media(self):
+        cfg = self._cfg()
+        with patch("app.proxmox_client.load_config", return_value=cfg), \
+             patch("app.proxmox_client.api_client", return_value="API"), \
+             patch("app.proxmox_client.clone_template", return_value=9100) as mock_clone, \
+             patch("app.proxmox_client.start_container"), \
+             patch("app.proxmox_client.ssh_client", return_value=MagicMock()), \
+             patch("app.proxmox_client.pct_exec", return_value=("", "", 0, False)), \
+             patch("app.proxmox_client.pull_file", return_value=b"pngbytes") as mock_pull, \
+             patch("app.proxmox_client.destroy_container"):
+            result = ProxmoxSandboxProvider().run("plt.savefig(...)", capture_media=True)
+
+        mock_clone.assert_called_once_with("API", cfg, cfg.plot_template_vmid)
+        mock_pull.assert_called_once()
+        self.assertEqual(mock_pull.call_args.args[2], "/tmp/output.png")
+        self.assertEqual(result.media_kind, "image/png")
+        self.assertTrue(result.media_base64)
+
+    def test_run_uses_the_visual_template_and_finds_the_mp4_when_capture_video(self):
+        cfg = self._cfg()
+        with patch("app.proxmox_client.load_config", return_value=cfg), \
+             patch("app.proxmox_client.api_client", return_value="API"), \
+             patch("app.proxmox_client.clone_template", return_value=9100) as mock_clone, \
+             patch("app.proxmox_client.start_container"), \
+             patch("app.proxmox_client.ssh_client", return_value=MagicMock()), \
+             patch("app.proxmox_client.pct_exec", return_value=("", "", 0, False)), \
+             patch("app.proxmox_client.find_first_file", return_value="/tmp/media/x.mp4") as mock_find, \
+             patch("app.proxmox_client.pull_file", return_value=b"mp4bytes") as mock_pull, \
+             patch("app.proxmox_client.destroy_container"):
+            result = ProxmoxSandboxProvider().run("manim code", capture_video=True, scene_name="MyScene")
+
+        mock_clone.assert_called_once_with("API", cfg, cfg.visual_template_vmid)
+        mock_find.assert_called_once()
+        mock_pull.assert_called_once_with(mock_pull.call_args.args[0], 9100, "/tmp/media/x.mp4")
+        self.assertEqual(result.media_kind, "video/mp4")
+
+    def test_run_never_pulls_media_when_the_exec_itself_failed(self):
+        cfg = self._cfg()
+        with patch("app.proxmox_client.load_config", return_value=cfg), \
+             patch("app.proxmox_client.api_client", return_value="API"), \
+             patch("app.proxmox_client.clone_template", return_value=9100), \
+             patch("app.proxmox_client.start_container"), \
+             patch("app.proxmox_client.ssh_client", return_value=MagicMock()), \
+             patch("app.proxmox_client.pct_exec", return_value=("", "boom", 1, False)), \
+             patch("app.proxmox_client.pull_file") as mock_pull, \
+             patch("app.proxmox_client.destroy_container"):
+            result = ProxmoxSandboxProvider().run("plt.savefig(...)", capture_media=True)
+
+        mock_pull.assert_not_called()
+        self.assertEqual(result.exit_code, 1)
+        self.assertIsNone(result.media_kind)
 
 
 class TestGetSandboxProvider(unittest.TestCase):

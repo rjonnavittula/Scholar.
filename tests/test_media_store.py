@@ -43,6 +43,21 @@ class TestMediaStore(unittest.TestCase):
         self.assertEqual(media_store.media_content_type("abc.png"), "image/png")
         self.assertEqual(media_store.media_content_type("abc.bin"), "application/octet-stream")
 
+    def test_delete_media_for_track_removes_only_that_tracks_files(self):
+        url_a1 = media_store.save_media(3, "image/png", b"a1")
+        url_a2 = media_store.save_media(3, "video/mp4", b"a2")
+        url_b = media_store.save_media(35, "image/png", b"b")  # prefix "3" is a substring, must not match
+
+        removed = media_store.delete_media_for_track(3)
+
+        self.assertEqual(removed, 2)
+        self.assertIsNone(media_store.read_media(url_a1.rsplit("/", 1)[-1]))
+        self.assertIsNone(media_store.read_media(url_a2.rsplit("/", 1)[-1]))
+        self.assertIsNotNone(media_store.read_media(url_b.rsplit("/", 1)[-1]))
+
+    def test_delete_media_for_track_is_a_noop_when_nothing_to_delete(self):
+        self.assertEqual(media_store.delete_media_for_track(999), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

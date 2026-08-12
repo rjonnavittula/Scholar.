@@ -47,3 +47,21 @@ def read_media(filename: str) -> bytes | None:
 
 def media_content_type(filename: str) -> str:
     return _KIND_BY_EXT.get(Path(filename).suffix, "application/octet-stream")
+
+
+def delete_media_for_track(track_id: int) -> int:
+    """Removes every file save_media wrote for this track (filenames are
+    always `{track_id}_{uuid}{ext}`, so a glob on the prefix is exact - no
+    risk of matching another track's files). Called from learn_store.delete_track
+    so removing a track doesn't leave orphaned plot/video/html files behind.
+    Returns the count removed; missing directory is just zero, not an error."""
+    if not MEDIA_ROOT.is_dir():
+        return 0
+    removed = 0
+    for path in MEDIA_ROOT.glob(f"{track_id}_*"):
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed

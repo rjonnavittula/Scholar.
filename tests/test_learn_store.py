@@ -142,6 +142,15 @@ class TestLearnStore(unittest.TestCase):
         self.assertTrue(delete_track(self.session, tree["id"]))
         self.assertIsNone(get_track_tree(self.session, tree["id"]))
 
+    def test_delete_track_removes_its_saved_media_files(self):
+        from unittest.mock import patch
+
+        tree = create_track_from_spec(self.session, {"track_title": "Python", "modules": ["Basics"]})
+
+        with patch("app.media_store.delete_media_for_track") as mock_delete:
+            self.assertTrue(delete_track(self.session, tree["id"]))
+        mock_delete.assert_called_once_with(tree["id"])
+
     def test_get_or_create_lesson_for_node_builds_starter_blocks(self):
         tree = create_track_from_spec(self.session, {
             "track_title": "Anatomy",

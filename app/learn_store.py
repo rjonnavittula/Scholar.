@@ -288,6 +288,9 @@ def delete_track(session: Session, track_id: int) -> bool:
 
     session.delete(track)
     session.commit()
+
+    from app.media_store import delete_media_for_track
+    delete_media_for_track(track_id)
     return True
 
 
