@@ -6,8 +6,10 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.learn_store import create_track_from_spec
 from app.sandbox_client import SandboxResult
-from app.tutor_engine import MAX_TOOL_ROUNDS, build_chat_messages, generate_tutor_prompt, run_tutor_turn
-from app.tutor_store import add_message, enable_tutor
+from app.tutor_engine import (
+    MAX_TOOL_ROUNDS, build_chat_messages, generate_tutor_prompt, regenerate_tutor_turn, run_tutor_turn,
+)
+from app.tutor_store import add_message, enable_tutor, list_messages
 
 
 class TestTutorEngine(unittest.TestCase):
@@ -89,6 +91,18 @@ class TestTutorEngine(unittest.TestCase):
         tool_call_msg = messages[2]
         self.assertEqual(tool_call_msg["tool_calls"], tool_calls)
         self.assertEqual(messages[3]["content"], "stdout:\n2\nexit_code: 0")
+
+    def test_build_chat_messages_with_none_appends_nothing_and_queries_rag_with_the_last_user_turn(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        add_message(self.session, self.track["id"], "user", "what is torque?")
+
+        with patch("app.rag_engine.search_track", return_value=[]) as mock_search:
+            messages = build_chat_messages(self.session, self.track["id"], None)
+
+        self.assertEqual([m["role"] for m in messages], ["system", "user"])
+        self.assertEqual(messages[-1]["content"], "what is torque?")
+        mock_search.assert_called_once()
+        self.assertEqual(mock_search.call_args.args[2], "what is torque?")
 
     # ---- run_tutor_turn ----
 
@@ -503,6 +517,68 @@ class TestTutorEngine(unittest.TestCase):
         sandbox.run.assert_called_once_with("print(42)", timeout_s=10)
         tool_call_event = next(e for e in events if e["type"] == "tool_call")
         self.assertEqual(tool_call_event["args"], {"code": "print(42)"})
+
+    # ---- regenerate_tutor_turn ----
+
+    def test_regenerate_tutor_turn_yields_error_when_tutor_not_enabled(self):
+        with patch("app.db.engine", self.engine):
+            events = list(regenerate_tutor_turn(self.track["id"]))
+        self.assertEqual(events, [{"type": "error", "content": "tutor_not_enabled"}])
+
+    def test_regenerate_tutor_turn_yields_error_when_nothing_to_regenerate(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        with patch("app.db.engine", self.engine):
+            events = list(regenerate_tutor_turn(self.track["id"]))
+        self.assertEqual(events, [{"type": "error", "content": "nothing_to_regenerate"}])
+
+    def test_regenerate_tutor_turn_removes_the_old_reply_and_streams_a_new_one(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        add_message(self.session, self.track["id"], "user", "what's the capital of France?")
+        add_message(self.session, self.track["id"], "assistant", "London.")  # the "wrong" reply to regenerate away
+
+        chunks = iter([{"message": {"content": "Paris."}, "done": True}])
+
+        with patch("app.db.engine", self.engine), \
+             patch("app.generation_client.stream_chat", return_value=chunks) as mock_stream, \
+             patch("app.rag_engine.search_track", return_value=[]):
+            events = list(regenerate_tutor_turn(self.track["id"]))
+
+        text = "".join(e["content"] for e in events if e["type"] == "text_delta")
+        self.assertEqual(text, "Paris.")
+
+        # the model saw the question once, as history's trailing user turn -
+        # not duplicated by build_chat_messages appending it again.
+        sent_messages = mock_stream.call_args.args[0]
+        user_turns = [m for m in sent_messages if m["role"] == "user"]
+        self.assertEqual(len(user_turns), 1)
+        self.assertEqual(user_turns[0]["content"], "what's the capital of France?")
+
+        history = list_messages(self.session, self.track["id"])
+        self.assertEqual([(m["role"], m["content"]) for m in history],
+                          [("user", "what's the capital of France?"), ("assistant", "Paris.")])
+
+    def test_regenerate_tutor_turn_can_call_tools_the_same_as_a_normal_turn(self):
+        enable_tutor(self.session, self.track["id"], "You are a robotics tutor.")
+        add_message(self.session, self.track["id"], "user", "what's 6*7?")
+        add_message(self.session, self.track["id"], "assistant", "41.")  # wrong, regenerate should fix it
+
+        tool_calls = [{"function": {"name": "run_python", "arguments": {"code": "print(6*7)"}}}]
+        round1 = iter([{"message": {"content": "", "tool_calls": tool_calls}, "done": True}])
+        round2 = iter([{"message": {"content": "42."}, "done": True}])
+
+        sandbox = MagicMock()
+        sandbox.run.return_value = SandboxResult(stdout="42\n", stderr="", exit_code=0, timed_out=False)
+
+        with patch("app.db.engine", self.engine), \
+             patch("app.generation_client.stream_chat", side_effect=[round1, round2]), \
+             patch("app.rag_engine.search_track", return_value=[]), \
+             patch("app.sandbox_client.get_sandbox_provider", return_value=sandbox):
+            events = list(regenerate_tutor_turn(self.track["id"]))
+
+        text = "".join(e["content"] for e in events if e["type"] == "text_delta")
+        self.assertEqual(text, "42.")
+        history = list_messages(self.session, self.track["id"])
+        self.assertEqual([m["role"] for m in history], ["user", "assistant", "tool", "assistant"])
 
 
 if __name__ == "__main__":

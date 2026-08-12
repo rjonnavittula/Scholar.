@@ -7,6 +7,59 @@ window.HiveTutor = (() => {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+  // Inline markdown - bold/italic/inline-code/links - applied to text
+  // that's ALREADY html-escaped (so it's safe to build tags around it
+  // without a second escaping pass mangling the entity references).
+  function renderInline(escapedText) {
+    const codeSpans = [];
+    let s = escapedText.replace(/`([^`\n]+)`/g, (_, code) => {
+      codeSpans.push(code);
+      return `\u0000${codeSpans.length - 1}\u0000`;
+    });
+
+    s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
+      (_, label, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`);
+
+    s = s.replace(/\*\*([^\n]+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/__([^\n]+?)__/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, '$1<em>$2</em>');
+    s = s.replace(/(^|[^_])_([^_\n]+?)_(?!_)/g, '$1<em>$2</em>');
+
+    return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codeSpans[Number(i)]}</code>`);
+  }
+
+  // Block markdown - headers, bulleted/numbered lists, paragraphs - for a
+  // chunk of text known NOT to contain a fenced code block (those are
+  // split out and handled separately in renderMarkdownLite, verbatim).
+  function renderBlock(text) {
+    const out = [];
+    let listType = null;
+    const closeList = () => { if (listType) { out.push(`</${listType}>`); listType = null; } };
+
+    for (const rawLine of text.split('\n')) {
+      const headerMatch = /^(#{1,6})\s+(.*)$/.exec(rawLine);
+      const ulMatch = /^[-*]\s+(.*)$/.exec(rawLine);
+      const olMatch = /^\d+\.\s+(.*)$/.exec(rawLine);
+
+      if (headerMatch) {
+        closeList();
+        const level = Math.min(headerMatch[1].length + 2, 6); // never h1/h2 - too large inside a chat bubble
+        out.push(`<h${level}>${renderInline(esc(headerMatch[2]))}</h${level}>`);
+      } else if (ulMatch) {
+        if (listType !== 'ul') { closeList(); out.push('<ul>'); listType = 'ul'; }
+        out.push(`<li>${renderInline(esc(ulMatch[1]))}</li>`);
+      } else if (olMatch) {
+        if (listType !== 'ol') { closeList(); out.push('<ol>'); listType = 'ol'; }
+        out.push(`<li>${renderInline(esc(olMatch[1]))}</li>`);
+      } else {
+        closeList();
+        out.push(rawLine.trim() === '' ? '<br>' : renderInline(esc(rawLine)) + '<br>');
+      }
+    }
+    closeList();
+    return out.join('');
+  }
+
   function renderMarkdownLite(text) {
     const parts = String(text ?? '').split(/```([\s\S]*?)```/);
     return parts.map((part, i) => {
@@ -15,7 +68,7 @@ window.HiveTutor = (() => {
         if (lines[0] && /^[a-zA-Z0-9_+-]*$/.test(lines[0].trim()) && lines.length > 1) lines.shift();
         return `<pre class="tutor-code"><code>${esc(lines.join('\n'))}</code></pre>`;
       }
-      return esc(part).replace(/\n/g, '<br>');
+      return renderBlock(part);
     }).join('');
   }
 
@@ -227,11 +280,86 @@ window.HiveTutor = (() => {
     if (openBtn) openBtn.onclick = () => onOpen(true);
   }
 
+  // Drives one streamed turn's live rendering into threadEl - shared by
+  // send() (POST .../messages) and regenerate() (POST .../regenerate),
+  // which differ only in which request kicks the stream off and what (if
+  // anything) they put in the thread before calling this.
+  async function streamIntoThread(threadEl, fetchPromise) {
+    // A turn can span multiple assistant text spans with tool calls
+    // interleaved between them (see tutor_engine.py's round loop) - each
+    // gets its own bubble so the DOM stays in chronological order instead
+    // of text-before and text-after a tool call fighting over one bubble.
+    let contentEl = null;
+    let raw = '';
+    let pendingToolId = null;
+    const newAssistantBubble = () => {
+      // drop the previous bubble if the model went straight to a tool
+      // call and never put any text in it - otherwise every tool call
+      // leaves a stray empty bubble behind it in the thread
+      if (contentEl && !contentEl.innerHTML.trim()) contentEl.closest('.tutor-bubble')?.remove();
+      const liveId = 'live-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+      threadEl.insertAdjacentHTML('beforeend', `<div class="tutor-bubble tutor-bubble-assistant" data-msg-id="${liveId}"><div class="tutor-bubble-content"></div></div>`);
+      contentEl = threadEl.querySelector(`[data-msg-id="${liveId}"] .tutor-bubble-content`);
+      raw = '';
+    };
+    newAssistantBubble();
+    threadEl.scrollTop = threadEl.scrollHeight;
+
+    try {
+      const resp = await fetchPromise;
+      if (!resp.ok || !resp.body) throw new Error('tutor request failed (' + resp.status + ')');
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, idx).trim();
+          buffer = buffer.slice(idx + 1);
+          if (!line) continue;
+          let event;
+          try { event = JSON.parse(line); } catch (e) { continue; }
+          if (event.type === 'text_delta') {
+            raw += event.content;
+            contentEl.innerHTML = renderMarkdownLite(raw);
+            threadEl.scrollTop = threadEl.scrollHeight;
+          } else if (event.type === 'tool_call') {
+            pendingToolId = 'tool-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+            threadEl.insertAdjacentHTML('beforeend', toolCallPendingBubble(pendingToolId, event.name, event.args));
+            threadEl.scrollTop = threadEl.scrollHeight;
+          } else if (event.type === 'tool_result') {
+            const pendingEl = pendingToolId && threadEl.querySelector(`[data-tool-id="${pendingToolId}"]`);
+            if (pendingEl) {
+              pendingEl.outerHTML = toolResultBubbleHtml(pendingToolId, event);
+              const resultEl = threadEl.querySelector(`[data-tool-id="${pendingToolId}"]`);
+              if (resultEl) hydrateMedia(resultEl);
+            }
+            pendingToolId = null;
+            threadEl.scrollTop = threadEl.scrollHeight;
+            newAssistantBubble(); // whatever text comes next belongs after this result
+          } else if (event.type === 'error') {
+            contentEl.innerHTML += `<p class="tutor-error">could not reply: ${esc(event.content)}</p>`;
+          }
+        }
+      }
+    } catch (err) {
+      contentEl.innerHTML += `<p class="tutor-error">${esc(err.message || err)}</p>`;
+    } finally {
+      // drop a trailing bubble that never got any text (e.g. the turn
+      // ended right after a tool result with nothing further to say)
+      if (contentEl && !contentEl.innerHTML.trim()) contentEl.closest('.tutor-bubble')?.remove();
+    }
+  }
+
   async function renderChat(el, track, Api, onExit) {
     el.innerHTML = `<div class="tutor-shell fade-in">
       <header class="tutor-topbar">
         <button data-tutor-exit class="forge-lesson-exit" aria-label="Exit tutor">×</button>
         <div class="tutor-topbar-title"><span>Tutor</span><h2>${esc(track.title)}</h2></div>
+        <button data-tutor-regenerate class="ghost xs" disabled>regenerate last reply</button>
         <button data-tutor-clear class="ghost xs">clear conversation</button>
       </header>
       <main class="tutor-thread" data-tutor-thread><p class="muted small">loading…</p></main>
@@ -246,6 +374,15 @@ window.HiveTutor = (() => {
     const threadEl = el.querySelector('[data-tutor-thread]');
     const input = el.querySelector('[data-tutor-input]');
     const sendBtn = el.querySelector('[data-tutor-send]');
+    const regenerateBtn = el.querySelector('[data-tutor-regenerate]');
+
+    function updateRegenerateAvailability() {
+      regenerateBtn.disabled = sendBtn.disabled || !threadEl.querySelector('.tutor-bubble-user');
+    }
+    function setBusy(busy) {
+      sendBtn.disabled = busy;
+      updateRegenerateAvailability();
+    }
 
     async function loadHistory() {
       const messages = await Api.get(`/learn/tracks/${track.id}/tutor/messages`);
@@ -260,6 +397,7 @@ window.HiveTutor = (() => {
       threadEl.innerHTML = html || '<p class="muted small">Say hello to start.</p>';
       threadEl.scrollTop = threadEl.scrollHeight;
       hydrateMedia(threadEl);
+      updateRegenerateAvailability();
     }
 
     el.querySelector('[data-tutor-clear]').onclick = async () => {
@@ -272,86 +410,44 @@ window.HiveTutor = (() => {
       const text = input.value.trim();
       if (!text || sendBtn.disabled) return;
       input.value = '';
-      sendBtn.disabled = true;
+      setBusy(true);
       if (threadEl.querySelector('.muted.small')) threadEl.innerHTML = '';
       threadEl.insertAdjacentHTML('beforeend', bubble({ role: 'user', content: text }));
 
-      // A turn can span multiple assistant text spans with tool calls
-      // interleaved between them (see tutor_engine.py's round loop) - each
-      // gets its own bubble so the DOM stays in chronological order instead
-      // of text-before and text-after a tool call fighting over one bubble.
-      let contentEl = null;
-      let raw = '';
-      let pendingToolId = null;
-      const newAssistantBubble = () => {
-        // drop the previous bubble if the model went straight to a tool
-        // call and never put any text in it - otherwise every tool call
-        // leaves a stray empty bubble behind it in the thread
-        if (contentEl && !contentEl.innerHTML.trim()) contentEl.closest('.tutor-bubble')?.remove();
-        const liveId = 'live-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-        threadEl.insertAdjacentHTML('beforeend', `<div class="tutor-bubble tutor-bubble-assistant" data-msg-id="${liveId}"><div class="tutor-bubble-content"></div></div>`);
-        contentEl = threadEl.querySelector(`[data-msg-id="${liveId}"] .tutor-bubble-content`);
-        raw = '';
-      };
-      newAssistantBubble();
-      threadEl.scrollTop = threadEl.scrollHeight;
+      await streamIntoThread(threadEl, fetch(`/learn/tracks/${track.id}/tutor/messages`, {
+        method: 'POST',
+        headers: { 'X-API-Key': localStorage.getItem('hive-key') || '', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: text }),
+      }));
 
-      try {
-        const resp = await fetch(`/learn/tracks/${track.id}/tutor/messages`, {
-          method: 'POST',
-          headers: { 'X-API-Key': localStorage.getItem('hive-key') || '', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: text }),
-        });
-        if (!resp.ok || !resp.body) throw new Error('tutor request failed (' + resp.status + ')');
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          let idx;
-          while ((idx = buffer.indexOf('\n')) >= 0) {
-            const line = buffer.slice(0, idx).trim();
-            buffer = buffer.slice(idx + 1);
-            if (!line) continue;
-            let event;
-            try { event = JSON.parse(line); } catch (e) { continue; }
-            if (event.type === 'text_delta') {
-              raw += event.content;
-              contentEl.innerHTML = renderMarkdownLite(raw);
-              threadEl.scrollTop = threadEl.scrollHeight;
-            } else if (event.type === 'tool_call') {
-              pendingToolId = 'tool-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-              threadEl.insertAdjacentHTML('beforeend', toolCallPendingBubble(pendingToolId, event.name, event.args));
-              threadEl.scrollTop = threadEl.scrollHeight;
-            } else if (event.type === 'tool_result') {
-              const pendingEl = pendingToolId && threadEl.querySelector(`[data-tool-id="${pendingToolId}"]`);
-              if (pendingEl) {
-                pendingEl.outerHTML = toolResultBubbleHtml(pendingToolId, event);
-                const resultEl = threadEl.querySelector(`[data-tool-id="${pendingToolId}"]`);
-                if (resultEl) hydrateMedia(resultEl);
-              }
-              pendingToolId = null;
-              threadEl.scrollTop = threadEl.scrollHeight;
-              newAssistantBubble(); // whatever text comes next belongs after this result
-            } else if (event.type === 'error') {
-              contentEl.innerHTML += `<p class="tutor-error">could not reply: ${esc(event.content)}</p>`;
-            }
-          }
-        }
-      } catch (err) {
-        contentEl.innerHTML += `<p class="tutor-error">${esc(err.message || err)}</p>`;
-      } finally {
-        // drop a trailing bubble that never got any text (e.g. the turn
-        // ended right after a tool result with nothing further to say)
-        if (contentEl && !contentEl.innerHTML.trim()) contentEl.closest('.tutor-bubble')?.remove();
-        sendBtn.disabled = false;
-        input.focus();
+      setBusy(false);
+      input.focus();
+    }
+
+    async function regenerate() {
+      const userBubbles = threadEl.querySelectorAll('.tutor-bubble-user');
+      if (regenerateBtn.disabled || !userBubbles.length) return;
+      setBusy(true);
+      // remove the old reply (and any tool bubbles it produced) - the
+      // server does the same trim to its own history, see
+      // tutor_store.truncate_after_last_user_message.
+      let node = userBubbles[userBubbles.length - 1].nextElementSibling;
+      while (node) {
+        const next = node.nextElementSibling;
+        node.remove();
+        node = next;
       }
+
+      await streamIntoThread(threadEl, fetch(`/learn/tracks/${track.id}/tutor/regenerate`, {
+        method: 'POST',
+        headers: { 'X-API-Key': localStorage.getItem('hive-key') || '' },
+      }));
+
+      setBusy(false);
     }
 
     sendBtn.onclick = send;
+    regenerateBtn.onclick = regenerate;
     input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
 
     await loadHistory();

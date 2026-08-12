@@ -393,7 +393,16 @@ def generate_tutor_prompt(description: str) -> str:
     return generate_text(PROMPT_GEN_SYSTEM, description).strip()
 
 
-def build_chat_messages(session: Session, track_id: int, user_message: str) -> list[dict[str, Any]] | None:
+def build_chat_messages(session: Session, track_id: int, user_message: str | None) -> list[dict[str, Any]] | None:
+    """Replays this track's persisted history as chat messages.
+
+    user_message: text to search course material against, and to append as
+    a fresh trailing user turn. Pass None for a regenerate - the last
+    message already in history IS the user turn to answer (see
+    regenerate_tutor_turn / tutor_store.truncate_after_last_user_message),
+    so nothing gets appended, and that history's last user turn is used as
+    the RAG query instead.
+    """
     from app.rag_engine import search_track
     from app.tutor_store import get_tutor_config, list_messages
 
@@ -401,8 +410,9 @@ def build_chat_messages(session: Session, track_id: int, user_message: str) -> l
     if not config:
         return None
 
+    history = list_messages(session, track_id) or []
     messages: list[dict[str, Any]] = [{"role": "system", "content": config["tutor_system_prompt"]}]
-    for m in list_messages(session, track_id) or []:
+    for m in history:
         if m["role"] in ("user", "assistant"):
             entry: dict[str, Any] = {"role": m["role"], "content": m["content"]}
             if m["role"] == "assistant" and m.get("tool_calls_json"):
@@ -414,7 +424,11 @@ def build_chat_messages(session: Session, track_id: int, user_message: str) -> l
         elif m["role"] == "tool":
             messages.append({"role": "tool", "content": m["content"]})
 
-    hits = search_track(session, track_id, user_message, top_k=4)
+    rag_query = user_message
+    if rag_query is None:
+        rag_query = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
+
+    hits = search_track(session, track_id, rag_query, top_k=4)
     if hits:
         excerpts = "\n\n".join(
             f"[{h['source_title'] or 'source'} — {h['heading'] or 'untitled'}]\n{h['snippet']}"
@@ -428,17 +442,103 @@ def build_chat_messages(session: Session, track_id: int, user_message: str) -> l
             ),
         })
 
-    messages.append({"role": "user", "content": user_message})
+    if user_message is not None:
+        messages.append({"role": "user", "content": user_message})
     return messages
+
+
+def _stream_and_loop(session: Session, track_id: int, messages: list[dict[str, Any]]
+                      ) -> Generator[dict[str, Any], None, None]:
+    """The bounded round loop (MAX_TOOL_ROUNDS) shared by a normal turn and
+    a regenerate: `messages` already ends with the user turn to answer -
+    this just streams the reply, executes any tool calls, and persists
+    what comes after, exactly the same way either way.
+
+    Not a single stream_chat call: if the model asks to call a tool, run
+    it, feed the result back, and let the model continue - up to the round
+    cap, which forces a final tools-off round so a turn always ends in a
+    text reply instead of hanging.
+    """
+    from app.generation_client import stream_chat
+    from app.tutor_store import add_message
+
+    model = _tutor_model()
+
+    # Tracks the in-progress round's text so a client disconnecting
+    # mid-stream (GeneratorExit) still gets its partial reply persisted -
+    # `persisted` is reset each round and flipped True by whichever
+    # normal-path add_message() already saved this round's full_reply, so
+    # the finally block only ever fires as a fallback, never a dup.
+    full_reply = ""
+    tool_calls: list[dict[str, Any]] | None = None
+    persisted = False
+    try:
+        for round_num in range(MAX_TOOL_ROUNDS + 1):
+            full_reply = ""
+            tool_calls = None
+            persisted = False
+            use_tools = round_num < MAX_TOOL_ROUNDS
+            # Recomputed each round (not hoisted above the loop): a
+            # define_tool call earlier in this same turn must make the
+            # new tool callable on the very next round, not just future
+            # turns.
+            round_tools = _tools_for_track(session, track_id) if use_tools else None
+            for chunk in stream_chat(messages, model=model, tools=round_tools):
+                if chunk.get("error"):
+                    yield {"type": "error", "content": chunk["error"]}
+                    return
+                msg = chunk.get("message") or {}
+                content = msg.get("content") or ""
+                if content:
+                    full_reply += content
+                    yield {"type": "text_delta", "content": content}
+                if msg.get("tool_calls"):
+                    tool_calls = msg["tool_calls"]
+                if chunk.get("done"):
+                    break
+
+            if not tool_calls:
+                if full_reply.strip():
+                    add_message(session, track_id, "assistant", full_reply)
+                    persisted = True
+                return
+
+            # the model wants to use a tool: persist the request (content
+            # may be empty - some models emit a tool call with no visible
+            # text), run each requested call, persist + feed back its
+            # result, and loop so the model can react to what it learned.
+            add_message(session, track_id, "assistant", full_reply, tool_calls_json=json.dumps(tool_calls))
+            persisted = True
+            messages.append({"role": "assistant", "content": full_reply, "tool_calls": tool_calls})
+
+            for call in tool_calls:
+                fn = call.get("function") or {}
+                name = fn.get("name") or ""
+                args = fn.get("arguments") or {}
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except (TypeError, ValueError):
+                        args = {}
+                yield {"type": "tool_call", "name": name, "args": args}
+                content, extra = _run_tool(session, track_id, name, args)
+                yield {"type": "tool_result", "name": name, "code": args.get("code", ""), **extra}
+                add_message(session, track_id, "tool", content, tool_name=name)
+                messages.append({"role": "tool", "content": content})
+
+        # MAX_TOOL_ROUNDS exhausted without a final text reply - degrade
+        # gracefully instead of leaving the stream hanging with no answer.
+        fallback = "Stopped after several tool calls without reaching a final answer — try rephrasing?"
+        yield {"type": "text_delta", "content": fallback}
+        add_message(session, track_id, "assistant", fallback)
+        persisted = True
+    finally:
+        if not persisted and full_reply.strip():
+            add_message(session, track_id, "assistant", full_reply)
 
 
 def run_tutor_turn(track_id: int, user_message: str) -> Generator[dict[str, Any], None, None]:
     """Persist the user's message, stream the tutor's reply, persist that too.
-
-    A bounded loop (MAX_TOOL_ROUNDS), not a single stream_chat call: if the
-    model asks to call run_python, run it, feed the result back, and let the
-    model continue - up to the round cap, which forces a final tools-off
-    round so a turn always ends in a text reply instead of hanging.
 
     Opens its own Session — this generator's body keeps running after the
     FastAPI route handler returns (StreamingResponse), by which point a
@@ -448,7 +548,6 @@ def run_tutor_turn(track_id: int, user_message: str) -> Generator[dict[str, Any]
     from sqlmodel import Session as _Session
 
     from app.db import engine
-    from app.generation_client import stream_chat
     from app.tutor_store import add_message, get_tutor_config
 
     with _Session(engine) as session:
@@ -459,77 +558,30 @@ def run_tutor_turn(track_id: int, user_message: str) -> Generator[dict[str, Any]
 
         add_message(session, track_id, "user", user_message)
         messages = build_chat_messages(session, track_id, user_message)
-        model = _tutor_model()
+        yield from _stream_and_loop(session, track_id, messages)
 
-        # Tracks the in-progress round's text so a client disconnecting
-        # mid-stream (GeneratorExit) still gets its partial reply persisted,
-        # same guarantee the old single-round version had via try/finally -
-        # `persisted` is reset each round and flipped True by whichever
-        # normal-path add_message() already saved this round's full_reply,
-        # so the finally block only ever fires as a fallback, never a dup.
-        full_reply = ""
-        tool_calls: list[dict[str, Any]] | None = None
-        persisted = False
-        try:
-            for round_num in range(MAX_TOOL_ROUNDS + 1):
-                full_reply = ""
-                tool_calls = None
-                persisted = False
-                use_tools = round_num < MAX_TOOL_ROUNDS
-                # Recomputed each round (not hoisted above the loop): a
-                # define_tool call earlier in this same turn must make the
-                # new tool callable on the very next round, not just future
-                # turns.
-                round_tools = _tools_for_track(session, track_id) if use_tools else None
-                for chunk in stream_chat(messages, model=model, tools=round_tools):
-                    if chunk.get("error"):
-                        yield {"type": "error", "content": chunk["error"]}
-                        return
-                    msg = chunk.get("message") or {}
-                    content = msg.get("content") or ""
-                    if content:
-                        full_reply += content
-                        yield {"type": "text_delta", "content": content}
-                    if msg.get("tool_calls"):
-                        tool_calls = msg["tool_calls"]
-                    if chunk.get("done"):
-                        break
 
-                if not tool_calls:
-                    if full_reply.strip():
-                        add_message(session, track_id, "assistant", full_reply)
-                        persisted = True
-                    return
+def regenerate_tutor_turn(track_id: int) -> Generator[dict[str, Any], None, None]:
+    """Deletes the tutor's last reply (and any tool round-trip that
+    produced it) and asks the model to answer the same last user turn
+    again - same round-loop mechanism as run_tutor_turn, just starting
+    from a user turn that's already persisted instead of a fresh one.
+    """
+    from sqlmodel import Session as _Session
 
-                # the model wants to use a tool: persist the request (content
-                # may be empty - some models emit a tool call with no visible
-                # text), run each requested call, persist + feed back its
-                # result, and loop so the model can react to what it learned.
-                add_message(session, track_id, "assistant", full_reply, tool_calls_json=json.dumps(tool_calls))
-                persisted = True
-                messages.append({"role": "assistant", "content": full_reply, "tool_calls": tool_calls})
+    from app.db import engine
+    from app.tutor_store import get_tutor_config, truncate_after_last_user_message
 
-                for call in tool_calls:
-                    fn = call.get("function") or {}
-                    name = fn.get("name") or ""
-                    args = fn.get("arguments") or {}
-                    if isinstance(args, str):
-                        try:
-                            args = json.loads(args)
-                        except (TypeError, ValueError):
-                            args = {}
-                    yield {"type": "tool_call", "name": name, "args": args}
-                    content, extra = _run_tool(session, track_id, name, args)
-                    yield {"type": "tool_result", "name": name, "code": args.get("code", ""), **extra}
-                    add_message(session, track_id, "tool", content, tool_name=name)
-                    messages.append({"role": "tool", "content": content})
+    with _Session(engine) as session:
+        config = get_tutor_config(session, track_id)
+        if not config or not config["tutor_enabled"]:
+            yield {"type": "error", "content": "tutor_not_enabled"}
+            return
 
-            # MAX_TOOL_ROUNDS exhausted without a final text reply - degrade
-            # gracefully instead of leaving the stream hanging with no answer.
-            fallback = "Stopped after several tool calls without reaching a final answer — try rephrasing?"
-            yield {"type": "text_delta", "content": fallback}
-            add_message(session, track_id, "assistant", fallback)
-            persisted = True
-        finally:
-            if not persisted and full_reply.strip():
-                add_message(session, track_id, "assistant", full_reply)
+        last_user_message = truncate_after_last_user_message(session, track_id)
+        if last_user_message is None:
+            yield {"type": "error", "content": "nothing_to_regenerate"}
+            return
+
+        messages = build_chat_messages(session, track_id, None)
+        yield from _stream_and_loop(session, track_id, messages)

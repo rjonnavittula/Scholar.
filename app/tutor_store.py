@@ -88,6 +88,24 @@ def clear_messages(session: Session, track_id: int) -> bool:
     return True
 
 
+def truncate_after_last_user_message(session: Session, track_id: int) -> str | None:
+    """For regenerate: deletes every message after the most recent user
+    turn (the tutor's reply and any tool round-trip that produced it), so
+    the model can be asked to answer that same turn again. Returns that
+    user message's content, or None if there's no user turn to regenerate
+    from (empty conversation)."""
+    rows = session.exec(
+        select(TutorMessage).where(TutorMessage.track_id == track_id).order_by(TutorMessage.created_at)
+    ).all()
+    last_user_index = next((i for i in range(len(rows) - 1, -1, -1) if rows[i].role == "user"), None)
+    if last_user_index is None:
+        return None
+    for m in rows[last_user_index + 1:]:
+        session.delete(m)
+    session.commit()
+    return rows[last_user_index].content
+
+
 def _dynamic_tool_to_dict(tool: TutorDynamicTool) -> dict[str, Any]:
     return {
         "id": tool.id,

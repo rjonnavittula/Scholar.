@@ -579,6 +579,23 @@ def send_track_tutor_message(track_id: int, payload: dict, session: Session = De
     return StreamingResponse(_events(), media_type="application/x-ndjson")
 
 
+@learn_router.post("/tracks/{track_id}/tutor/regenerate", summary="Regenerate the tutor's last reply")
+def regenerate_track_tutor_message(track_id: int, session: Session = Depends(get_session)):
+    from fastapi.responses import StreamingResponse
+    from app.models import LearningTrack
+    from app.tutor_engine import regenerate_tutor_turn
+
+    if not session.get(LearningTrack, track_id):
+        raise HTTPException(404, "track_not_found")
+
+    def _events():
+        import json as _json
+        for event in regenerate_tutor_turn(track_id):
+            yield _json.dumps(event) + "\n"
+
+    return StreamingResponse(_events(), media_type="application/x-ndjson")
+
+
 @learn_router.get("/tutor/media/{filename}", summary="Fetch a tutor-generated media file (plot image, etc.)")
 def get_tutor_media(filename: str):
     from fastapi import Response

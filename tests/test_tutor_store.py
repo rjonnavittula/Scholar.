@@ -5,6 +5,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from app.learn_store import create_track_from_spec
 from app.tutor_store import (
     add_message, clear_messages, disable_tutor, enable_tutor, get_tutor_config, list_messages,
+    truncate_after_last_user_message,
 )
 
 
@@ -64,6 +65,46 @@ class TestTutorStore(unittest.TestCase):
 
     def test_clear_messages_returns_false_for_missing_track(self):
         self.assertFalse(clear_messages(self.session, 999))
+
+    def test_truncate_after_last_user_message_removes_the_reply_and_returns_the_question(self):
+        tid = self.track["id"]
+        add_message(self.session, tid, "user", "what's 1+1?")
+        add_message(self.session, tid, "assistant", "", tool_calls_json="[]")
+        add_message(self.session, tid, "tool", "stdout:\n2", tool_name="run_python")
+        add_message(self.session, tid, "assistant", "it's 2.")
+
+        result = truncate_after_last_user_message(self.session, tid)
+
+        self.assertEqual(result, "what's 1+1?")
+        history = list_messages(self.session, tid)
+        self.assertEqual([m["role"] for m in history], ["user"])
+        self.assertEqual(history[0]["content"], "what's 1+1?")
+
+    def test_truncate_after_last_user_message_only_removes_messages_after_the_last_one(self):
+        tid = self.track["id"]
+        add_message(self.session, tid, "user", "first question")
+        add_message(self.session, tid, "assistant", "first answer")
+        add_message(self.session, tid, "user", "second question")
+        add_message(self.session, tid, "assistant", "second answer")
+
+        result = truncate_after_last_user_message(self.session, tid)
+
+        self.assertEqual(result, "second question")
+        history = list_messages(self.session, tid)
+        self.assertEqual([m["content"] for m in history],
+                          ["first question", "first answer", "second question"])
+
+    def test_truncate_after_last_user_message_is_a_noop_when_the_last_message_is_already_a_user_turn(self):
+        tid = self.track["id"]
+        add_message(self.session, tid, "user", "hello")
+
+        result = truncate_after_last_user_message(self.session, tid)
+
+        self.assertEqual(result, "hello")
+        self.assertEqual(len(list_messages(self.session, tid)), 1)
+
+    def test_truncate_after_last_user_message_returns_none_for_an_empty_conversation(self):
+        self.assertIsNone(truncate_after_last_user_message(self.session, self.track["id"]))
 
 
 if __name__ == "__main__":

@@ -1709,6 +1709,18 @@ body.theme-dark{
 .tutor-bubble-content pre.tutor-code{ margin:10px 0; padding:12px 14px; background:var(--f-bg-sunken); border:1px solid rgba(var(--f-accent-rgb),.14); border-radius:12px; overflow:auto; font-family:ui-monospace,"SF Mono",Consolas,monospace; font-size:12.5px; line-height:1.6; }
 .tutor-bubble-content pre.tutor-code:first-child{ margin-top:0; }
 .tutor-bubble-content pre.tutor-code:last-child{ margin-bottom:0; }
+.tutor-bubble-content h3, .tutor-bubble-content h4, .tutor-bubble-content h5, .tutor-bubble-content h6{
+  margin:14px 0 6px; line-height:1.35; font-weight:700; }
+.tutor-bubble-content h3:first-child, .tutor-bubble-content h4:first-child,
+.tutor-bubble-content h5:first-child, .tutor-bubble-content h6:first-child{ margin-top:0; }
+.tutor-bubble-content h3{ font-size:17px; }
+.tutor-bubble-content h4{ font-size:15.5px; }
+.tutor-bubble-content h5, .tutor-bubble-content h6{ font-size:14.5px; }
+.tutor-bubble-content ul, .tutor-bubble-content ol{ margin:8px 0; padding-left:22px; }
+.tutor-bubble-content li{ margin:3px 0; }
+.tutor-bubble-content code{ font-family:ui-monospace,"SF Mono",Consolas,monospace; font-size:.9em;
+  background:var(--f-bg-sunken); border-radius:5px; padding:.1em .4em; }
+.tutor-bubble-content a{ color:var(--f-accent); text-decoration:underline; text-underline-offset:2px; }
 .tutor-error{ color:var(--f-danger); font-size:12.5px; margin:8px 0 0; }
 /* tool-call bubbles: same slot as an assistant bubble, own visual identity */
 .tutor-tool-bubble{ align-self:flex-start; max-width:min(680px,80%); background:var(--f-surface);
