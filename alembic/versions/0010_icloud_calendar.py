@@ -1,15 +1,21 @@
 """icloud calendar sync fields on settings
 
 Revision ID: 0010_icloud_calendar
-Revises: 0009_canvas_autosync
+Revises: 0019_tutor_dynamic_tools
 Create Date: 2026-08-16
+
+Re-chained after merging origin/hive-courses: this and 0010_learning_tracks
+both originally pointed to 0009_canvas_autosync (two branches never meant to
+coexist -- they were built in separate, unmerged checkouts). Re-pointed to
+come after the full learning/tutor chain rather than renumber 0011-0019,
+which already reference each other by revision id, not filename order.
 """
 from alembic import op
 import sqlalchemy as sa
 import sqlmodel  # noqa: F401
 
 revision = "0010_icloud_calendar"
-down_revision = "0009_canvas_autosync"
+down_revision = "0019_tutor_dynamic_tools"
 branch_labels = None
 depends_on = None
 
