@@ -86,6 +86,7 @@ class Activity(SQLModel, table=True):
     end_min: int
     tz: Optional[str] = None          # IANA zone; None = use home_tz
     course_id: Optional[int] = Field(default=None, foreign_key="course.id")
+    notes: str = ""
 
 
 class PlannedBlock(SQLModel, table=True):
@@ -122,9 +123,8 @@ class Settings(SQLModel, table=True):
     school_tz: str = "America/New_York"   # where due dates are anchored
     week_start: int = 6                   # 0=Mon .. 6=Sun (calendar week start)
     country: str = "US"                   # ISO-3166 for the location->tz picker
-    onboarded: bool = False
-    theme: str = "dark"
-    accent: str = "#8A7F73"
+    theme: str = "light"
+    accent: str = "#3D7DFF"
     density: float = 1.0
     fontscale: float = 1.0
     default_view: str = "week"
@@ -184,3 +184,154 @@ class GradeItem(SQLModel, table=True):
     title: str = ""
     earned: float = 0.0
     possible: float = 0.0
+
+
+class LearningTrack(SQLModel, table=True):
+    """A Forge learning path generated from a prompt/source and saved server-side."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(index=True)
+    input_type: str = "source_text"
+    role: str = ""
+    source_hash: str = Field(default="", index=True)
+    status: str = "draft"   # draft | active | archived
+    tutor_enabled: bool = False
+    tutor_system_prompt: str = ""
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class TutorMessage(SQLModel, table=True):
+    """One turn in a track's tutor conversation. role: system | user | assistant | tool."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    track_id: int = Field(foreign_key="learningtrack.id", index=True)
+    role: str = "user"
+    content: str = ""
+    created_at: datetime = Field(default_factory=datetime.now)
+    # set on an "assistant" message that requested tool call(s) - raw JSON array
+    tool_calls_json: Optional[str] = None
+    # set on a "tool" message - which tool produced this result
+    tool_name: Optional[str] = None
+
+
+class TutorDynamicTool(SQLModel, table=True):
+    """A tool the tutor model authored for itself mid-conversation (Phase 4).
+    Uniqueness on (track_id, name) is enforced in tutor_store.upsert_dynamic_tool
+    (look-up-then-update), not a DB constraint - matches this file's existing
+    style of application-level rather than schema-level invariants."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    track_id: int = Field(foreign_key="learningtrack.id", index=True)
+    name: str
+    description: str = ""
+    parameters_schema: str = "{}"  # JSON Schema, as text
+    code: str = ""
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class LearningSource(SQLModel, table=True):
+    """Trusted material registered for Scholar learning. Parsing/RAG comes later."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(index=True)
+    source_type: str = "text"        # text | markdown | pdf | url | syllabus
+    trust_level: str = "user"        # user | course | official | web
+    status: str = "registered"      # registered | parsed | indexed | archived
+    content_hash: str = Field(default="", index=True)
+    mime_type: str = "text/plain"
+    original_name: str = ""
+    body_text: str = ""
+    metadata_json: str = "{}"
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class LearningTrackSource(SQLModel, table=True):
+    """Join table: a course can be grounded by many registered sources."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    track_id: int = Field(foreign_key="learningtrack.id", index=True)
+    source_id: int = Field(foreign_key="learningsource.id", index=True)
+    role: str = "primary"
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class LearningSourceSection(SQLModel, table=True):
+    """Deterministic parsed section from a registered source. No embeddings yet."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_id: int = Field(foreign_key="learningsource.id", index=True)
+    position: int = Field(index=True)
+    heading: str
+    level: int = 1
+    body_text: str = ""
+    char_count: int = 0
+    section_hash: str = Field(default="", index=True)
+    metadata_json: str = "{}"
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+
+
+class LearningSourceChunk(SQLModel, table=True):
+    """Small deterministic text unit prepared for later embedding/RAG indexing."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_id: int = Field(foreign_key="learningsource.id", index=True)
+    section_id: Optional[int] = Field(default=None, foreign_key="learningsourcesection.id", index=True)
+    position: int = Field(index=True)
+    section_position: int = 0
+    heading: str = ""
+    heading_path_json: str = "[]"
+    body_text: str = ""
+    char_count: int = 0
+    token_estimate: int = 0
+    chunk_hash: str = Field(default="", index=True)
+    metadata_json: str = "{}"
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class LearningModule(SQLModel, table=True):
+    """A major region/unit inside a Forge learning track."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    track_id: int = Field(foreign_key="learningtrack.id", index=True)
+    title: str
+    position: int = Field(index=True)
+    exp: int = 100
+    locked: bool = False
+    completed: bool = False
+    mastery: float = 0.0
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class LearningNode(SQLModel, table=True):
+    """A concrete mission/lesson node inside a module."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    module_id: int = Field(foreign_key="learningmodule.id", index=True)
+    title: str
+    position: int = Field(index=True)
+    node_type: str = "lesson"  # lesson | quiz | project | boss_fight
+    exp: int = 50
+    locked: bool = False
+    completed: bool = False
+    mastery: float = 0.0
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class LearningLesson(SQLModel, table=True):
+    """A saved lesson attached to a Forge node. Content lives in ordered blocks."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    node_id: int = Field(foreign_key="learningnode.id", index=True)
+    title: str
+    status: str = "draft"   # draft | generated | reviewed | archived
+    estimated_min: int = 10
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class LearningBlock(SQLModel, table=True):
+    """A safe lesson block payload. No raw generated HTML/JS belongs here."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lesson_id: int = Field(foreign_key="learninglesson.id", index=True)
+    position: int = Field(index=True)
+    block_type: str = "text"
+    title: str = ""
+    payload_json: str = "{}"
+    source_refs_json: str = "[]"
+    confidence: float = 0.0
+    created_at: datetime = Field(default_factory=datetime.now)

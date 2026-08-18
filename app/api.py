@@ -6,14 +6,31 @@ import secrets
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, select
 
 from zoneinfo import ZoneInfo
 
 from app.cushion import EngineConfig, availability_days, compute_cushion
 from app.rollup import roll_up
+from app.learn_parser import parse_source
+from app.learn_store import (
+    add_lesson_block, complete_learning_node, create_track_from_spec, delete_track,
+    get_lesson_tree, get_or_create_lesson_for_node, get_track_tree, list_tracks,
+    start_learning_node,
+)
+from app.chunk_store import list_source_chunks
+from app.chunker import chunk_registered_source
+from app.source_store import (
+    create_source, delete_source, get_source, get_source_audit, link_source_to_track, list_sources,
+    list_source_sections, list_track_sources, parse_registered_source, unlink_source_from_track,
+)
+from app.source_upload import build_upload_source_spec
+from app.embedding_client import embed_text_preview, get_embedding_health
+from app.vector_store import ensure_scholar_collection, get_memory_layers, get_qdrant_health, upsert_source_chunks
+from app.generation_client import get_generation_health
+from app.rag_engine import generate_lesson_blocks
 
 
 def _due_to_utc(due, school_tz: str):
@@ -81,6 +98,516 @@ def create_key(label: str = Query(...), session: Session = Depends(get_session))
 AUTH = [Depends(require_api_key)]
 
 
+@auth_router.get("/keys", summary="List minted API keys (never the key itself)", dependencies=AUTH)
+def list_keys(session: Session = Depends(get_session)):
+    rows = session.exec(select(ApiKey).order_by(ApiKey.created_at.desc())).all()
+    return [{"id": k.id, "label": k.label, "created_at": k.created_at, "revoked": k.revoked} for k in rows]
+
+
+@auth_router.post("/keys/{key_id}/revoke", summary="Revoke an API key", dependencies=AUTH)
+def revoke_key(key_id: int, session: Session = Depends(get_session)):
+    key = session.get(ApiKey, key_id)
+    if not key:
+        raise HTTPException(404, "key_not_found")
+    key.revoked = True
+    session.add(key)
+    session.commit()
+    return {"id": key.id, "revoked": True}
+
+
+# ---- learn / forge --------------------------------------------------------- #
+class ParseSourceIn(BaseModel):
+    text: str
+
+
+class ParseSourceOut(BaseModel):
+    input_type: str
+    track_title: str
+    role: Optional[str] = None
+    modules: list[str]
+    teaching_rules: list[str]
+    assessment_rules: list[str]
+    visual_rules: list[str]
+    constraints: list[str]
+    source_hash: str
+
+
+class ForgeTrackIn(BaseModel):
+    track_title: str
+    input_type: str = "source_text"
+    role: Optional[str] = None
+    modules: list[str] = PydanticField(default_factory=list)
+    teaching_rules: list[str] = PydanticField(default_factory=list)
+    assessment_rules: list[str] = PydanticField(default_factory=list)
+    visual_rules: list[str] = PydanticField(default_factory=list)
+    constraints: list[str] = PydanticField(default_factory=list)
+    source_hash: str = ""
+
+
+class SourceIn(BaseModel):
+    title: str = ""
+    source_type: str = "text"
+    trust_level: str = "user"
+    mime_type: str = "text/plain"
+    original_name: str = ""
+    body_text: str
+    metadata: dict = PydanticField(default_factory=dict)
+
+
+class TrackSourceLinkIn(BaseModel):
+    role: str = "primary"
+
+
+class ChunkSourceIn(BaseModel):
+    max_chars: int = 900
+    overlap_chars: int = 120
+    replace: bool = True
+
+
+class EnsureQdrantIn(BaseModel):
+    recreate: bool = False
+
+
+class EmbeddingPreviewIn(BaseModel):
+    text: str
+
+
+class LessonBlockIn(BaseModel):
+    block_type: str
+    title: str = ""
+    payload: dict = PydanticField(default_factory=dict)
+    source_refs: list[str] = PydanticField(default_factory=list)
+    confidence: float = 0.0
+
+
+class NodeProgressIn(BaseModel):
+    mastery: float = 1.0
+
+
+learn_router = APIRouter(prefix="/learn", tags=["learn"], dependencies=AUTH)
+
+
+@learn_router.post("/parse-source", response_model=ParseSourceOut)
+def parse_learn_source(payload: ParseSourceIn):
+    if not payload.text.strip():
+        raise HTTPException(400, "text_required")
+    return parse_source(payload.text)
+
+
+@learn_router.get("/sources")
+def list_learning_sources(session: Session = Depends(get_session)):
+    return list_sources(session)
+
+
+@learn_router.get("/memory/layers")
+def read_memory_layers():
+    return get_memory_layers()
+
+
+@learn_router.get("/memory/qdrant/health")
+def read_qdrant_health():
+    return get_qdrant_health()
+
+
+@learn_router.post("/memory/qdrant/ensure")
+def ensure_qdrant_collection(payload: EnsureQdrantIn | None = None):
+    result = ensure_scholar_collection(recreate=bool(payload and payload.recreate))
+    if result.get("status") == "unavailable":
+        raise HTTPException(400, result.get("error") or "qdrant_unavailable")
+    return result
+
+
+@learn_router.get("/memory/embeddings/health")
+def read_embedding_health():
+    return get_embedding_health()
+
+
+@learn_router.get("/memory/generation/health")
+def read_generation_health():
+    return get_generation_health()
+
+
+@learn_router.post("/memory/embeddings/preview")
+def preview_embedding(payload: EmbeddingPreviewIn):
+    try:
+        return embed_text_preview(payload.text)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+
+@learn_router.post("/sources", status_code=201)
+def create_learning_source(payload: SourceIn, session: Session = Depends(get_session)):
+    try:
+        return create_source(session, payload.dict())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+
+
+@learn_router.post("/sources/upload", status_code=201)
+async def upload_learning_source(
+    file: UploadFile = File(...),
+    title: str = Form(""),
+    source_type: str = Form("auto"),
+    trust_level: str = Form("user"),
+    parse_now: bool = Form(False),
+    session: Session = Depends(get_session),
+):
+    try:
+        data = await file.read()
+        spec = build_upload_source_spec(
+            filename=file.filename or "upload.txt",
+            content_type=file.content_type or "application/octet-stream",
+            data=data,
+            title=title,
+            source_type=source_type,
+            trust_level=trust_level,
+        )
+        source = create_source(session, spec)
+        if parse_now:
+            parsed = parse_registered_source(session, int(source["id"]))
+            return {"source": get_source(session, int(source["id"])), "parsed": parsed}
+        return source
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+@learn_router.get("/sources/audit")
+def audit_learning_sources(session: Session = Depends(get_session)):
+    return get_source_audit(session)
+
+
+@learn_router.get("/sources/{source_id}")
+def read_learning_source(source_id: int, session: Session = Depends(get_session)):
+    source = get_source(session, source_id)
+    if not source:
+        raise HTTPException(404, "source_not_found")
+    return source
+
+
+@learn_router.post("/sources/{source_id}/parse")
+def parse_learning_source(source_id: int, session: Session = Depends(get_session)):
+    try:
+        parsed = parse_registered_source(session, source_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not parsed:
+        raise HTTPException(404, "source_not_found")
+    return parsed
+
+
+@learn_router.get("/sources/{source_id}/sections")
+def list_learning_source_sections(source_id: int, session: Session = Depends(get_session)):
+    sections = list_source_sections(session, source_id)
+    if sections is None:
+        raise HTTPException(404, "source_not_found")
+    return sections
+
+
+@learn_router.post("/sources/{source_id}/chunk")
+def chunk_learning_source(source_id: int, payload: ChunkSourceIn | None = None, session: Session = Depends(get_session)):
+    config = payload or ChunkSourceIn()
+    try:
+        result = chunk_registered_source(
+            session,
+            source_id,
+            max_chars=config.max_chars,
+            overlap_chars=config.overlap_chars,
+            replace=config.replace,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not result:
+        raise HTTPException(404, "source_not_found")
+    return result
+
+
+@learn_router.get("/sources/{source_id}/chunks")
+def list_learning_source_chunks(source_id: int, session: Session = Depends(get_session)):
+    chunks = list_source_chunks(session, source_id)
+    if chunks is None:
+        raise HTTPException(404, "source_not_found")
+    return chunks
+
+
+@learn_router.post("/sources/{source_id}/index")
+def index_learning_source(source_id: int, session: Session = Depends(get_session)):
+    try:
+        return upsert_source_chunks(session, source_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@learn_router.delete("/sources/{source_id}", status_code=204)
+def delete_learning_source(source_id: int, session: Session = Depends(get_session)):
+    if not delete_source(session, source_id):
+        raise HTTPException(404, "source_not_found")
+    return None
+
+
+@learn_router.get("/tracks/{track_id}/sources")
+def list_learning_track_sources(track_id: int, session: Session = Depends(get_session)):
+    sources = list_track_sources(session, track_id)
+    if sources is None:
+        raise HTTPException(404, "track_not_found")
+    return sources
+
+
+@learn_router.post("/tracks/{track_id}/sources/{source_id}", status_code=201)
+def link_learning_source_to_track(
+    track_id: int,
+    source_id: int,
+    payload: TrackSourceLinkIn,
+    session: Session = Depends(get_session),
+):
+    try:
+        source = link_source_to_track(session, track_id, source_id, payload.role)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not source:
+        raise HTTPException(404, "track_or_source_not_found")
+    return source
+
+
+@learn_router.delete("/tracks/{track_id}/sources/{source_id}", status_code=204)
+def unlink_learning_source_from_track(
+    track_id: int,
+    source_id: int,
+    session: Session = Depends(get_session),
+):
+    result = unlink_source_from_track(session, track_id, source_id)
+    if result is None:
+        raise HTTPException(404, "track_or_source_not_found")
+    if result is False:
+        raise HTTPException(404, "source_link_not_found")
+    return None
+
+
+@learn_router.get("/tracks")
+def list_learning_tracks(session: Session = Depends(get_session)):
+    return list_tracks(session)
+
+
+@learn_router.post("/tracks", status_code=201)
+def create_learning_track(payload: ForgeTrackIn, session: Session = Depends(get_session)):
+    return create_track_from_spec(session, payload.dict())
+
+
+@learn_router.post("/tracks/from-source", status_code=201)
+def create_learning_track_from_source(payload: ParseSourceIn, session: Session = Depends(get_session)):
+    if not payload.text.strip():
+        raise HTTPException(400, "text_required")
+    return create_track_from_spec(session, parse_source(payload.text))
+
+
+@learn_router.get("/tracks/{track_id}")
+def read_learning_track(track_id: int, session: Session = Depends(get_session)):
+    track = get_track_tree(session, track_id)
+    if not track:
+        raise HTTPException(404, "track_not_found")
+    return track
+
+
+@learn_router.delete("/tracks/{track_id}", status_code=204)
+def delete_learning_track(track_id: int, session: Session = Depends(get_session)):
+    if not delete_track(session, track_id):
+        raise HTTPException(404, "track_not_found")
+    return None
+
+
+@learn_router.get("/nodes/{node_id}/lesson")
+def read_or_create_node_lesson(node_id: int, session: Session = Depends(get_session)):
+    lesson = get_or_create_lesson_for_node(session, node_id)
+    if not lesson:
+        raise HTTPException(404, "node_not_found")
+    return lesson
+
+
+@learn_router.post("/nodes/{node_id}/start")
+def start_learning_lesson(node_id: int, session: Session = Depends(get_session)):
+    try:
+        result = start_learning_node(session, node_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not result:
+        raise HTTPException(404, "node_not_found")
+    return result
+
+
+@learn_router.post("/nodes/{node_id}/generate")
+def generate_node_lesson(node_id: int, session: Session = Depends(get_session)):
+    result = generate_lesson_blocks(session, node_id)
+    if not result:
+        raise HTTPException(404, "node_not_found")
+    return result
+
+
+@learn_router.post("/nodes/{node_id}/complete")
+def complete_learning_lesson(node_id: int, payload: NodeProgressIn, session: Session = Depends(get_session)):
+    try:
+        result = complete_learning_node(session, node_id, payload.mastery)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not result:
+        raise HTTPException(404, "node_not_found")
+    return result
+
+
+@learn_router.get("/lessons/{lesson_id}")
+def read_learning_lesson(lesson_id: int, session: Session = Depends(get_session)):
+    lesson = get_lesson_tree(session, lesson_id)
+    if not lesson:
+        raise HTTPException(404, "lesson_not_found")
+    return lesson
+
+
+@learn_router.post("/lessons/{lesson_id}/blocks", status_code=201)
+def create_learning_block(lesson_id: int, payload: LessonBlockIn, session: Session = Depends(get_session)):
+    try:
+        lesson = add_lesson_block(session, lesson_id, payload.dict())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not lesson:
+        raise HTTPException(404, "lesson_not_found")
+    return lesson
+
+
+@learn_router.get("/tracks/{track_id}/search", summary="Semantic search over a course's indexed sources")
+def search_learning_track(track_id: int, q: str = "", session: Session = Depends(get_session)):
+    from app.rag_engine import search_track
+    return {"results": search_track(session, track_id, q)}
+
+
+@learn_router.get("/tracks/{track_id}/okf/export", summary="Export a course as a portable OKF bundle")
+def export_learning_track_okf(track_id: int, session: Session = Depends(get_session)):
+    from app.okf import export_filename, export_track_okf
+    bundle = export_track_okf(session, track_id)
+    if not bundle:
+        raise HTTPException(404, "track_not_found")
+    return {"filename": export_filename(bundle), "json": bundle}
+
+
+@learn_router.post("/okf/import", status_code=201, summary="Import a portable OKF bundle as a new course")
+def import_learning_track_okf(payload: dict, session: Session = Depends(get_session)):
+    from app.okf import import_track_okf
+    try:
+        return import_track_okf(session, payload)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"okf_import_failed: {e}")
+
+
+# ---- tutor mode ---------------------------------------------------------------#
+@learn_router.get("/tutor/presets", summary="Curated tutor persona presets")
+def list_tutor_presets():
+    from app.tutor_presets import list_presets
+    return list_presets()
+
+
+@learn_router.post("/tracks/{track_id}/tutor/generate-prompt", summary="Expand a description into a tutor system prompt (preview, not saved)")
+def generate_tutor_system_prompt(track_id: int, payload: dict, session: Session = Depends(get_session)):
+    from app.models import LearningTrack
+    from app.tutor_engine import generate_tutor_prompt
+    if not session.get(LearningTrack, track_id):
+        raise HTTPException(404, "track_not_found")
+    try:
+        return {"system_prompt": generate_tutor_prompt(payload.get("describe", ""))}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(502, f"generation_failed: {e}")
+
+
+@learn_router.post("/tracks/{track_id}/tutor/enable", summary="Enable tutor mode with a final system prompt")
+def enable_track_tutor(track_id: int, payload: dict, session: Session = Depends(get_session)):
+    from app.tutor_store import enable_tutor
+    try:
+        result = enable_tutor(session, track_id, payload.get("system_prompt", ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if result is None:
+        raise HTTPException(404, "track_not_found")
+    return result
+
+
+@learn_router.post("/tracks/{track_id}/tutor/disable", summary="Disable tutor mode (keeps history)")
+def disable_track_tutor(track_id: int, session: Session = Depends(get_session)):
+    from app.tutor_store import disable_tutor
+    result = disable_tutor(session, track_id)
+    if result is None:
+        raise HTTPException(404, "track_not_found")
+    return result
+
+
+@learn_router.get("/tracks/{track_id}/tutor/messages", summary="List a track's tutor conversation")
+def list_track_tutor_messages(track_id: int, session: Session = Depends(get_session)):
+    from app.tutor_store import list_messages
+    messages = list_messages(session, track_id)
+    if messages is None:
+        raise HTTPException(404, "track_not_found")
+    return messages
+
+
+@learn_router.delete("/tracks/{track_id}/tutor/messages", status_code=204, summary="Clear a track's tutor conversation")
+def clear_track_tutor_messages(track_id: int, session: Session = Depends(get_session)):
+    from app.tutor_store import clear_messages
+    if not clear_messages(session, track_id):
+        raise HTTPException(404, "track_not_found")
+    return None
+
+
+@learn_router.post("/tracks/{track_id}/tutor/messages", summary="Send a message, stream the tutor's reply")
+def send_track_tutor_message(track_id: int, payload: dict, session: Session = Depends(get_session)):
+    from fastapi.responses import StreamingResponse
+    from app.models import LearningTrack
+    from app.tutor_engine import run_tutor_turn
+
+    content = (payload.get("content") or "").strip()
+    if not content:
+        raise HTTPException(400, "content_required")
+    if not session.get(LearningTrack, track_id):
+        raise HTTPException(404, "track_not_found")
+
+    def _events():
+        import json as _json
+        for event in run_tutor_turn(track_id, content):
+            yield _json.dumps(event) + "\n"
+
+    return StreamingResponse(_events(), media_type="application/x-ndjson")
+
+
+@learn_router.post("/tracks/{track_id}/tutor/regenerate", summary="Regenerate the tutor's last reply")
+def regenerate_track_tutor_message(track_id: int, session: Session = Depends(get_session)):
+    from fastapi.responses import StreamingResponse
+    from app.models import LearningTrack
+    from app.tutor_engine import regenerate_tutor_turn
+
+    if not session.get(LearningTrack, track_id):
+        raise HTTPException(404, "track_not_found")
+
+    def _events():
+        import json as _json
+        for event in regenerate_tutor_turn(track_id):
+            yield _json.dumps(event) + "\n"
+
+    return StreamingResponse(_events(), media_type="application/x-ndjson")
+
+
+@learn_router.get("/tutor/media/{filename}", summary="Fetch a tutor-generated media file (plot image, etc.)")
+def get_tutor_media(filename: str):
+    from fastapi import Response
+
+    from app.media_store import media_content_type, read_media
+
+    raw = read_media(filename)
+    if raw is None:
+        raise HTTPException(404, "media_not_found")
+    return Response(content=raw, media_type=media_content_type(filename))
+
+
 # ---- engine context helper -------------------------------------------------- #
 def engine_ctx(session: Session):
     st = session.get(Settings, 1) or Settings(id=1)
@@ -125,8 +652,15 @@ def update_course(cid: int, body: dict, session: Session = Depends(get_session))
 @courses_router.delete("/{cid}", status_code=204)
 def delete_course(cid: int, session: Session = Depends(get_session)):
     c = session.get(Course, cid)
-    if c:
-        session.delete(c); session.commit()
+    if not c:
+        return
+    # "delete course, keep its tasks" - null out the FK on everything that
+    # references this course first, or the delete hits a FK violation.
+    for t in session.exec(select(Task).where(Task.course_id == cid)):
+        t.course_id = None; session.add(t)
+    for a in session.exec(select(Activity).where(Activity.course_id == cid)):
+        a.course_id = None; session.add(a)
+    session.delete(c); session.commit()
 
 
 # ---- tasks ------------------------------------------------------------------#
@@ -256,6 +790,17 @@ def delete_task(tid: int, session: Session = Depends(get_session)):
 activities_router = APIRouter(prefix="/activities", tags=["activities"], dependencies=AUTH)
 
 
+class ActivityPatch(BaseModel):
+    title: Optional[str] = None
+    color: Optional[str] = None
+    weekday: Optional[int] = None
+    start_min: Optional[int] = None
+    end_min: Optional[int] = None
+    tz: Optional[str] = None
+    course_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
 @activities_router.get("")
 def list_activities(session: Session = Depends(get_session)):
     return session.exec(select(Activity)).all()
@@ -263,6 +808,20 @@ def list_activities(session: Session = Depends(get_session)):
 
 @activities_router.post("", status_code=201)
 def create_activity(a: Activity, session: Session = Depends(get_session)):
+    if not (0 <= a.start_min < a.end_min <= 1440):
+        raise HTTPException(400, "bad_time_range")
+    session.add(a); session.commit(); session.refresh(a)
+    return a
+
+
+@activities_router.patch("/{aid}")
+def update_activity(aid: int, payload: ActivityPatch, session: Session = Depends(get_session)):
+    a = session.get(Activity, aid)
+    if not a:
+        raise HTTPException(404, "activity_not_found")
+    patch = payload.model_dump(exclude_unset=True)
+    for k, v in patch.items():
+        setattr(a, k, v)
     if not (0 <= a.start_min < a.end_min <= 1440):
         raise HTTPException(400, "bad_time_range")
     session.add(a); session.commit(); session.refresh(a)
@@ -381,6 +940,7 @@ def get_settings(session: Session = Depends(get_session)):
     out = st.model_dump()
     out["canvas_token"] = bool(st.canvas_token)  # never echo the secret
     out["icloud_password"] = bool(st.icloud_password)  # same -- app-specific password, not echoed
+    out["canvas_ics_url"] = bool(st.canvas_ics_url)  # ICS feed URLs embed a token too
     return out
 
 
@@ -421,16 +981,20 @@ def list_timezones(country: Optional[str] = None):
 
 @config_router.put("/settings")
 def put_settings(body: dict, session: Session = Depends(get_session)):
+    from app.crypto import encrypt_secret
     st = session.get(Settings, 1) or Settings(id=1)
     for k in ("min_block_min", "start_ahead_days", "yellow_threshold_pct",
               "day_start_min", "canvas_base_url", "canvas_token", "canvas_ics_url",
-              "home_tz", "school_tz", "week_start", "country", "onboarded",
+              "home_tz", "school_tz", "week_start", "country",
               "theme", "accent", "density", "fontscale", "default_view",
               "display_name", "canvas_autosync", "canvas_sync_hours",
               "icloud_username", "icloud_password", "icloud_calendar_url",
               "icloud_autosync", "icloud_sync_hours"):
         if k in body and body[k] is not None:
-            setattr(st, k, body[k])
+            value = body[k]
+            if k in ("canvas_token", "canvas_ics_url") and isinstance(value, str):
+                value = encrypt_secret(value)
+            setattr(st, k, value)
     session.add(st); session.commit()
     return {"ok": True}
 
@@ -445,7 +1009,9 @@ def get_term(session: Session = Depends(get_session)):
 @config_router.put("/term")
 def put_term(body: dict, session: Session = Depends(get_session)):
     term = session.exec(select(Term)).first() or Term()
-    for k in ("name", "classes_start", "classes_end", "exam_end"):
+    if "name" in body and body["name"] is not None:
+        term.name = body["name"]
+    for k in ("classes_start", "classes_end", "exam_end"):
         if k in body:
             v = body[k]
             setattr(term, k, date.fromisoformat(v) if isinstance(v, str) and v else (v or None))
@@ -453,8 +1019,14 @@ def put_term(body: dict, session: Session = Depends(get_session)):
     return {"ok": True}
 
 
+class HolidayIn(BaseModel):
+    day: date
+    name: str = ""
+
+
 @config_router.post("/holidays", status_code=201)
-def add_holiday(h: Holiday, session: Session = Depends(get_session)):
+def add_holiday(payload: HolidayIn, session: Session = Depends(get_session)):
+    h = Holiday(**payload.model_dump())
     session.add(h); session.commit(); session.refresh(h)
     return h
 

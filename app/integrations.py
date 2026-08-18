@@ -32,8 +32,9 @@ def guess_category(name: str) -> str:
 
 def sync_canvas(session: Session, st: Settings) -> dict:
     from canvasapi import Canvas  # imported lazily; ships in the image
+    from app.crypto import decrypt_secret
 
-    canvas = Canvas(st.canvas_base_url, st.canvas_token)
+    canvas = Canvas(st.canvas_base_url, decrypt_secret(st.canvas_token))
     created = updated = 0
     courses_seen = 0
 
@@ -128,7 +129,8 @@ def upsert_assignment(session: Session, st: Settings, *, ext_id: str, title: str
 
 def sync_canvas_ics(session: Session, st: Settings) -> dict:
     import urllib.request
-    url = (st.canvas_ics_url or "").replace("webcal://", "https://")
+    from app.crypto import decrypt_secret
+    url = decrypt_secret(st.canvas_ics_url or "").replace("webcal://", "https://")
     req = urllib.request.Request(url, headers={"User-Agent": "scholar/1.0"})
     with urllib.request.urlopen(req, timeout=25) as r:
         text = r.read().decode("utf-8", "replace")

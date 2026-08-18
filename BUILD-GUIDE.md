@@ -331,6 +331,13 @@ returns. **That flip is the whole product.**
   The Cushion runs on estimates until you build the reverse bridge (course
   module M10). Mark progress via `PATCH /tasks/{id}` for now — works from
   Swagger in five seconds.
-- **Alembic migrations** — `create_all` only; add Alembic before schema surgery.
-- **Multi-user / JWT** — single-user, API-key auth. Fine behind Tailscale.
-- **Weighted grades / syllabus parsing / analytics** — course modules M11.
+- **Multi-user / JWT** — single-user, API-key auth (mint/list/revoke). Fine
+  behind Tailscale.
+
+Since this guide was first written, Alembic migrations (`alembic/versions/`,
+15 and counting), weighted grades, syllabus parsing, and past/future analytics
+have all landed — they're built, not just planned. So has a whole learning/RAG
+subsystem (source chunking, Qdrant semantic search, grounded lesson
+generation, OKF course export/import) and the first-party `webui/` frontend
+this guide doesn't otherwise mention — it's served straight off `hive-api` at
+`/`, no SP checkout or plugin build required to use the app day to day.

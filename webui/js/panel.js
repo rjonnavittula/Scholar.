@@ -95,7 +95,7 @@ const Panel = (() => {
     const subs = t.subtasks || [];
     const subLbl = subs.length ? `\u2611 ${subs.filter((x)=>x.status==='done').length}/${subs.length} subtasks` : '';
     const tmr = (window.__TIMER && window.__TIMER.running && window.__TIMER.task_id === t.id) ? window.__TIMER : null;
-    return `<div class="tcard fc-draggable-card" data-tid="${t.id}" data-need="${Math.max(30, Math.min((t.time_needed_min||60)-(t.time_spent_min||0)||60,120))}" data-title="${esc(t.title)}">
+    return `<div class="tcard" draggable="true" data-tid="${t.id}" data-need="${Math.max(30, Math.min((t.time_needed_min||60)-(t.time_spent_min||0)||60,120))}" data-title="${esc(t.title)}">
         <button class="plan-btn" data-plan="${t.id}" title="plan into next free slot">plan</button>
       <div class="row-actions">
         <button data-act="flag" title="priority">${t.priority_flag ? '⚑' : '⚐'}</button>
@@ -117,21 +117,7 @@ const Panel = (() => {
     </div>`;
   }
 
-  let _fcDrag = null;
-  function initDraggable() {
-    if (_fcDrag || typeof FullCalendar === 'undefined' || !FullCalendar.Draggable) return;
-    _fcDrag = new FullCalendar.Draggable(root, {
-      itemSelector: '.fc-draggable-card',
-      eventData: (el) => ({
-        title: el.dataset.title || 'study',
-        duration: { minutes: +el.dataset.need || 60 },
-        extendedProps: { dropTaskId: +el.dataset.tid },
-      }),
-    });
-  }
-
   function wire() {
-    initDraggable();
     for (const h of root.querySelectorAll('.tgroup-head')) {
       h.addEventListener('click', () => {
         const n = h.dataset.group;
@@ -141,7 +127,12 @@ const Panel = (() => {
     }
     for (const el of root.querySelectorAll('.tcard')) {
       const tid = +el.dataset.tid;
-      // FC Draggable is registered once on the container (see initDraggable)
+      el.addEventListener('dragstart', (e) => {
+        window._dragTaskId = tid;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/task', String(tid));
+      });
+      el.addEventListener('dragend', () => { window._dragTaskId = 0; });
       for (const btn of el.querySelectorAll('[data-act]')) {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();

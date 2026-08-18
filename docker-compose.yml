@@ -29,8 +29,62 @@ services:
     environment:
       HIVE_DATABASE_URL: postgresql+psycopg://${HIVE_DB_USER}:${HIVE_DB_PASSWORD}@hive-db:5432/hive
       TZ: America/New_York
+      HIVE_SANDBOX_PROVIDER: docker
+      HIVE_SANDBOX_URL: http://sandbox-runner:8090
+      # Optional: encrypts the Canvas token/ICS URL at rest instead of storing them
+      # plaintext. Generate one with:
+      #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      # then add HIVE_SECRET_KEY=<value> to your .env and uncomment the line below.
+      # HIVE_SECRET_KEY: ${HIVE_SECRET_KEY}
+      #
+      # Proxmox sandbox backend (app/proxmox_client.py) - implemented but
+      # unverified against a real host (built while it was offline). Set
+      # HIVE_SANDBOX_PROVIDER to "proxmox" and fill these in (plus mount an
+      # SSH private key below) only once you've done a live verification
+      # pass; leave commented/unset to keep using the tested Docker path.
+      # HIVE_SANDBOX_PROVIDER: proxmox
+      # HIVE_PROXMOX_HOST: ${HIVE_PROXMOX_HOST}                 # host or IP, no scheme
+      # HIVE_PROXMOX_PORT: "8006"
+      # HIVE_PROXMOX_NODE: ${HIVE_PROXMOX_NODE}                 # e.g. "pve"
+      # HIVE_PROXMOX_TOKEN_ID: ${HIVE_PROXMOX_TOKEN_ID}         # "user@realm!token-name"
+      # HIVE_PROXMOX_TOKEN_SECRET: ${HIVE_PROXMOX_TOKEN_SECRET}
+      # HIVE_PROXMOX_VERIFY_SSL: "false"                        # Proxmox's cert is usually self-signed
+      # HIVE_PROXMOX_STORAGE: ${HIVE_PROXMOX_STORAGE}           # e.g. "local-lvm"
+      # HIVE_PROXMOX_CLONE_FULL: "true"                         # "false" for linked clones, if your storage supports them
+      # HIVE_PROXMOX_TEMPLATE_VMID: ${HIVE_PROXMOX_TEMPLATE_VMID}              # base: python3 only
+      # HIVE_PROXMOX_PLOT_TEMPLATE_VMID: ${HIVE_PROXMOX_PLOT_TEMPLATE_VMID}    # + matplotlib; defaults to base if unset
+      # HIVE_PROXMOX_VISUAL_TEMPLATE_VMID: ${HIVE_PROXMOX_VISUAL_TEMPLATE_VMID} # + manim/ffmpeg/LaTeX; defaults to base if unset
+      # HIVE_PROXMOX_SSH_HOST: ${HIVE_PROXMOX_SSH_HOST}         # defaults to HIVE_PROXMOX_HOST if unset
+      # HIVE_PROXMOX_SSH_USER: ${HIVE_PROXMOX_SSH_USER}         # e.g. "root" - needs rights to run `pct exec`
+      # HIVE_PROXMOX_SSH_KEY_PATH: /run/secrets/proxmox_ssh_key # path INSIDE this container - mount the key below
+    volumes:
+      - hive-tutor-media:/app/media
+      # - ${HIVE_PROXMOX_SSH_KEY_HOST_PATH}:/run/secrets/proxmox_ssh_key:ro
     ports:
       - "8077:8077"   # reach via Tailscale / your reverse proxy; keep off the open WAN
+
+  # sandbox-runner — the only container with Docker socket access in this
+  # stack. Executes tutor-mode code snippets in throwaway, network-less,
+  # resource-capped containers. Not published to the host; hive-api reaches
+  # it at http://sandbox-runner:8090 over the compose-internal network.
+  sandbox-runner:
+    build: ./sandbox-runner
+    container_name: sandbox-runner
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # Build-only: tags the heavier Manim/LaTeX image render_animation calls
+  # run in (Phase 4 Part C). Never started as a container - `profiles` keeps
+  # it out of a normal `docker compose up`; build/refresh it explicitly with
+  # `docker compose build sandbox-visual-image`. sandbox-runner just checks
+  # for the tag at request time and errors clearly if it isn't there yet.
+  sandbox-visual-image:
+    build:
+      context: ./sandbox-runner/images
+      dockerfile: visual.Dockerfile
+    image: hive-sandbox-visual:latest
+    profiles: ["build-only"]
 
   # Super Productivity web (PWA) — the client UI. Mount the H.I.V.E. theme
   # and (later) point its custom sync provider at hive-api.
@@ -45,3 +99,4 @@ services:
 
 volumes:
   hive-db-data:
+  hive-tutor-media:

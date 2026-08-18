@@ -20,6 +20,7 @@
     view: 'week', viewN: 7,
     get weekDays() {
       if (this.view === 'day') return [new Date(this.weekStart)];
+      if (this.view === 'twoDay') return [new Date(this.weekStart), addDays(this.weekStart, 1)];
       if (this.view === 'nextN') return [...Array(this.viewN)].map((_, i) => addDays(new Date(), i));
       if (this.view === 'month') {
         // month view builds its own grid; return the month's weeks start
@@ -41,11 +42,14 @@
 
   // ---------- boot ----------
   async function boot() {
-    if (!Api.hasKey()) return showGate();
+    if (!Api.hasKey()) {
+      const ok = await Api.ensureLocalDevKey();
+      if (!ok) return showGate();
+    }
     try { await Api.get('/config/settings'); } catch (e) { return showGate(); }
     $('gate').classList.add('hidden');
     $('app').classList.remove('hidden');
-    Cal.mount($('calendar'), S, { onPlan, onMovePlanned, onBlockMenu });
+    Cal.mount($('calendar'), S, { onPlan, onMovePlanned, onBlockMenu, onMoveActivity, onActivityMenu, onTaskMenu, onNewTask, onNewActivity });
     Panel.mount($('task-groups'), S, { onTaskAction, onPlanQuick, onTaskEdit });
     wireChrome();
     await loadAll();
@@ -99,14 +103,14 @@
   function renderAll() {
     applyTheme();
     renderSidebar(); renderTop(); renderStreak(); Cal.render(); Panel.render();
-    if ($('courses') && !$('courses').classList.contains('hidden')) renderCoursesHub();
+    if ($('learn') && !$('learn').classList.contains('hidden')) renderHiveCourses();
     const list = document.getElementById('tasklist');
     if (list && !list.classList.contains('hidden')) renderTaskList(list);
   }
 
   // ---------- top chrome ----------
   function renderTop() {
-    const a = S.weekDays[0], b = S.weekDays[6];
+    const a = S.weekDays[0], b = S.weekDays[S.weekDays.length - 1];
     $('week-label').textContent =
       `${a.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })} – ` +
       `${b.toLocaleDateString(undefined, { month: b.getMonth() === a.getMonth() ? undefined : 'long', day: 'numeric' })}`;
@@ -143,9 +147,18 @@
     const bar = document.querySelector('.topbar');
     const main = document.querySelector('.main');
     if (!bar || !main || typeof ResizeObserver === 'undefined') return;
+    // Debounced: the sidebar/panel collapse buttons animate .main's width over
+    // ~280ms, and an undebounced observer fires on every intermediate frame,
+    // making the topbar's contents flicker in and out mid-transition. Only
+    // apply the breakpoint once width has settled.
+    let pending = null;
     const ro = new ResizeObserver((es) => {
       const w = es[0].contentRect.width;
-      bar.dataset.w = w < 460 ? 'xs' : w < 560 ? 'sm' : w < 720 ? 'md' : 'full';
+      if (pending) clearTimeout(pending);
+      pending = setTimeout(() => {
+        pending = null;
+        bar.dataset.w = w < 460 ? 'xs' : w < 560 ? 'sm' : w < 720 ? 'md' : 'full';
+      }, 140);
     });
     ro.observe(main);
   }
@@ -221,6 +234,7 @@
       b.onclick = () => setCalView(b.dataset.view);
     const vn = document.getElementById('view-n');
     if (vn) vn.onchange = () => { if (vn.value) { S.viewN = +vn.value; setCalView('nextN'); } };
+    enhanceSelects(document);
     $('nav-today').onclick = () => { S.weekStart = mondayOf(new Date()); loadAll(); };
     $('nav-prev').onclick = () => { navBy(-1); };
     $('nav-next').onclick = () => { navBy(1); };
@@ -249,120 +263,109 @@
     $('btn-canvas-sync').onclick = syncCanvas;
     $('btn-icloud-cfg').onclick = () => canvasModal('icloud');
     $('btn-icloud-sync').onclick = syncIcloud;
-    $('btn-settings').onclick = () => settingsModal();
-    const themeBtn = $('btn-theme');
-    if (themeBtn) {
-      const paintThemeIcon = () => { themeBtn.textContent = (S.settings.theme === 'light') ? '☀' : '☽'; };
+    for (const b of document.querySelectorAll('#btn-settings, #btn-settings-mobile')) b.onclick = () => settingsModal();
+    const themeBtns = [...document.querySelectorAll('#btn-theme, #btn-theme-mobile')];
+    if (themeBtns.length) {
+      const paintThemeIcon = () => { for (const b of themeBtns) b.textContent = (S.settings.theme === 'light') ? '☀' : '☽'; };
       paintThemeIcon();
-      themeBtn.onclick = async () => {
+      const onThemeClick = async () => {
         const next = (S.settings.theme === 'light') ? 'dark' : 'light';
         S.settings.theme = next;
         applyTheme(); paintThemeIcon();
         try { await Api.put('/config/settings', { theme: next }); } catch (e) {}
       };
+      for (const b of themeBtns) b.onclick = onThemeClick;
     }
-    document.querySelector('[data-view="insights"]').onclick = (e) => showView('insights', e.currentTarget);
-    document.querySelector('[data-view="home"]').onclick = (e) => showView('home', e.currentTarget);
-    const cvBtn = document.querySelector('[data-view="courses"]');
-    if (cvBtn) cvBtn.onclick = (e) => showView('courses', e.currentTarget);
-    wireTabs();
+    // Both the rail and the mobile bottom nav share these data-view buttons.
+    for (const b of document.querySelectorAll('[data-view="insights"]')) b.onclick = (e) => showView('insights', e.currentTarget);
+    for (const b of document.querySelectorAll('[data-view="home"]')) b.onclick = (e) => showView('home', e.currentTarget);
+    for (const b of document.querySelectorAll('[data-view="learn"]')) b.onclick = (e) => showView('learn', e.currentTarget);
   }
 
-  // ---------- calendar / task-list tab switch (fix 6) ----------
-  function wireTabs() {
-    const tabs = document.querySelectorAll('.topbar .tab');
-    if (tabs.length < 2) return;
-    const [calTab, listTab] = tabs;
-    calTab.classList.remove('muted'); listTab.classList.remove('muted');
-    calTab.onclick = () => setView('calendar', calTab, listTab);
-    listTab.onclick = () => setView('list', listTab, calTab);
-  }
-  function setView(view, on, off) {
-    on.classList.add('active'); off.classList.remove('active');
-    const cal = $('calendar');
-    let list = $('tasklist');
-    if (view === 'list') {
-      cal.classList.add('hidden');
-      if (!list) { list = document.createElement('div'); list.id = 'tasklist';
-        list.className = 'tasklist'; cal.parentNode.appendChild(list); }
-      list.classList.remove('hidden');
-      renderTaskList(list);
-    } else {
-      cal.classList.remove('hidden');
-      if (list) list.classList.add('hidden');
-    }
-  }
-  function renderTaskList(el) {
-    const open = S.tasks.filter((t) => t.status !== 'done')
-      .sort((a, b) => (a.due_at || '9999').localeCompare(b.due_at || '9999'));
-    const byCourse = {};
-    for (const t of open) (byCourse[t.course_id ?? 'none'] ??= []).push(t);
-    const cname = Object.fromEntries(S.courses.map((c) => [c.id, c]));
-    el.innerHTML = open.length ? Object.entries(byCourse).map(([cid, ts]) => {
-      const c = cname[cid];
-      return `<div class="tl-group">
-        <div class="tl-course"><span class="dot" style="background:${c?.color || '#8A7F73'}"></span>${esc(c?.name || 'unassigned')}</div>
-        ${ts.map((t) => {
-          const cu = S.cushionByTask[t.id];
-          const lv = cu ? cu.level : 'none';
-          const cuTxt = cu ? `${cu.cushion_min < 0 ? '-' : ''}${Math.abs(Math.round(cu.cushion_min/60))}h cushion` : 'no due date';
-          return `<div class="tl-row">
-            <span class="cu ${lv}">${cuTxt}</span>
-            <div class="grow"><div>${esc(t.title)}</div>
-              <div class="muted small">${t.due_at ? 'due ' + Api.dayInZone(t.due_at, (S.settings.school_tz || 'America/New_York')) : 'unscheduled'} \u00b7 ${t.time_spent_min}/${t.time_needed_min}m</div></div>
-            <button class="ghost small-btn" data-tl-done="${t.id}">done</button>
-            <button class="ghost small-btn" data-tl-edit="${t.id}">edit</button>
-          </div>`;
-        }).join('')}
-      </div>`;
-    }).join('') : '<p class="muted">no open tasks. add one, or sync Canvas.</p>';
-    for (const b of el.querySelectorAll('[data-tl-done]'))
-      b.onclick = () => onTaskAction('done', +b.dataset.tlDone).then(() => renderTaskList(el));
-    for (const b of el.querySelectorAll('[data-tl-edit]'))
-      b.onclick = () => onTaskAction('edit', +b.dataset.tlEdit);
-  }
 
   // ---------- sidebar ----------
+  function courseOrder() {
+    try { return JSON.parse(localStorage.getItem('scholar_course_order') || '[]'); } catch (e) { return []; }
+  }
+  function saveCourseOrder(ids) { localStorage.setItem('scholar_course_order', JSON.stringify(ids)); }
+  function sortedCourses() {
+    const order = courseOrder();
+    const rank = new Map(order.map((id, i) => [id, i]));
+    return S.courses.slice().sort((a, b) => {
+      const ra = rank.has(a.id) ? rank.get(a.id) : Infinity;
+      const rb = rank.has(b.id) ? rank.get(b.id) : Infinity;
+      return ra - rb || a.id - b.id;
+    });
+  }
+
+  // Groups activity rows by name+color alone (not time) - one entry per
+  // uniquely-named activity, with per-day time variation surfaced as
+  // "clusters" (byTime) rather than fragmenting into separate groups. The
+  // largest cluster is promoted to the group's own start_min/end_min as the
+  // "base" time, for callers that just want a single representative time.
+  // Exposed on window so calendar.js's courseClassGroups() can share it -
+  // this used to be three separately-maintained copies of the same key.
+  function groupActivities(activities) {
+    const groups = {};
+    for (const a of activities) {
+      const k = `${a.title}|${a.color}`;
+      const g = (groups[k] ??= { title: a.title, color: a.color, course_id: a.course_id ?? null, ids: [], days: [], byTime: [] });
+      g.ids.push(a.id);
+      g.days.push(a.weekday);
+      let cluster = g.byTime.find((c) => c.start_min === a.start_min && c.end_min === a.end_min);
+      if (!cluster) { cluster = { start_min: a.start_min, end_min: a.end_min, days: [], ids: [] }; g.byTime.push(cluster); }
+      cluster.days.push(a.weekday);
+      cluster.ids.push(a.id);
+    }
+    return Object.values(groups).map((g) => {
+      g.byTime.sort((x, y) => y.days.length - x.days.length);
+      g.start_min = g.byTime[0].start_min;
+      g.end_min = g.byTime[0].end_min;
+      return g;
+    });
+  }
+  window.HiveActivityGroups = groupActivities;
+
+  const FULL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  function dayLabel(ds) {
+    const s = [...new Set(ds)].sort((a, b) => a - b);
+    if (s.length === 7) return 'Daily';
+    if (s.length === 5 && s.every((d, i) => d === i)) return 'Weekdays';
+    if (s.length === 2 && s[0] === 5 && s[1] === 6) return 'Weekends';
+    const contig = s.every((d, i) => i === 0 || d === s[i - 1] + 1);
+    if (contig && s.length >= 3) return `${FULL_DAYS[s[0]]}–${FULL_DAYS[s[s.length - 1]]}`;
+    return s.map((d) => FULL_DAYS[d]).join(' ');
+  }
+  function fmt12(m) { const h = Math.floor(m / 60); return `${((h + 11) % 12) + 1}:${pad(m % 60)} ${h < 12 ? 'AM' : 'PM'}`; }
+  function activitySubtitle(g) {
+    return g.byTime.map((c) => `${dayLabel(c.days)} · ${fmt12(c.start_min)}–${fmt12(c.end_min)}`).join(', ');
+  }
+
   function renderSidebar() {
-    $('course-list').innerHTML = S.courses.map((c) => `
-      <div class="side-item clickable" data-edit-course="${c.id}">
+    $('course-list').innerHTML = sortedCourses().map((c) => `
+      <div class="side-item clickable" draggable="true" data-edit-course="${c.id}" data-cid="${c.id}">
         <span class="dot" style="background:${c.color}"></span>
         <span class="nm">${esc(c.name)}</span>
         ${c.source === 'canvas' ? '<span class="meta">canvas</span>' : ''}
         <button class="x" data-del-course="${c.id}">✕</button>
       </div>`).join('') || '<p class="muted small">no courses yet</p>';
+    wireCourseReorder();
 
-    const actGroups = {};
-    for (const a of S.activities) {
-      const k = `${a.title}|${a.start_min}|${a.end_min}|${a.color}`;
-      (actGroups[k] ??= { ...a, ids: [], days: [] });
-      actGroups[k].ids.push(a.id);
-      actGroups[k].days.push(a.weekday);
-    }
-    const FULL = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const dayLabel = (ds) => {
-      const s = [...new Set(ds)].sort((a, b) => a - b);
-      if (s.length === 7) return 'Daily';
-      if (s.length === 5 && s.every((d, i) => d === i)) return 'Weekdays';
-      if (s.length === 2 && s[0] === 5 && s[1] === 6) return 'Weekends';
-      const contig = s.every((d, i) => i === 0 || d === s[i - 1] + 1);
-      if (contig && s.length >= 3) return `${FULL[s[0]]}\u2013${FULL[s[s.length - 1]]}`;
-      return s.map((d) => FULL[d]).join(' ');
-    };
-    const fmt12 = (m) => { const h = Math.floor(m / 60); return `${((h + 11) % 12) + 1}:${pad(m % 60)} ${h < 12 ? 'AM' : 'PM'}`; };
-    $('activity-list').innerHTML = Object.values(actGroups)
+    const actGroups = groupActivities(S.activities);
+    $('activity-list').innerHTML = actGroups
       .sort((a, b) => Math.min(...a.days) - Math.min(...b.days) || a.start_min - b.start_min)
       .map((g) => `
-      <div class="side-item act clickable" data-edit-act="${g.ids.join(',')}"
-           data-title="${esc(g.title)}" data-color="${g.color}"
+      <div class="side-item act clickable" draggable="true" data-edit-act="${g.ids.join(',')}"
+           data-title="${esc(g.title)}" data-color="${g.color}" data-course-id="${g.course_id ?? ''}"
            data-days="${g.days.join(',')}" data-s="${g.start_min}" data-e="${g.end_min}">
         <span class="dot" style="background:${g.color}"></span>
         <span class="side-txt">
           <span class="nm" title="${esc(g.title)}">${esc(g.title)}</span>
-          <span class="meta">${dayLabel(g.days)} \u00b7 ${fmt12(g.start_min)}\u2013${fmt12(g.end_min)}</span>
+          <span class="meta">${activitySubtitle(g)}</span>
         </span>
         <button class="x" data-del-act="${g.ids.join(',')}">\u2715</button>
       </div>`).join('') || '<p class="muted small">no activities yet</p>';
+    wireActivityDrag();
 
     $('canvas-status').textContent = S.canvas.configured
       ? `linked · ${S.canvas.base_url.replace(/^https?:\/\//, '')}`
@@ -375,10 +378,11 @@
     $('btn-icloud-sync').classList.toggle('hidden', !S.icloud.configured);
 
     for (const b of document.querySelectorAll('[data-del-course]'))
-      b.onclick = async () => { if (confirm('Delete course (and keep its tasks)?'))
+      b.onclick = async () => { if (await confirmModal('Delete course (and keep its tasks)?'))
         { await Api.del('/courses/' + b.dataset.delCourse); loadAll(); } };
     for (const b of document.querySelectorAll('[data-del-act]'))
       b.onclick = async () => {
+        if (!await confirmModal('Delete this activity?')) return;
         const ids = b.dataset.delAct.split(',');
         await Promise.all(ids.map((id) => Api.del('/activities/' + id)));
         loadAll();
@@ -390,12 +394,100 @@
         if (c) courseModal(c); };
     for (const row of document.querySelectorAll('[data-edit-act]'))
       row.onclick = (e) => { if (e.target.closest('.x')) return;
-        activityModal({
+        // Look up the live group (not the dataset snapshot) so byTime is
+        // present - that's what lets the modal prefill per-day overrides.
+        const group = groupActivities(S.activities).find((g) => g.ids.join(',') === row.dataset.editAct);
+        activityModal(group || {
           ids: row.dataset.editAct.split(',').map(Number),
           title: row.dataset.title, color: row.dataset.color,
           days: row.dataset.days.split(',').map(Number),
           start_min: +row.dataset.s, end_min: +row.dataset.e,
+          course_id: row.dataset.courseId ? +row.dataset.courseId : null,
         }); };
+  }
+
+  // ---------- course sidebar drag-to-reorder ----------
+  function wireCourseReorder() {
+    let draggedId = null;
+    const rows = document.querySelectorAll('#course-list [data-cid]');
+    for (const row of rows) {
+      row.addEventListener('dragstart', (e) => {
+        draggedId = +row.dataset.cid;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/course', String(draggedId));
+        row.classList.add('dragging');
+      });
+      row.addEventListener('dragend', () => row.classList.remove('dragging'));
+      row.addEventListener('dragover', (e) => {
+        if (draggedId == null) return;
+        e.preventDefault();
+        row.classList.toggle('drop-before', e.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2);
+        row.classList.toggle('drop-after', e.clientY >= row.getBoundingClientRect().top + row.offsetHeight / 2);
+      });
+      row.addEventListener('dragleave', () => row.classList.remove('drop-before', 'drop-after'));
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        row.classList.remove('drop-before', 'drop-after');
+        const targetId = +row.dataset.cid;
+        if (draggedId == null || draggedId === targetId) return;
+        const before = e.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2;
+        const ids = sortedCourses().map((c) => c.id).filter((id) => id !== draggedId);
+        const idx = ids.indexOf(targetId);
+        ids.splice(before ? idx : idx + 1, 0, draggedId);
+        saveCourseOrder(ids);
+        draggedId = null;
+        renderSidebar();
+      });
+    }
+  }
+
+  // ---------- activity drag-to-retime on the calendar ----------
+  function wireActivityDrag() {
+    for (const row of document.querySelectorAll('#activity-list [data-edit-act]')) {
+      row.addEventListener('dragstart', (e) => {
+        window._dragActivity = {
+          ids: row.dataset.editAct.split(',').map(Number),
+          title: row.dataset.title, color: row.dataset.color,
+          days: row.dataset.days.split(',').map(Number),
+          durationMin: (+row.dataset.e) - (+row.dataset.s),
+          course_id: row.dataset.courseId ? +row.dataset.courseId : null,
+        };
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/activity', row.dataset.editAct);
+      });
+      row.addEventListener('dragend', () => { window._dragActivity = null; });
+    }
+  }
+
+  // Dropping an activity places/retimes just the ONE day you dropped it on
+  // (like planning a task) — every other day already in its pattern is left
+  // untouched, and dropping on a day it didn't previously occur on adds it.
+  async function onMoveActivity(act, newStartMin, newEndMin, weekday) {
+    const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    try {
+      if (act.ids.length === 1) {
+        // dragging/resizing a single concrete occurrence directly on the
+        // calendar — update it in place (same id, atomic PATCH), including
+        // a weekday change if it was dragged into a different column. No
+        // delete+recreate here: that pattern is what let a double-fired
+        // drag (or any retry) silently leave a duplicate behind, since
+        // DELETE on an already-gone id is a harmless no-op server-side.
+        await Api.patch('/activities/' + act.ids[0], { weekday, start_min: newStartMin, end_min: newEndMin });
+      } else {
+        // dragging the sidebar card for a multi-day group — only the one
+        // day you dropped on changes; every other day stays put. If that
+        // day already has an occurrence, patch it in place; only a
+        // genuinely new day (not yet in the pattern) needs a fresh row.
+        const idx = act.days.indexOf(weekday);
+        if (idx !== -1) {
+          await Api.patch('/activities/' + act.ids[idx], { start_min: newStartMin, end_min: newEndMin });
+        } else {
+          await Api.post('/activities', { title: act.title, color: act.color, weekday, start_min: newStartMin, end_min: newEndMin, course_id: act.course_id ?? null });
+        }
+      }
+      await loadAll();
+      toast(`${act.title} · ${DAY_NAMES[weekday]} · ${minToHM(newStartMin)}–${minToHM(newEndMin)}`);
+    } catch (e) { toast('could not place activity', true); loadAll(); }
   }
 
   async function syncCanvas() {
@@ -615,8 +707,9 @@
   // A focus/break cycler layered on real logging: each completed (or stopped)
   // focus phase logs its elapsed minutes to the task via /tasks/{id}/log. Runs
   // on its own ticker independent of the modal, and resumes across reloads.
+  const POMO_PRESETS = [15, 25, 50];
   const Pomo = {
-    cfg: { work: 25, shortBreak: 5, longBreak: 15, cycles: 4, autostart: true },
+    cfg: { work: 25, shortBreak: 5, longBreak: 15, cycles: 4, autostart: true, muted: false },
     st: { phase: 'idle', taskId: null, taskTitle: '', endsAt: 0, remaining: 0, paused: false, cycle: 0 },
     _tick: null, _ac: null,
 
@@ -724,6 +817,7 @@
       this._beep();
     },
     _beep() {
+      if (this.cfg.muted) return;
       try {
         const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
         const ac = this._ac || (this._ac = new AC());
@@ -738,18 +832,33 @@
       this._paintBtn();
       const clock = $('pomo-clock'); if (!clock) return;     // modal not open
       const phase = this.st.phase;
+      const idle = phase === 'idle';
       const ph = $('pomo-phase'); ph.textContent = this.label(); ph.className = 'pomo-phase ' + phase;
-      clock.textContent = phase === 'idle' ? this.fmt(this.dur('work')) : this.fmt(this.remainingMs());
-      clock.classList.toggle('paused', this.st.paused && phase !== 'idle');
+      clock.textContent = idle ? this.fmt(this.dur('work')) : this.fmt(this.remainingMs());
+      clock.classList.toggle('paused', this.st.paused && !idle);
+
+      const ringWrap = $('pomo-ring-wrap');
+      const ringFill = $('pomo-ring-fill');
+      if (ringWrap && ringFill) {
+        ringWrap.className = 'pomo-ring-wrap ' + phase;
+        const circumference = ringFill.r.baseVal.value * 2 * Math.PI;
+        const total = idle ? this.dur('work') : this.dur(phase);
+        const fraction = idle ? 1 : Math.max(0, Math.min(1, this.remainingMs() / (total || 1)));
+        ringFill.style.strokeDasharray = `${circumference}`;
+        ringFill.style.strokeDashoffset = `${circumference * (1 - fraction)}`;
+      }
+
       const dots = $('pomo-dots');
       if (dots) {
         const done = this.st.cycle % this.cfg.cycles;
         dots.innerHTML = Array.from({ length: this.cfg.cycles }, (_, i) =>
           `<span class="pdot ${i < done ? 'on' : ''} ${(phase === 'work' && i === done) ? 'live' : ''}"></span>`).join('');
       }
+      const sessLbl = $('pomo-session-lbl');
+      if (sessLbl) sessLbl.textContent = `session ${(this.st.cycle % this.cfg.cycles) + 1} of ${this.cfg.cycles}`;
+
       const wrap = $('pomo-controls');
       if (wrap) {
-        const idle = phase === 'idle';
         wrap.querySelector('#pm-start').style.display = idle ? '' : 'none';
         wrap.querySelector('#pm-pause').style.display = idle ? 'none' : '';
         wrap.querySelector('#pm-skip').style.display = idle ? 'none' : '';
@@ -757,6 +866,14 @@
         wrap.querySelector('#pm-pause').textContent = this.st.paused ? 'resume' : 'pause';
       }
       const picker = $('pomo-task'); if (picker) picker.disabled = !idle;
+      const presets = document.querySelectorAll('.pomo-presets [data-preset]');
+      for (const b of presets) b.classList.toggle('on', +b.dataset.preset === this.cfg.work);
+      const muteBtn = $('pomo-mute');
+      if (muteBtn) {
+        muteBtn.classList.toggle('on', this.cfg.muted);
+        muteBtn.textContent = this.cfg.muted ? '🔕' : '🔔';
+        muteBtn.title = this.cfg.muted ? 'sound off — click to unmute' : 'sound on — click to mute';
+      }
     },
   };
 
@@ -768,11 +885,21 @@
     const curId = Pomo.st.taskId || (Timer.state && Timer.state.running ? Timer.state.task_id : null) || (open[0] && open[0].id);
     const taskOpts = open.map((t) => `<option value="${t.id}" ${t.id === curId ? 'selected' : ''}>${esc(t.title)}</option>`).join('');
     const c = Pomo.cfg;
+    const RING_R = 56;
     const html = `
       <div class="pomo">
-        <div class="pomo-phase ${Pomo.st.phase}" id="pomo-phase">${Pomo.label()}</div>
-        <div class="pomo-clock" id="pomo-clock">${Pomo.fmt(Pomo.running() ? Pomo.remainingMs() : Pomo.dur('work'))}</div>
+        <div class="pomo-ring-wrap ${Pomo.st.phase}" id="pomo-ring-wrap">
+          <svg class="pomo-ring" viewBox="0 0 120 120">
+            <circle class="ring-track" cx="60" cy="60" r="${RING_R}"></circle>
+            <circle class="ring-fill" id="pomo-ring-fill" cx="60" cy="60" r="${RING_R}"></circle>
+          </svg>
+          <div class="pomo-ring-center">
+            <div class="pomo-phase ${Pomo.st.phase}" id="pomo-phase">${Pomo.label()}</div>
+            <div class="pomo-clock" id="pomo-clock">${Pomo.fmt(Pomo.running() ? Pomo.remainingMs() : Pomo.dur('work'))}</div>
+          </div>
+        </div>
         <div class="pomo-dots" id="pomo-dots"></div>
+        <div class="pomo-session-lbl" id="pomo-session-lbl"></div>
         <label class="pomo-task-row">focus on
           <select id="pomo-task">${taskOpts || '<option value="">no open tasks</option>'}</select>
         </label>
@@ -782,18 +909,25 @@
           <button id="pm-skip">skip</button>
           <button id="pm-stop" class="danger">stop</button>
         </div>
-        <details class="pomo-settings">
-          <summary>settings</summary>
-          <div class="pomo-grid">
-            <label>focus<input type="number" min="1" max="180" id="ps-work" value="${c.work}"></label>
-            <label>short break<input type="number" min="1" max="60" id="ps-short" value="${c.shortBreak}"></label>
-            <label>long break<input type="number" min="1" max="90" id="ps-long" value="${c.longBreak}"></label>
-            <label>cycles<input type="number" min="1" max="12" id="ps-cycles" value="${c.cycles}"></label>
-          </div>
-          <label class="pomo-auto"><input type="checkbox" id="ps-auto" ${c.autostart ? 'checked' : ''}> auto-start next phase</label>
-        </details>
+        <div class="pomo-foot">
+          <details class="pomo-settings">
+            <summary>settings</summary>
+            <div class="pomo-presets" id="pomo-presets">
+              ${POMO_PRESETS.map((m) => `<button data-preset="${m}" type="button">${m}m</button>`).join('')}
+            </div>
+            <div class="pomo-grid">
+              <label>focus<input type="number" min="1" max="180" id="ps-work" value="${c.work}"></label>
+              <label>short break<input type="number" min="1" max="60" id="ps-short" value="${c.shortBreak}"></label>
+              <label>long break<input type="number" min="1" max="90" id="ps-long" value="${c.longBreak}"></label>
+              <label>cycles<input type="number" min="1" max="12" id="ps-cycles" value="${c.cycles}"></label>
+            </div>
+            <label class="pomo-auto"><input type="checkbox" id="ps-auto" ${c.autostart ? 'checked' : ''}> auto-start next phase</label>
+          </details>
+          <button class="pomo-mute" id="pomo-mute" type="button"></button>
+        </div>
       </div>`;
     const { ov } = modal(html);
+    enhanceSelects(ov);
     ov.querySelector('#pm-start').onclick = () => {
       const sel = ov.querySelector('#pomo-task');
       Pomo.start(+(sel && sel.value), sel && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : '');
@@ -801,6 +935,7 @@
     ov.querySelector('#pm-pause').onclick = () => Pomo.pauseToggle();
     ov.querySelector('#pm-skip').onclick = () => Pomo.skip();
     ov.querySelector('#pm-stop').onclick = () => Pomo.stop();
+    ov.querySelector('#pomo-mute').onclick = () => { Pomo.cfg.muted = !Pomo.cfg.muted; Pomo.saveCfg(); Pomo.render(); };
     const saveCfg = () => {
       Pomo.cfg.work = clampInt(ov.querySelector('#ps-work').value, 1, 180, 25);
       Pomo.cfg.shortBreak = clampInt(ov.querySelector('#ps-short').value, 1, 60, 5);
@@ -811,6 +946,9 @@
       if (!Pomo.running()) Pomo.render();
     };
     for (const el of ov.querySelectorAll('.pomo-settings input')) el.onchange = saveCfg;
+    for (const b of ov.querySelectorAll('.pomo-presets [data-preset]')) {
+      b.onclick = () => { ov.querySelector('#ps-work').value = b.dataset.preset; saveCfg(); };
+    }
     Pomo.render();
   }
 
@@ -818,6 +956,25 @@
     const t = S.tasks.find((x) => x.id === block.task_id) || {};
     timerModal(t, block);
   }
+
+  // Same grouping key renderSidebar/courseClassGroups use, so clicking an
+  // activity block on the calendar opens the exact same edit view as
+  // clicking its row in the sidebar.
+  function activityGroupFor(a) {
+    return groupActivities(S.activities).find((g) => g.ids.includes(a.id));
+  }
+  function onActivityMenu(actId) {
+    const a = S.activities.find((x) => x.id === actId);
+    if (!a) return;
+    const course = a.course_id ? S.courses.find((c) => c.id === a.course_id) : null;
+    activityModal(activityGroupFor(a), course ? { courseCtx: course } : undefined);
+  }
+  function onTaskMenu(taskId) {
+    const t = S.tasks.find((x) => x.id === taskId);
+    if (t) taskModal(t);
+  }
+  function onNewTask(dateIso) { taskModal(null, dateIso); }
+  function onNewActivity(weekday) { activityModal(null, { prefillWeekday: weekday }); }
 
   // The timer modal reflects the GLOBAL timer. It shows what you're timing
   // (task or subtask, with its parent), logs on stop, and completing is separate.
@@ -1086,6 +1243,44 @@
        <button class="ghost" data-m="cancel">cancel</button>
        <button class="primary" data-m="${saveAttr}">${saveLabel}</button></div>`;
 
+  // Styled replacement for the browser's native confirm() - resolves true
+  // only on the explicit confirm click, false on every dismissal path
+  // (cancel/Escape/overlay-click). modal()'s own cancel button short-circuits
+  // past onAction entirely, so a MutationObserver on #modal-root (fires once
+  // the dialog actually leaves the DOM, no matter which path closed it) is
+  // what makes every dismissal path resolve false, not just the button.
+  // Its own overlay layer (not #modal-root) so it stacks ON TOP of whatever
+  // modal is already open (e.g. confirming delete from inside activityModal)
+  // instead of wiping it out - modal() always does a full #modal-root
+  // replace, which would destroy the parent modal's DOM out from under it.
+  function confirmModal(message, confirmLabel = 'delete') {
+    return new Promise((resolve) => {
+      let done = false;
+      const wrap = document.createElement('div');
+      wrap.className = 'overlay confirm-overlay';
+      wrap.innerHTML = `<div class="modal confirm-modal">
+        <p class="confirm-msg">${esc(message)}</p>
+        <div class="actions"><span class="spacer"></span>
+          <button class="ghost" data-m="cancel">cancel</button>
+          <button class="primary danger-btn" data-m="ok">${esc(confirmLabel)}</button>
+        </div>
+      </div>`;
+      document.body.appendChild(wrap);
+      const onKey = (e) => { if (e.key === 'Escape') finish(false); };
+      function finish(v) {
+        if (done) return;
+        done = true;
+        wrap.remove();
+        document.removeEventListener('keydown', onKey);
+        resolve(v);
+      }
+      wrap.addEventListener('click', (e) => { if (e.target === wrap) finish(false); });
+      wrap.querySelector('[data-m="cancel"]').onclick = () => finish(false);
+      wrap.querySelector('[data-m="ok"]').onclick = () => finish(true);
+      document.addEventListener('keydown', onKey);
+    });
+  }
+
 
   function swatchHtml(sel) {
     return `<div class="swatches">${PALETTE.map((c) =>
@@ -1098,7 +1293,98 @@
                           s.classList.add('sel'); };
   }
 
-  function taskModal(t) {
+  // Native <select> popups can't be restyled with CSS (OS/browser chrome) -
+  // this wraps each one in a themed trigger+listbox that mirrors it exactly
+  // (value/selectedIndex/change events), so every existing call site that
+  // reads .value or listens for 'change' keeps working untouched, including
+  // ones that repopulate <option>s asynchronously (watched via MutationObserver).
+  function enhanceSelects(root) {
+    (root || document).querySelectorAll('select:not([data-enhanced])').forEach(enhanceSelect);
+  }
+  window.HiveEnhanceSelects = enhanceSelects;
+  function enhanceSelect(sel) {
+    sel.dataset.enhanced = '1';
+    sel.tabIndex = -1;
+    sel.classList.add('csel-native');
+    const wrap = document.createElement('span');
+    wrap.className = 'csel';
+    sel.parentNode.insertBefore(wrap, sel);
+    wrap.appendChild(sel);
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button'; trigger.className = 'csel-trigger';
+    const label = document.createElement('span');
+    label.className = 'csel-label';
+    trigger.appendChild(label);
+    wrap.appendChild(trigger);
+
+    // nested inside trigger (not a sibling) so .csel-trigger's position:relative
+    // actually anchors it - .csel is display:contents, so siblings here don't
+    // share a containing block and position:absolute falls back to the viewport.
+    const list = document.createElement('div');
+    list.className = 'csel-list'; list.hidden = true;
+    trigger.appendChild(list);
+
+    let hi = -1;
+    const highlightRow = () => {
+      list.querySelectorAll('.csel-opt').forEach((el, i) => el.classList.toggle('hi', i === hi));
+      list.children[hi]?.scrollIntoView({ block: 'nearest' });
+    };
+    const sync = () => {
+      label.textContent = sel.options[sel.selectedIndex]?.textContent || '';
+      trigger.disabled = sel.disabled;
+      list.innerHTML = [...sel.options].map((o, i) =>
+        `<div class="csel-opt${i === sel.selectedIndex ? ' sel' : ''}" data-i="${i}">${esc(o.textContent)}</div>`).join('');
+    };
+    const onOutside = (e) => { if (!wrap.contains(e.target)) close(); };
+    const open = () => {
+      sync(); list.hidden = false; wrap.classList.add('open'); trigger.focus();
+      hi = sel.selectedIndex; highlightRow();
+      document.addEventListener('pointerdown', onOutside, true);
+    };
+    const close = () => {
+      list.hidden = true; wrap.classList.remove('open');
+      document.removeEventListener('pointerdown', onOutside, true);
+    };
+    const pick = (i) => {
+      if (i < 0 || i >= sel.options.length) return;
+      sel.selectedIndex = i;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      sync(); close(); trigger.focus();
+    };
+
+    trigger.onclick = () => { if (sel.disabled) return; list.hidden ? open() : close(); };
+    trigger.onkeydown = (e) => {
+      if (sel.disabled) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (list.hidden) { open(); return; }
+        hi = Math.max(0, Math.min(sel.options.length - 1, hi + (e.key === 'ArrowDown' ? 1 : -1)));
+        highlightRow();
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        list.hidden ? open() : pick(hi);
+      } else if (e.key === 'Escape' && !list.hidden) {
+        // stop here so Escape closes just the dropdown, not the modal
+        // underneath it too - modal() has its own global Escape-to-close.
+        e.stopPropagation(); close();
+      }
+    };
+    list.addEventListener('click', (e) => {
+      e.stopPropagation(); // list is nested inside trigger for positioning; don't let this re-toggle trigger.onclick
+      const o = e.target.closest('.csel-opt'); if (o) pick(+o.dataset.i);
+    });
+    list.addEventListener('pointermove', (e) => {
+      const o = e.target.closest('.csel-opt');
+      if (o) { hi = +o.dataset.i; highlightRow(); }
+    });
+
+    new MutationObserver(sync).observe(sel, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
+    sel.addEventListener('change', sync);
+    sync();
+  }
+
+  function taskModal(t, prefillDate) {
     const isNew = !t;
     const subs = (t?.subtasks || []);
     const rolled = subs.length > 0;
@@ -1168,6 +1454,8 @@
         <p class="muted small">save the task first to add subtasks.</p>
         ${ACTIONS('save')}`, saveHandler);
       initTzPicker(ov, dueTz);
+      enhanceSelects(ov);
+      if (prefillDate) ov.querySelector('#m-due-d').value = prefillDate;
       if (!rolled) wireStepper(ov.querySelector('#m-need'));
       ov.querySelector('#m-title').focus();
       return;
@@ -1235,6 +1523,7 @@
       ov.querySelector('#m-due-t').value = Api.fmtInZone(t.due_at, dueTz, { hour: '2-digit', minute: '2-digit', hour12: false });
     }
     initTzPicker(ov, dueTz);
+    enhanceSelects(ov);
     if (!rolled) wireStepper(ov.querySelector('#m-need'));
 
     // work-zone stopwatch follows whichever family member is timing
@@ -1327,7 +1616,7 @@
       await Api.patch('/tasks/' + t.id, { status: 'done' }); await loadAll(); close();
     };
     ov.querySelector('#rw-trash').onclick = async () => {
-      if (!confirm('Delete task?')) return;
+      if (!await confirmModal('Delete task?')) return;
       await Api.del('/tasks/' + t.id); await loadAll(); close();
     };
   }
@@ -1500,10 +1789,9 @@
       <div class="frow"><label>credits</label><input id="m-cr" type="number" min="0" max="12" step="0.5" value="${course?.credits ?? ''}" placeholder="3" /></div>
       <div class="frow"><label>color</label>${swatchHtml(sel)}</div>
       <div class="frow"><label>notes</label><textarea id="m-notes" rows="3" placeholder="office hours, policies, reading sources…">${esc(course?.notes || '')}</textarea></div>
-      ${course ? '<div class="actions left"><button class="ghost danger-btn" data-m="del">delete</button><button class="ghost" id="m-grades" type="button">grades…</button></div>' : ''}
+      ${course ? '<div class="actions left"><button class="ghost danger-btn" id="m-del-course" type="button">delete</button><button class="ghost" id="m-grades" type="button">grades…</button><button class="ghost" id="m-schedule" type="button">class times…</button></div>' : ''}
       ${ACTIONS(course ? 'save' : 'add')}`,
       async (act, ov) => {
-        if (act === 'del') { await Api.del('/courses/' + course.id); await loadAll(); return toast('course deleted'); }
         if (act !== 'save') return;
         const nm = ov.querySelector('#m-name').value.trim() || 'course';
         const color = ov.querySelector('.swatch.sel')?.dataset.c || PALETTE[0];
@@ -1522,7 +1810,53 @@
       });
     const gb = m.ov.querySelector('#m-grades');
     if (gb) gb.onclick = () => gradesModal(course);
+    const sb = m.ov.querySelector('#m-schedule');
+    if (sb) sb.onclick = () => courseScheduleModal(course);
+    const db = m.ov.querySelector('#m-del-course');
+    if (db) db.onclick = async () => {
+      if (!await confirmModal('Delete course (and keep its tasks)?')) return;
+      await Api.del('/courses/' + course.id); await loadAll(); m.close();
+      toast('course deleted');
+    };
     wireSwatches($('modal-root'));
+  }
+
+  // ----- course class-time scheduling -----
+  function courseClassGroups(course) {
+    return groupActivities(S.activities.filter((x) => x.course_id === course.id))
+      .sort((a, b) => a.start_min - b.start_min);
+  }
+
+  function courseScheduleModal(course) {
+    const groups = courseClassGroups(course);
+    const rows = groups.map((g) => `
+      <div class="side-item clickable" data-gk="${g.ids.join(',')}">
+        <span class="dot" style="background:${g.color}"></span>
+        <span class="side-txt">
+          <span class="nm">${esc(g.title)}</span>
+          <span class="meta">${activitySubtitle(g)}</span>
+        </span>
+      </div>`).join('') || '<p class="muted small">no class times scheduled yet — add one below.</p>';
+    const { ov } = modal(`
+      <h2>class times · ${esc(course.name)}</h2>
+      <p class="muted small" style="margin:-8px 0 12px">These show up on your calendar every week, colored like this course.</p>
+      <div id="cs-list">${rows}</div>
+      <div class="actions"><span class="spacer"></span>
+        <button class="ghost" data-m="cancel">close</button>
+        <button class="primary" id="cs-add" type="button">+ add class time</button></div>`);
+    // activityModal's own overlay auto-closes itself right after onDone runs
+    // (see modal()'s finally{close()}), so reopen on the next tick — reopening
+    // synchronously here would get wiped out by that trailing close().
+    const reopen = () => setTimeout(() => courseScheduleModal(course), 0);
+    for (const row of ov.querySelectorAll('[data-gk]')) {
+      row.onclick = () => {
+        const g = groups.find((x) => x.ids.join(',') === row.dataset.gk);
+        activityModal(g, { courseCtx: course, onDone: reopen });
+      };
+    }
+    ov.querySelector('#cs-add').onclick = () => {
+      activityModal(null, { courseCtx: course, onDone: reopen });
+    };
   }
 
   // ----- grades -----
@@ -1603,51 +1937,94 @@
       try {
         await Api.put('/grades/' + course.id, { categories: state });
         toast('grades saved'); close();
-        if ($('courses') && !$('courses').classList.contains('hidden')) renderCoursesHub();
+        if ($('learn') && !$('learn').classList.contains('hidden')) renderHiveCourses();
       } catch (e) { toast('save failed'); }
     };
     render();
   }
 
-  function activityModal(existing) {
-    const initDays = new Set(existing?.days || []);
+  function activityModal(existing, opts) {
+    const { courseCtx, onDone, prefillWeekday } = opts || {};
+    const initDays = new Set(existing?.days || (prefillWeekday != null ? [prefillWeekday] : []));
     const PRESETS = [
       { key: 'class',   label: 'Class',   title: 'Class',   color: '#56646E', s: '10:00', e: '10:50', days: [] },
       { key: 'lunch',   label: 'Lunch',   title: 'Lunch',   color: '#B59B5B', s: '12:00', e: '13:00', days: [0, 1, 2, 3, 4] },
       { key: 'workout', label: 'Workout', title: 'Workout', color: '#5F6B5A', s: '17:00', e: '18:00', days: [0, 2, 4] },
       { key: 'dinner',  label: 'Dinner',  title: 'Dinner',  color: '#7A5A4A', s: '18:30', e: '19:30', days: [0, 1, 2, 3, 4, 5, 6] },
     ];
-    const { ov } = modal(`
-      <h2>${existing ? 'edit activity' : 'new activity'}</h2>
-      ${existing ? '' : `<div class="frow"><label>start from a preset</label>
+    // A day's own time only shows as an override when it differs from the
+    // group's base (largest-cluster) time - inheriting is the default, so
+    // uniform-time groups (the common case) prefill with no overrides at all.
+    const dayOverride = (i) => {
+      if (!existing) return null;
+      const cluster = existing.byTime?.find((c) => c.days.includes(i));
+      if (!cluster || (cluster.start_min === existing.start_min && cluster.end_min === existing.end_min)) return null;
+      return cluster;
+    };
+    const initColor = existing?.color || courseCtx?.color || '#5F6B5A';
+    const heading = courseCtx
+      ? `${existing ? 'edit' : 'new'} class time · ${esc(courseCtx.name)}`
+      : `${existing ? 'edit activity' : 'new activity'}`;
+    const { ov, close } = modal(`
+      <h2>${heading}</h2>
+      ${existing || courseCtx ? '' : `<div class="frow"><label>start from a preset</label>
         <div class="apresets">${PRESETS.map((p) => `<button type="button" class="apz" data-p="${p.key}">${p.label}</button>`).join('')}<button type="button" class="apz" data-p="custom">Custom</button></div></div>`}
-      <div class="frow"><label>title</label><input id="m-name" value="${esc(existing?.title || '')}" placeholder="CMPEN 331 lecture / lunch / workout" /></div>
+      <div class="frow"><label>title</label><input id="m-name" value="${esc(existing?.title || '')}" placeholder="${courseCtx ? 'Lecture, Lab, Discussion…' : 'CMPEN 331 lecture / lunch / workout'}" /></div>
       <div class="frow"><label>days</label>
-        <div class="daypick">${DAYS.map((d, i) => `<button data-d="${i}" class="${initDays.has(i) ? 'sel' : ''}">${d}</button>`).join('')}</div></div>
+        <div class="daypick">${DAYS.map((d, i) => { const ov = dayOverride(i); return `
+          <div class="daychip${initDays.has(i) ? ' show-ov' : ''}" data-d="${i}">
+            <button type="button" class="d-btn${initDays.has(i) ? ' sel' : ''}" data-d="${i}">${d}</button>
+            <button type="button" class="d-ov-toggle${ov ? ' on' : ''}" data-d="${i}" title="different time on ${d}?">±</button>
+            <span class="d-ov-times${ov ? ' show' : ''}">
+              <input type="time" class="d-ov-s" data-d="${i}" value="${ov ? minToHM(ov.start_min) : ''}" />
+              <input type="time" class="d-ov-e" data-d="${i}" value="${ov ? minToHM(ov.end_min) : ''}" />
+            </span>
+          </div>`; }).join('')}</div></div>
       <div class="frow">
         <div><label>start</label><input id="m-s" type="time" value="${existing ? minToHM(existing.start_min) : nowHM()}" /></div>
         <div><label>end</label><input id="m-e" type="time" value="${existing ? minToHM(existing.end_min) : plusHM(50)}" /></div>
       </div>
-      <div class="frow"><label>color</label>${swatchHtml(existing?.color || '#5F6B5A')}</div>
+      <div class="frow"><label>color</label>${swatchHtml(initColor)}</div>
+      <div class="frow"><label>notes</label><textarea id="m-anotes" rows="2" placeholder="details, location, links…">${esc(existing?.notes || '')}</textarea></div>
       <div class="apreview"><div class="apl">PREVIEW · how it lands on your week</div><div class="achip" id="achip"></div></div>
-      ${existing ? '<div class="actions left"><button class="ghost danger-btn" data-m="del">delete</button></div>' : ''}
-      ${ACTIONS(existing ? 'save' : 'block it')}`,
+      ${existing ? '<div class="actions left"><button class="ghost danger-btn" id="m-del-activity" type="button">delete</button></div>' : ''}
+      ${ACTIONS(existing ? 'save' : (courseCtx ? 'add class time' : 'block it'))}`,
       async (act, ovEl) => {
-        if (act === 'del') {
-          await Promise.all((existing.ids).map((id) => Api.del('/activities/' + id)));
-          await loadAll(); return toast('activity deleted');
-        }
         if (act !== 'save') return;
-        const days = [...ovEl.querySelectorAll('.daypick button.sel')].map((b) => +b.dataset.d);
+        const days = [...ovEl.querySelectorAll('.daypick .d-btn.sel')].map((b) => +b.dataset.d);
         const s = hmToMin(ovEl.querySelector('#m-s').value);
         const e = hmToMin(ovEl.querySelector('#m-e').value);
         if (!days.length || e <= s) return toast('pick days and a valid time range', true);
-        const title = ovEl.querySelector('#m-name').value.trim() || 'activity';
+        const title = ovEl.querySelector('#m-name').value.trim() || (courseCtx ? courseCtx.name : 'activity');
         const color = ovEl.querySelector('.swatch.sel')?.dataset.c || '#5F6B5A';
-        if (existing) await Promise.all(existing.ids.map((id) => Api.del('/activities/' + id)));
-        for (const d of days)
-          await Api.post('/activities', { title, color, weekday: d, start_min: s, end_min: e });
+        const notes = ovEl.querySelector('#m-anotes').value;
+        const courseId = courseCtx?.id ?? existing?.course_id ?? null;
+        // A day with its override toggle on uses its own mini start/end
+        // instead of the shared time - "special ones here and there" that
+        // still belong to the same named activity, not a separate one.
+        const timeFor = (d) => {
+          const chip = ovEl.querySelector(`.daychip[data-d="${d}"]`);
+          if (!chip?.querySelector('.d-ov-toggle')?.classList.contains('on')) return { s, e };
+          const os = hmToMin(chip.querySelector('.d-ov-s').value);
+          const oe = hmToMin(chip.querySelector('.d-ov-e').value);
+          return (oe > os) ? { s: os, e: oe } : { s, e };
+        };
+        // Update in place where a day is kept (same id, atomic PATCH — no
+        // delete+recreate churn, and no window for a duplicate if this
+        // ever fires twice), only delete days that were unchecked, only
+        // create days that are newly checked.
+        if (existing) {
+          const idByDay = new Map(existing.days.map((d, i) => [d, existing.ids[i]]));
+          const keep = new Set(days);
+          await Promise.all(existing.days.filter((d) => !keep.has(d)).map((d) => Api.del('/activities/' + idByDay.get(d))));
+          await Promise.all(days.map((d) => { const t = timeFor(d); return idByDay.has(d)
+            ? Api.patch('/activities/' + idByDay.get(d), { title, color, notes, start_min: t.s, end_min: t.e, course_id: courseId })
+            : Api.post('/activities', { title, color, notes, weekday: d, start_min: t.s, end_min: t.e, course_id: courseId }); }));
+        } else {
+          await Promise.all(days.map((d) => { const t = timeFor(d); return Api.post('/activities', { title, color, notes, weekday: d, start_min: t.s, end_min: t.e, course_id: courseId }); }));
+        }
         await loadAll();
+        if (onDone) return onDone();
         toast(`${existing ? 'updated' : 'blocked'} \u00b7 ${title}`);
       });
 
@@ -1660,7 +2037,7 @@
     const chip = ov.querySelector('#achip');
     const updatePreview = () => {
       const title = ov.querySelector('#m-name').value.trim() || 'activity';
-      const sel = [...ov.querySelectorAll('.daypick button.sel')].map((b) => +b.dataset.d).sort((a, b) => a - b);
+      const sel = [...ov.querySelectorAll('.daypick .d-btn.sel')].map((b) => +b.dataset.d).sort((a, b) => a - b);
       const dtxt = sel.length ? sel.map((d) => ABBR[d]).join(' · ') : 'pick days';
       const color = ov.querySelector('.swatch.sel')?.dataset.c || '#5F6B5A';
       chip.style.borderLeftColor = color;
@@ -1668,10 +2045,34 @@
       chip.innerHTML = `<b>${esc(title)}</b><span>${dtxt} \u00b7 ${fmt12(ov.querySelector('#m-s').value)}\u2013${fmt12(ov.querySelector('#m-e').value)}</span>`;
     };
 
+    const delBtn = ov.querySelector('#m-del-activity');
+    if (delBtn) delBtn.onclick = async () => {
+      if (!await confirmModal('Delete this activity?')) return;
+      await Promise.all(existing.ids.map((id) => Api.del('/activities/' + id)));
+      await loadAll();
+      close();
+      if (onDone) return onDone();
+      toast('activity deleted');
+    };
     wireSwatches(ov);
     for (const sw of ov.querySelectorAll('.swatch')) sw.addEventListener('click', updatePreview);
-    for (const b of ov.querySelectorAll('.daypick button'))
-      b.onclick = () => { b.classList.toggle('sel'); updatePreview(); };
+    for (const b of ov.querySelectorAll('.daypick .d-btn'))
+      b.onclick = () => {
+        b.classList.toggle('sel');
+        b.closest('.daychip').classList.toggle('show-ov', b.classList.contains('sel'));
+        updatePreview();
+      };
+    for (const t of ov.querySelectorAll('.d-ov-toggle'))
+      t.onclick = () => {
+        t.classList.toggle('on');
+        const times = t.closest('.daychip').querySelector('.d-ov-times');
+        times.classList.toggle('show', t.classList.contains('on'));
+        if (t.classList.contains('on')) {
+          const [si, ei] = times.querySelectorAll('input');
+          if (!si.value) si.value = ov.querySelector('#m-s').value;
+          if (!ei.value) ei.value = ov.querySelector('#m-e').value;
+        }
+      };
     for (const id of ['m-name', 'm-s', 'm-e']) ov.querySelector('#' + id).addEventListener('input', updatePreview);
 
     for (const z of ov.querySelectorAll('.apz')) z.onclick = () => {
@@ -1680,7 +2081,11 @@
       if (!p) { ov.querySelector('#m-name').value = ''; ov.querySelector('#m-name').focus(); updatePreview(); return; }
       ov.querySelector('#m-name').value = p.title;
       ov.querySelector('#m-s').value = p.s; ov.querySelector('#m-e').value = p.e;
-      ov.querySelectorAll('.daypick button').forEach((b) => b.classList.toggle('sel', p.days.includes(+b.dataset.d)));
+      ov.querySelectorAll('.daychip').forEach((chip) => {
+        const on = p.days.includes(+chip.dataset.d);
+        chip.querySelector('.d-btn').classList.toggle('sel', on);
+        chip.classList.toggle('show-ov', on);
+      });
       ov.querySelectorAll('.swatch').forEach((sw) => sw.classList.toggle('sel', sw.dataset.c === p.color));
       updatePreview();
     };
@@ -1709,42 +2114,33 @@
   ];
 
   function showView(name, btn, tab) {
-    for (const b of document.querySelectorAll('.rail-btn[data-view]')) b.classList.toggle('active', b === btn);
+    // Match by view name, not element identity, so the rail and the mobile
+    // bottom nav (two separate elements per view) both reflect the active view.
+    for (const b of document.querySelectorAll('[data-view]')) b.classList.toggle('active', b.dataset.view === name);
     const insights = name === 'insights';
-    const courses = name === 'courses';
-    const home = !insights && !courses;
+    const learn = name === 'learn';
+    const home = !insights && !learn;
     $('analytics').classList.toggle('hidden', !insights);
-    const cv = $('courses'); if (cv) cv.classList.toggle('hidden', !courses);
+    const lv = $('learn'); if (lv) lv.classList.toggle('hidden', !learn);
     $('calendar').classList.toggle('hidden', !home);
     const bar = document.querySelector('.topbar'); if (bar) bar.classList.toggle('hidden', !home);
     const panel = $('panel'); if (panel) panel.classList.toggle('hidden', !home);
+    // Courses collapses the right sidebar to reclaim its width (see learn.js
+    // activateCourseWorkspace); mirror that here so Insights does too.
+    if (insights && !document.body.classList.contains('no-right')) {
+      document.body.classList.add('no-right');
+      const rightToggle = document.getElementById('collapse-right');
+      if (rightToggle) rightToggle.textContent = '‹';
+      window.dispatchEvent(new Event('resize'));
+    }
     if (insights) renderAnalytics(tab);
-    if (courses) renderCoursesHub();
+    if (learn) renderHiveCourses();
   }
 
-  async function renderCoursesHub() {
-    const el = $('courses'); if (!el) return;
-    let gsum = {}; try { gsum = await Api.get('/grades/summary'); } catch (e) { /* ignore */ }
-    const openCount = (cid) => S.tasks.filter((t) => t.course_id === cid && t.status !== 'done').length;
-    const cards = (S.courses || []).map((c) => {
-      const g = gsum[String(c.id)];
-      return `<button class="ch-card" data-cid="${c.id}" style="--cc:${c.color}">
-        <span class="ch-top"><span class="ch-dot"></span><span class="ch-name">${esc(c.name)}</span>
-          ${g ? `<span class="ch-grade">${g.letter} \u00b7 ${g.percent}%</span>` : ''}</span>
-        ${c.instructor ? `<span class="ch-inst">${esc(c.instructor)}</span>` : '<span class="ch-inst muted">no instructor</span>'}
-        <span class="ch-meta">${openCount(c.id)} open \u00b7 ${c.source === 'canvas' ? 'Canvas' : 'manual'}${c.credits ? ' \u00b7 ' + c.credits + ' cr' : ''}</span>
-      </button>`;
-    }).join('');
-    el.innerHTML = `
-      <div class="ch-head"><h2>Courses</h2>
-        <div class="ch-actions">
-          <button class="ghost" id="ch-import">import</button>
-          <button class="primary" id="ch-add">+ course</button></div></div>
-      <div class="ch-grid">${cards || '<p class="muted small">no courses yet \u2014 add one, or import from Canvas / a syllabus.</p>'}</div>`;
-    el.querySelector('#ch-add').onclick = () => courseModal();
-    el.querySelector('#ch-import').onclick = () => canvasModal();
-    for (const card of el.querySelectorAll('.ch-card'))
-      card.onclick = () => { const c = S.courses.find((x) => x.id === +card.dataset.cid); if (c) courseModal(c); };
+  function renderHiveCourses() {
+    const el = $('learn');
+    if (!el || !window.HiveCourses) return;
+    window.HiveCourses.render(el, S, Api);
   }
 
   let anTab = 'analytics';
@@ -1765,6 +2161,7 @@
       </div>
       <div class="an-body" id="an-body"><p class="muted small">loading\u2026</p></div>`;
     el.querySelector('.an-range').onchange = (e) => { anRange = e.target.value; if (anMode === 'future') loadFuture(); else loadPast(); };
+    enhanceSelects(el);
     const ex = el.querySelector('#an-export');
     if (ex) ex.onclick = async () => {
       try {
@@ -1833,7 +2230,7 @@
     const s = d.study;
     const parts = [
       { label: 'used', min: s.used_min, color: 'var(--accent)' },
-      { label: 'planned, not used', min: s.planned_not_used_min, color: '#6B7A86' },
+      { label: 'planned, not used', min: s.planned_not_used_min, color: 'var(--legend-plan)' },
       { label: 'free', min: s.free_min, color: 'var(--input)' },
     ];
     const most = d.most_consuming;
@@ -1865,11 +2262,11 @@
   }
 
   const _anCards = (c) => `<div class="an-cards">
-    <div class="an-statcard"><div class="an-statlabel" style="color:#6B7A86">available study time</div><div class="an-statnum">${fmtDur(c.available_min)}</div></div>
+    <div class="an-statcard"><div class="an-statlabel" style="color:var(--legend-plan)">available study time</div><div class="an-statnum">${fmtDur(c.available_min)}</div></div>
     <div class="an-statcard"><div class="an-statlabel">tasks due</div><div class="an-statnum">${c.tasks_due}</div></div>
     <div class="an-statcard"><div class="an-statlabel">task workload due</div><div class="an-statnum">${fmtDur(c.workload_due_min)}</div></div>
     <div class="an-statcard"><div class="an-statlabel" style="color:var(--accent)">time planned</div><div class="an-statnum">${fmtDur(c.planned_min)}</div></div>
-    <div class="an-statcard"><div class="an-statlabel" style="color:#C58A77">time left to plan</div><div class="an-statnum">${fmtDur(c.left_to_plan_min)}</div></div>
+    <div class="an-statcard"><div class="an-statlabel" style="color:var(--red)">time left to plan</div><div class="an-statnum">${fmtDur(c.left_to_plan_min)}</div></div>
   </div>`;
 
   const _anDonut = (parts) => {
@@ -1894,7 +2291,7 @@
   function anFutureHtml(d) {
     const b = d.breakdown;
     const parts = [
-      { label: 'activity', min: b.activity_min, color: '#B59B5B' },
+      { label: 'activity', min: b.activity_min, color: 'var(--yellow)' },
       { label: 'planned', min: b.planned_min, color: 'var(--accent)' },
       { label: 'free', min: b.free_min, color: 'var(--input)' },
     ];
@@ -2093,7 +2490,7 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
       <polyline points="${poly('demand')}" class="cu-dem"/>
       ${dots}${xlabs}
     </svg>
-    <div class="an-legend" style="margin-top:8px"><span><i style="background:var(--accent)"></i>free time available</span><span><i style="background:#C58A77"></i>work due (cumulative)</span></div>`;
+    <div class="an-legend" style="margin-top:8px"><span><i style="background:var(--accent)"></i>free time available</span><span><i style="background:var(--red)"></i>work due (cumulative)</span></div>`;
   }
 
   function canvasModal(initialTab) {
@@ -2340,8 +2737,8 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
     const t = termCfg.term || {};
     const aw = Object.fromEntries(awake.map((a) => [a.weekday, a]));
     const st = S.settings;
-    const accent = st.accent || '#8A7F73';
-    const ACC = ['#8A7F73', '#B59B5B', '#6F7F66', '#7A6A8A', '#5F6B7A', '#9A6A5A'];
+    const accent = st.accent || '#3D7DFF';
+    const ACC = ['#3D7DFF', '#AF52DE', '#FF2D78', '#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#00B8A9'];
     const sel = (v, x) => (v === x ? 'selected' : '');
 
     // ---- field helpers (consistent rows) -------------------------------
@@ -2368,7 +2765,8 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
         row('Start ahead', 'begin tasks this many days early', `<input id="m-ahead" type="number" value="${st.start_ahead_days}" /> <span class="unit">days</span>`) +
         row('Cushion turns yellow at', '% of needed time left', `<input id="m-yel" type="number" value="${st.yellow_threshold_pct}" /> <span class="unit">%</span>`) +
         row('Week starts on', '', `<select id="m-wkstart"><option value="6" ${sel(st.week_start, 6)}>Sunday</option><option value="0" ${sel(st.week_start, 0)}>Monday</option></select>`) +
-        row('Default view', '', `<select id="m-defview">${['week', 'day', 'month'].map((v) => `<option ${sel(st.default_view || 'week', v)}>${v}</option>`).join('')}</select>`)
+        row('Default view', '', `<select id="m-defview">${['week', 'day', 'month'].map((v) => `<option ${sel(st.default_view || 'week', v)}>${v}</option>`).join('')}</select>`) +
+        row('Calendar scrolls to', 'where the week/day view opens', `<input id="m-daystart" type="time" value="${pad(Math.floor((st.day_start_min ?? 480) / 60))}:${pad((st.day_start_min ?? 480) % 60)}" />`)
       ) + `<div class="sgroup-title">awake time</div>
         <div class="sgroup awake-block">
           <div class="awake-default">
@@ -2401,13 +2799,13 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
         row('Planned task starts', 'remind me before a block', `<input type="checkbox" disabled />`)
       );
 
-    const paneAcct = `<p class="set-sub">Single-user, self-hosted — auth is your API key.</p>` +
+    const paneAcct = `<p class="set-sub">Single-user, self-hosted — localhost testing auto-creates a browser key.</p>` +
       group('',
         row('Display name', '', `<input id="m-name" type="text" value="${esc(st.display_name || '')}" placeholder="your name" />`)
       ) + group('api key',
         row('Mint a new key', 'keys are shown once', `<button class="ghost" id="m-newkey">mint</button>`) +
         `<div class="srow" id="m-newkey-row" style="display:none"><div class="srow-l"><div class="srow-label">Your key</div></div><div class="srow-c"><code id="m-newkey-out"></code></div></div>`
-      );
+      ) + group('minted keys', `<div id="m-keylist" class="muted small">loading…</div>`);
 
     const SECTIONS = [
       ['term', 'Term', 'where you study and when the term runs', paneTerm],
@@ -2450,6 +2848,7 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
     wireSwatches(ov);
     wireAwake(ov);
     await initSettingsTz(ov);
+    enhanceSelects(ov);
 
     const mk = ov.querySelector('#m-newkey');
     if (mk) mk.onclick = async () => {
@@ -2457,7 +2856,28 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
       try { const k = await Api.post('/auth/keys?label=ui'); out.textContent = k.api_key || '(minted)'; }
       catch (e) { out.textContent = 'mint failed: ' + e.message; }
       if (r) r.style.display = 'flex';
+      await renderKeyList(ov);
     };
+    if (ov.querySelector('#m-keylist')) await renderKeyList(ov);
+  }
+
+  async function renderKeyList(ov) {
+    const host = ov.querySelector('#m-keylist');
+    if (!host) return;
+    let keys;
+    try { keys = await Api.get('/auth/keys'); }
+    catch (e) { host.textContent = 'could not load keys'; return; }
+    if (!keys.length) { host.textContent = 'no keys minted yet'; return; }
+    host.innerHTML = keys.map((k) => `<div class="srow">
+        <div class="srow-l"><div class="srow-label">${esc(k.label)}</div>
+          <div class="srow-hint">${new Date(k.created_at).toLocaleString()}${k.revoked ? ' · revoked' : ''}</div></div>
+        <div class="srow-c">${k.revoked ? '' : `<button class="ghost xs" data-revoke="${k.id}">revoke</button>`}</div>
+      </div>`).join('');
+    host.querySelectorAll('[data-revoke]').forEach((b) => b.onclick = async () => {
+      b.disabled = true;
+      try { await Api.post(`/auth/keys/${b.dataset.revoke}/revoke`); await renderKeyList(ov); }
+      catch (e) { b.disabled = false; toast('revoke failed', true); }
+    });
   }
 
   async function saveSettings(ov) {
@@ -2467,8 +2887,12 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
       yellow_threshold_pct: +ov.querySelector('#m-yel').value || 40,
       week_start: +ov.querySelector('#m-wkstart').value,
       default_view: ov.querySelector('#m-defview').value,
+      day_start_min: (() => {
+        const [h, m] = (ov.querySelector('#m-daystart')?.value || '08:00').split(':').map(Number);
+        return h * 60 + m;
+      })(),
       theme: ov.querySelector('#m-theme').value,
-      accent: ov.querySelector('#m-accent .swatch.sel')?.dataset.c || '#8A7F73',
+      accent: ov.querySelector('#m-accent .swatch.sel')?.dataset.c || '#3D7DFF',
       density: +ov.querySelector('#m-density').value,
       fontscale: +ov.querySelector('#m-font').value,
       home_tz: ov.querySelector('#m-home-tz').value,
