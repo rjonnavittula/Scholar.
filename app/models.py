@@ -25,6 +25,7 @@ class Source(str, enum.Enum):
     manual = "manual"
     canvas = "canvas"
     api = "api"
+    icloud = "icloud"
 
 
 class Course(SQLModel, table=True):
@@ -134,6 +135,12 @@ class Settings(SQLModel, table=True):
     canvas_autosync: bool = False
     canvas_sync_hours: int = 12
     canvas_last_sync: Optional[datetime] = None
+    icloud_username: str = ""             # Apple ID email
+    icloud_password: str = ""             # app-specific password (appleid.apple.com) -- never the real account password
+    icloud_calendar_url: str = ""         # blank = sync every calendar found on the account
+    icloud_autosync: bool = False
+    icloud_sync_hours: int = 12
+    icloud_last_sync: Optional[datetime] = None
 
 
 class TimeLog(SQLModel, table=True):

@@ -70,7 +70,7 @@ input:focus, select:focus { outline:none; border-color:var(--accent); }
 .gate h1 { font-size:38px; margin:0; }
 
 /* ---- layout ---- */
-.app { display:grid; height:100vh;
+.app { display:grid; height:100vh; height:100dvh;
   grid-template-columns:56px var(--col-left) 1fr var(--col-right);
   transition:grid-template-columns .28s cubic-bezier(.4,0,.2,1); }
 
@@ -101,7 +101,7 @@ input:focus, select:focus { outline:none; border-color:var(--accent); }
   border:none; padding:0 2px; }
 .side-item:hover .x { visibility:visible; }
 
-.main { display:flex; flex-direction:column; min-width:0; min-height:0; height:100vh; }
+.main { display:flex; flex-direction:column; min-width:0; min-height:0; height:100vh; height:100dvh; }
 .topbar { display:flex; flex-direction:column; padding:0; border-bottom:1px solid var(--line); }
 .tb-global { display:flex; align-items:center; gap:14px; padding:9px 16px; white-space:nowrap; overflow:hidden; }
 .tb-toolbar { display:flex; align-items:center; gap:10px; padding:7px 16px; border-top:1px solid var(--line); white-space:nowrap; overflow:hidden; }
@@ -290,7 +290,63 @@ input:focus, select:focus { outline:none; border-color:var(--accent); }
 .daypick button.sel { background:var(--accent-soft); border-color:var(--accent);
   color:var(--accent); }
 @media (max-width:1000px) {
-  .app { --col-left:0px; --col-right:0px; grid-template-columns:48px 0 1fr 0; }
+  /* phones + portrait iPad: the courses/activities sidebar and the task
+     panel used to just be zeroed out here with no way to get them back.
+     Turn them into off-canvas drawers instead, opened via the existing
+     collapse-tab arrows, so nothing the app can do becomes unreachable. */
+  .app { grid-template-columns:48px 1fr; }
+
+  .sidebar, .panel {
+    position:fixed; top:0; bottom:0; z-index:41;
+    width:min(84vw, 320px);
+    opacity:1 !important; pointer-events:auto !important;
+    transition:transform .28s cubic-bezier(.4,0,.2,1);
+    box-shadow:0 0 36px rgba(0,0,0,.4);
+  }
+  .sidebar { left:48px; transform:translateX(-100%);
+    padding-top:calc(16px + env(safe-area-inset-top));
+    padding-bottom:calc(16px + env(safe-area-inset-bottom)); }
+  .panel { right:0; transform:translateX(100%);
+    padding-top:calc(14px + env(safe-area-inset-top));
+    padding-bottom:calc(14px + env(safe-area-inset-bottom));
+    padding-right:calc(12px + env(safe-area-inset-right)); }
+  body.show-left .sidebar { transform:translateX(0); }
+  body.show-right .panel { transform:translateX(0); }
+
+  .mobile-backdrop { display:none; position:fixed; inset:0; z-index:40; background:rgba(0,0,0,.45); }
+  body.show-left .mobile-backdrop, body.show-right .mobile-backdrop { display:block; }
+
+  /* collapse-tab arrows double as the drawer open/close toggle on mobile —
+     move off the icon rail and size up to a real touch target */
+  .collapse-tab { width:34px; height:56px; z-index:42; }
+  #collapse-left { left:48px; }
+  #collapse-right { right:0; }
+
+  /* touch targets: bump the smallest icon buttons to ~44px, mobile-only
+     so desktop density is untouched */
+  .rail-btn { width:44px; height:44px; font-size:17px; }
+  .ptool { width:44px; height:44px; }
+  .tb-pomo { width:44px; height:44px; }
+  .swatch { width:36px; height:36px; }
+  .sw-icon, .sw-ic, .rw .ic, .sw-x { width:40px; height:40px; }
+  .gr-x { padding:9px; }
+  .dur .dstep { padding:8px; }
+  .awk-h { width:20px; height:20px; }
+
+  /* iOS Safari auto-zooms on focusing any input under 16px font-size */
+  input, select, textarea { font-size:16px; }
+
+  /* notch / home-indicator safe areas */
+  .rail { padding-top:calc(14px + env(safe-area-inset-top));
+    padding-bottom:calc(14px + env(safe-area-inset-bottom)); }
+  .topbar { padding-top:env(safe-area-inset-top); }
+}
+
+@media (max-width:480px) {
+  /* v5k syllabus-import review grid used fixed px columns that overflowed
+     the modal on narrow phones; shrink them and add a scroll fallback */
+  .syl-rows { overflow-x:auto; }
+  .syl-row { grid-template-columns:auto 1fr 116px 92px; min-width:300px; }
 }
 
 /* clearer selected swatch + live ring (fix 5) */
@@ -545,7 +601,7 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 .awk-band { position:absolute; top:-1px; bottom:-1px; background:var(--accent-soft);
   border:1px solid var(--accent); border-radius:999px; }
 .awk-h { position:absolute; top:50%; width:11px; height:11px; transform:translateY(-50%);
-  background:var(--accent); border-radius:50%; cursor:ew-resize; }
+  background:var(--accent); border-radius:50%; cursor:ew-resize; touch-action:none; }
 .awk-h-s { left:-5px; } .awk-h-e { right:-5px; }
 .awk-time { cursor:pointer; white-space:nowrap; font-variant-numeric:tabular-nums; min-width:84px; text-align:right; }
 .awk-edit { display:none; grid-column:1 / -1; gap:8px; align-items:center; padding:2px 0 4px 50px; }
@@ -1011,3 +1067,20 @@ button { transition:border-color .15s ease, color .15s ease, background .15s eas
 .cv-auto-hours { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
 .cv-auto-hours input { width:56px; }
 .cv-auto #cv-lastsync { flex-basis:100%; }
+
+/* mobile: these specific inputs/selects set an explicit sub-16px font-size
+   above (higher specificity than the blanket `input,select,textarea` rule
+   in the max-width:1000px block), which would still trigger iOS Safari's
+   zoom-on-focus. Placed last so it wins the cascade at equal specificity. */
+@media (max-width:1000px) {
+  .an-range,
+  .viewtabs select,
+  .cv-code,
+  .sw-will,
+  .rw-notes,
+  .syl-row input,
+  .syl-row .syl-t,
+  .gr-item .gr-title,
+  .gr-item .gr-earned,
+  .gr-item .gr-possible { font-size:16px; }
+}

@@ -29,7 +29,7 @@
     },
     get todayIso() { return isoOf(new Date()); },
     settings: {}, courses: [], activities: [], tasks: [], planned: [],
-    cushion: null, cushionByTask: {}, availability: [], canvas: {},
+    cushion: null, cushionByTask: {}, availability: [], canvas: {}, icloud: {},
   };
 
   function mondayOf(d) {
@@ -62,16 +62,17 @@
   window.__S = S;
   async function loadAll() {
     const weekIso = isoOf(S.weekStart);
-    const [settings, courses, activities, tasks, planned, cushion, avail, canvas, streak] =
+    const [settings, courses, activities, tasks, planned, cushion, avail, canvas, icloud, streak] =
       await Promise.all([
         Api.get('/config/settings'), Api.get('/courses'), Api.get('/activities'),
         Api.get('/tasks'), Api.get('/planned'), Api.get('/cushion'),
         Api.get(`/cushion/availability?start=${weekIso}&days=7`),
         Api.get('/integrations/canvas/status'),
+        Api.get('/integrations/icloud/status'),
         Api.get('/streak?days=7'),
       ]);
     Object.assign(S, { settings, courses, activities, tasks, planned, cushion,
-                       availability: avail, canvas, streak });
+                       availability: avail, canvas, icloud, streak });
     S.cushionByTask = Object.fromEntries((cushion.per_task || []).map((c) => [c.task_id, c]));
     renderAll();
     Timer.refresh();
@@ -184,11 +185,38 @@
   function wireChrome() {
     const cl = document.getElementById('collapse-left');
     const cr = document.getElementById('collapse-right');
+    const backdrop = document.getElementById('mobile-backdrop');
+    const mqMobile = window.matchMedia('(max-width:1000px)');
     const afterCollapse = () => { setTimeout(() => Cal.resize && Cal.resize(), 320); };
-    if (cl) cl.onclick = () => { document.body.classList.toggle('no-left');
-      cl.textContent = document.body.classList.contains('no-left') ? '›' : '‹'; afterCollapse(); };
-    if (cr) cr.onclick = () => { document.body.classList.toggle('no-right');
-      cr.textContent = document.body.classList.contains('no-right') ? '‹' : '›'; afterCollapse(); };
+    // Below the 1000px breakpoint, .sidebar/.panel are off-canvas drawers
+    // (see app.css) instead of the desktop collapse-to-zero-width behavior —
+    // same arrow buttons, but they open/close a drawer rather than hiding
+    // an always-visible column, so courses/activities/tasks stay reachable.
+    if (backdrop) backdrop.onclick = () => document.body.classList.remove('show-left', 'show-right');
+    if (cl) cl.onclick = () => {
+      if (mqMobile.matches) {
+        document.body.classList.toggle('show-left');
+        document.body.classList.remove('show-right');
+        const open = document.body.classList.contains('show-left');
+        cl.textContent = open ? '‹' : '›'; cl.title = open ? 'hide sidebar' : 'show sidebar';
+      } else {
+        document.body.classList.toggle('no-left');
+        cl.textContent = document.body.classList.contains('no-left') ? '›' : '‹';
+      }
+      afterCollapse();
+    };
+    if (cr) cr.onclick = () => {
+      if (mqMobile.matches) {
+        document.body.classList.toggle('show-right');
+        document.body.classList.remove('show-left');
+        const open = document.body.classList.contains('show-right');
+        cr.textContent = open ? '›' : '‹'; cr.title = open ? 'hide tasks' : 'show tasks';
+      } else {
+        document.body.classList.toggle('no-right');
+        cr.textContent = document.body.classList.contains('no-right') ? '‹' : '›';
+      }
+      afterCollapse();
+    };
     for (const b of document.querySelectorAll('#viewtabs [data-view]'))
       b.onclick = () => setCalView(b.dataset.view);
     const vn = document.getElementById('view-n');
@@ -219,6 +247,8 @@
     $('btn-add-activity').onclick = () => activityModal();
     $('btn-canvas-cfg').onclick = () => canvasModal();
     $('btn-canvas-sync').onclick = syncCanvas;
+    $('btn-icloud-cfg').onclick = () => canvasModal('icloud');
+    $('btn-icloud-sync').onclick = syncIcloud;
     $('btn-settings').onclick = () => settingsModal();
     const themeBtn = $('btn-theme');
     if (themeBtn) {
@@ -339,6 +369,11 @@
       : (S.canvas.ics_configured ? 'calendar feed linked' : 'not configured');
     $('btn-canvas-sync').classList.toggle('hidden', !S.canvas.configured);
 
+    $('icloud-status').textContent = S.icloud.configured
+      ? `linked · ${S.icloud.username}`
+      : 'not configured';
+    $('btn-icloud-sync').classList.toggle('hidden', !S.icloud.configured);
+
     for (const b of document.querySelectorAll('[data-del-course]'))
       b.onclick = async () => { if (confirm('Delete course (and keep its tasks)?'))
         { await Api.del('/courses/' + b.dataset.delCourse); loadAll(); } };
@@ -369,6 +404,17 @@
     try {
       const r = await Api.post('/integrations/canvas/sync');
       toast(`canvas: ${r.created} new, ${r.updated} updated across ${r.courses} courses`);
+      await loadAll();
+    } catch (e) { toast(e.message, true); }
+    btn.textContent = '↻ sync now'; btn.disabled = false;
+  }
+
+  async function syncIcloud() {
+    const btn = $('btn-icloud-sync');
+    btn.textContent = '↻ syncing…'; btn.disabled = true;
+    try {
+      const r = await Api.post('/integrations/icloud/sync');
+      toast(`iCloud: ${r.created} new, ${r.updated} updated (${r.events} events)`);
       await loadAll();
     } catch (e) { toast(e.message, true); }
     btn.textContent = '↻ sync now'; btn.disabled = false;
@@ -2050,7 +2096,7 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
     <div class="an-legend" style="margin-top:8px"><span><i style="background:var(--accent)"></i>free time available</span><span><i style="background:#C58A77"></i>work due (cumulative)</span></div>`;
   }
 
-  function canvasModal() {
+  function canvasModal(initialTab) {
     const BM = "javascript:(async()=>{try{var b=location.origin;var J=async u=>{var r=await fetch(b+u,{headers:{Accept:'application/json'}});return r.json()};var cs=[],p=1;while(p<6){var x=await J('/api/v1/courses?enrollment_state=active&per_page=100&page='+p);if(!x.length)break;cs=cs.concat(x);if(x.length<100)break;p++}var A=[];for(var c of cs){try{var as=await J('/api/v1/courses/'+c.id+'/assignments?per_page=100&bucket=upcoming');for(var a of as)A.push({id:a.id,name:a.name,due_at:a.due_at,course_id:c.id,html_url:a.html_url})}catch(e){}}await navigator.clipboard.writeText(JSON.stringify({courses:cs.map(c=>({id:c.id,name:c.name})),assignments:A}));alert('scholar: copied '+A.length+' assignments from '+cs.length+' courses. Paste into scholar.')}catch(e){alert('scholar failed: '+e)}})();";
     const { ov, close } = modal(`
       <h2>import</h2>
@@ -2059,6 +2105,7 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
         <span data-tab="ics">Calendar feed</span>
         <span data-tab="script">Quick script</span>
         <span data-tab="syllabus">Syllabus PDF</span>
+        <span data-tab="icloud">iCloud calendar</span>
       </div>
 
       <div class="cv-panel" data-panel="token">
@@ -2113,6 +2160,27 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
         <div id="syl-results" style="margin-top:14px"></div>
       </div>
 
+      <div class="cv-panel" data-panel="icloud" hidden>
+        <p class="muted small">Personal events (not coursework) from your real iCloud calendars. Needs an
+          <strong>app-specific password</strong> from
+          <a class="lnk" href="https://appleid.apple.com" target="_blank" rel="noopener">appleid.apple.com</a>
+          → Sign-In and Security → App-Specific Passwords — never your real Apple ID password.
+          Stored in your own database, used server-side only.</p>
+        <div class="frow"><label>Apple ID (email)</label>
+          <input id="ic-user" value="${esc(S.icloud.username || '')}" placeholder="you@icloud.com" /></div>
+        <div class="frow"><label>app-specific password</label>
+          <input id="ic-pass" type="password" placeholder="${S.icloud.configured ? '•••••• (saved)' : 'xxxx-xxxx-xxxx-xxxx'}" /></div>
+        <div class="frow"><label>specific calendar URL (optional)</label>
+          <input id="ic-url" value="${esc(S.icloud.calendar_url || '')}" placeholder="blank = sync every calendar on the account" /></div>
+        <div class="btns"><button class="ghost" id="ic-save">save</button>
+          <button class="primary" id="ic-sync">save &amp; sync now</button></div>
+        <div class="cv-auto">
+          <label class="cv-auto-row"><input type="checkbox" id="ic-autosync" /> auto-sync in the background</label>
+          <label class="cv-auto-hours">every <input id="ic-autohours" type="number" min="1" max="168" value="12" /> hours</label>
+          <div class="muted small" id="ic-lastsync"></div>
+        </div>
+      </div>
+
       <div class="actions"><span class="spacer"></span><button class="ghost" data-m="cancel">close</button></div>`,
       () => {});
 
@@ -2123,6 +2191,7 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
     };
     ov.querySelectorAll('.cv-seg span').forEach((s) => { s.onclick = () => show(s.dataset.tab); });
     ov.querySelectorAll('[data-go]').forEach((a) => { a.onclick = () => show(a.dataset.go); });
+    if (initialTab) show(initialTab);
 
     ov.querySelector('#cv-save-token').onclick = async () => {
       const body = { canvas_base_url: ov.querySelector('#m-url').value.trim() };
@@ -2159,6 +2228,40 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
       };
       auto.onchange = saveAuto;
       hrs.onchange = () => { if (auto.checked) saveAuto(); };
+    }
+    const saveIcloud = async () => {
+      const user = ov.querySelector('#ic-user').value.trim();
+      const url = ov.querySelector('#ic-url').value.trim();
+      const pass = ov.querySelector('#ic-pass').value.trim();
+      if (!user) { toast('enter your Apple ID email first'); return false; }
+      const body = { icloud_username: user, icloud_calendar_url: url };
+      if (pass) body.icloud_password = pass;
+      await Api.put('/config/settings', body); await loadAll(); return true;
+    };
+    ov.querySelector('#ic-save').onclick = async () => { if (await saveIcloud()) toast('iCloud calendar saved'); };
+    ov.querySelector('#ic-sync').onclick = async () => {
+      if (!(await saveIcloud())) return;
+      try { const r = await Api.post('/integrations/icloud/sync');
+        toast(`iCloud: ${r.created} new, ${r.updated} updated (${r.events} events)`); close(); }
+      catch (e) { toast('iCloud sync failed — check the app-specific password'); }
+    };
+    const icAuto = ov.querySelector('#ic-autosync');
+    if (icAuto) {
+      const icHrs = ov.querySelector('#ic-autohours');
+      const icLastEl = ov.querySelector('#ic-lastsync');
+      icAuto.checked = !!S.icloud.autosync;
+      icHrs.value = S.icloud.sync_hours || 12;
+      icLastEl.textContent = S.icloud.last_sync
+        ? 'last auto-sync: ' + new Date(S.icloud.last_sync).toLocaleString()
+        : 'never auto-synced yet';
+      const saveIcAuto = async () => {
+        const hours = +icHrs.value || 12;
+        await Api.put('/config/settings', { icloud_autosync: icAuto.checked, icloud_sync_hours: hours });
+        S.icloud.autosync = icAuto.checked; S.icloud.sync_hours = hours;
+        toast(icAuto.checked ? `iCloud auto-sync on · every ${hours}h` : 'iCloud auto-sync off');
+      };
+      icAuto.onchange = saveIcAuto;
+      icHrs.onchange = () => { if (icAuto.checked) saveIcAuto(); };
     }
     ov.querySelector('#cv-copy-bm').onclick = async () => {      try { await navigator.clipboard.writeText(ov.querySelector('#cv-bm').value); toast('script copied'); }
       catch (e) { ov.querySelector('#cv-bm').select(); toast('press ⌘/Ctrl-C to copy'); }
@@ -2447,7 +2550,9 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
         if (ee) ee.onchange = () => { const { s } = get(i); set(i, s, hmToM(ee.value)); render(); };
         const track = r.querySelector('.awk-track');
         for (const h of r.querySelectorAll('.awk-h')) {
-          h.onmousedown = (ev) => {
+          // Pointer Events (not mouse-only) so dragging the awake-hours
+          // handle also works with a finger on phone/iPad.
+          h.onpointerdown = (ev) => {
             ev.preventDefault();
             const which = h.dataset.h, rect = track.getBoundingClientRect();
             const move = (e2) => {
@@ -2457,8 +2562,8 @@ cushion: ${p.cushion < 0 ? '\u2212' : '+'}${fmtDur(p.cushion)}</title></circle>`
               if (which === 's') set(i, m, cur.e); else set(i, cur.s, m);
               render();
             };
-            const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
-            document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+            const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); };
+            document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
           };
         }
       }

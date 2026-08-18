@@ -1,6 +1,7 @@
 """Server-side Canvas sync: upserts courses + upcoming assignments."""
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 
 from sqlmodel import Session, select
@@ -101,7 +102,8 @@ def upsert_course(session: Session, name: str, canvas_id=None, seen: int = 1):
 
 
 def upsert_assignment(session: Session, st: Settings, *, ext_id: str, title: str,
-                      due, course=None, url: str = "", category=None) -> str:
+                      due, course=None, url: str = "", category=None,
+                      source: Source = Source.canvas) -> str:
     cat = category if category is not None else guess_category(title)
     task = session.exec(select(Task).where(Task.external_id == ext_id)).first()
     if task:
@@ -116,7 +118,7 @@ def upsert_assignment(session: Session, st: Settings, *, ext_id: str, title: str
         title=title, course_id=(course.id if course else None), category=cat, due_at=due,
         start_date=(due.date() - timedelta(days=st.start_ahead_days)) if due else None,
         time_needed_min=ESTIMATES.get(cat, 60), notes=url or "",
-        source=Source.canvas, external_id=ext_id,
+        source=source, external_id=ext_id,
     )
     session.add(task)
     return "created"
@@ -137,6 +139,34 @@ def sync_canvas_ics(session: Session, st: Settings) -> dict:
         due = ev.get("dtstart") or ev.get("dtend")
         res = upsert_assignment(session, st, ext_id=ics_ext_id(ev), title=title,
                                 due=due, url=ev.get("url", ""))
+        created += res == "created"
+        updated += res == "updated"
+    session.commit()
+    return {"events": len(events), "created": created, "updated": updated}
+
+
+# --- iCloud calendar (full CalDAV, Apple ID + app-specific password) -----------------
+
+def sync_icloud(session: Session, st: Settings) -> dict:
+    """Personal calendar events land as plain Tasks (category="Personal", not run
+    through guess_category -- an event titled "Discussion with landlord" would
+    otherwise mis-tag itself as coursework via that word alone), same reuse of
+    upsert_assignment as every other source, just with source=Source.icloud so it's
+    visually and structurally distinguishable from real coursework."""
+    from app.icloud import fetch_events
+
+    username = st.icloud_username or os.environ.get("HIVE_ICLOUD_USERNAME", "")
+    password = st.icloud_password or os.environ.get("HIVE_ICLOUD_PASSWORD", "")
+    if not username or not password:
+        raise ValueError("icloud_not_configured")
+
+    events = fetch_events(username, password, st.icloud_calendar_url or "")
+    created = updated = 0
+    for ev in events:
+        res = upsert_assignment(
+            session, st, ext_id=f"icloud:{ev['uid']}", title=ev["summary"] or "Event",
+            due=ev["start"], category="Personal", source=Source.icloud,
+        )
         created += res == "created"
         updated += res == "updated"
     session.commit()

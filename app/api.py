@@ -380,6 +380,7 @@ def get_settings(session: Session = Depends(get_session)):
     st = session.get(Settings, 1) or Settings(id=1)
     out = st.model_dump()
     out["canvas_token"] = bool(st.canvas_token)  # never echo the secret
+    out["icloud_password"] = bool(st.icloud_password)  # same -- app-specific password, not echoed
     return out
 
 
@@ -425,7 +426,9 @@ def put_settings(body: dict, session: Session = Depends(get_session)):
               "day_start_min", "canvas_base_url", "canvas_token", "canvas_ics_url",
               "home_tz", "school_tz", "week_start", "country", "onboarded",
               "theme", "accent", "density", "fontscale", "default_view",
-              "display_name", "canvas_autosync", "canvas_sync_hours"):
+              "display_name", "canvas_autosync", "canvas_sync_hours",
+              "icloud_username", "icloud_password", "icloud_calendar_url",
+              "icloud_autosync", "icloud_sync_hours"):
         if k in body and body[k] is not None:
             setattr(st, k, body[k])
     session.add(st); session.commit()
@@ -695,6 +698,39 @@ def canvas_import(payload: dict, session: Session = Depends(get_session)):
         return import_canvas_payload(session, st, payload)
     except Exception as e:
         raise HTTPException(502, f"import_failed: {e}")
+
+
+# ---- iCloud calendar integration (full CalDAV) --------------------------------------#
+
+@integrations_router.get("/icloud/status")
+def icloud_status(session: Session = Depends(get_session)):
+    import os
+    st = session.get(Settings, 1) or Settings(id=1)
+    configured = bool(
+        (st.icloud_username or os.environ.get("HIVE_ICLOUD_USERNAME"))
+        and (st.icloud_password or os.environ.get("HIVE_ICLOUD_PASSWORD"))
+    )
+    return {"configured": configured,
+            "username": st.icloud_username,
+            "calendar_url": st.icloud_calendar_url,
+            "autosync": bool(getattr(st, "icloud_autosync", False)),
+            "sync_hours": getattr(st, "icloud_sync_hours", 12) or 12,
+            "last_sync": st.icloud_last_sync.isoformat() if getattr(st, "icloud_last_sync", None) else None}
+
+
+@integrations_router.post("/icloud/sync", summary="Pull events from the user's real iCloud calendars")
+def icloud_sync(session: Session = Depends(get_session)):
+    from app.integrations import sync_icloud
+    st = session.get(Settings, 1) or Settings(id=1)
+    try:
+        result = sync_icloud(session, st)
+    except ValueError:
+        raise HTTPException(400, "icloud_not_configured")
+    except Exception as e:  # surface the reason to the UI (bad app-specific password, network, etc.)
+        raise HTTPException(502, f"icloud_sync_failed: {e}")
+    st.icloud_last_sync = datetime.now()
+    session.add(st); session.commit()
+    return result
 
 
 @integrations_router.post("/syllabus/parse", summary="Extract candidate tasks from a syllabus (PDF or text, base64)")

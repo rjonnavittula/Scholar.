@@ -17,29 +17,40 @@ from app.db import init_db
 
 
 def _maybe_autosync():
-    """Run a Canvas sync if auto-sync is on and the interval has elapsed.
-    Synchronous + network-bound — call via asyncio.to_thread. Never raises."""
+    """Run a Canvas and/or iCloud sync if auto-sync is on and each one's own interval
+    has elapsed. Synchronous + network-bound — call via asyncio.to_thread. Never raises."""
     from sqlmodel import Session
     from app.db import engine
     from app.models import Settings
     try:
         with Session(engine) as s:
             st = s.get(Settings, 1)
-            if not st or not getattr(st, "canvas_autosync", False):
+            if not st:
                 return
-            hours = max(1, getattr(st, "canvas_sync_hours", 12) or 12)
-            last = getattr(st, "canvas_last_sync", None)
-            if last and (datetime.now() - last) < timedelta(hours=hours):
-                return
-            from app.integrations import sync_canvas_ics, sync_canvas
-            if st.canvas_ics_url:
-                sync_canvas_ics(s, st)
-            elif st.canvas_token and st.canvas_base_url:
-                sync_canvas(s, st)
-            else:
-                return
-            st.canvas_last_sync = datetime.now()
-            s.add(st); s.commit()
+            if getattr(st, "canvas_autosync", False):
+                hours = max(1, getattr(st, "canvas_sync_hours", 12) or 12)
+                last = getattr(st, "canvas_last_sync", None)
+                if not last or (datetime.now() - last) >= timedelta(hours=hours):
+                    from app.integrations import sync_canvas_ics, sync_canvas
+                    if st.canvas_ics_url:
+                        sync_canvas_ics(s, st)
+                        st.canvas_last_sync = datetime.now()
+                        s.add(st); s.commit()
+                    elif st.canvas_token and st.canvas_base_url:
+                        sync_canvas(s, st)
+                        st.canvas_last_sync = datetime.now()
+                        s.add(st); s.commit()
+            if getattr(st, "icloud_autosync", False):
+                hours = max(1, getattr(st, "icloud_sync_hours", 12) or 12)
+                last = getattr(st, "icloud_last_sync", None)
+                if not last or (datetime.now() - last) >= timedelta(hours=hours):
+                    from app.integrations import sync_icloud
+                    try:
+                        sync_icloud(s, st)
+                        st.icloud_last_sync = datetime.now()
+                        s.add(st); s.commit()
+                    except ValueError:
+                        pass  # not configured -- nothing to do until credentials are set
     except Exception as e:  # background task must never crash the app
         print(f"[autosync] {e}")
 
