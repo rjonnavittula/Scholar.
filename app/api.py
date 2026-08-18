@@ -1305,6 +1305,52 @@ def icloud_sync(session: Session = Depends(get_session)):
     return result
 
 
+@integrations_router.post("/icloud/events", summary="Create a real event on the user's iCloud calendar")
+def icloud_create_event(payload: dict, session: Session = Depends(get_session)):
+    import os
+    from app.icloud import create_event
+    from app.integrations import sync_icloud
+
+    st = session.get(Settings, 1) or Settings(id=1)
+    username = st.icloud_username or os.environ.get("HIVE_ICLOUD_USERNAME", "")
+    password = st.icloud_password or os.environ.get("HIVE_ICLOUD_PASSWORD", "")
+    if not username or not password:
+        raise HTTPException(400, "icloud_not_configured")
+
+    summary = (payload.get("summary") or "").strip()
+    if not summary:
+        raise HTTPException(422, "summary required")
+    try:
+        start = datetime.fromisoformat(payload["start"])
+    except (KeyError, ValueError):
+        raise HTTPException(422, "start required, ISO 8601")
+    end = None
+    if payload.get("end"):
+        try:
+            end = datetime.fromisoformat(payload["end"])
+        except ValueError:
+            raise HTTPException(422, "end must be ISO 8601 if given")
+
+    try:
+        uid = create_event(username, password, st.icloud_calendar_url or "", summary, start, end)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"icloud_create_failed: {e}")
+
+    # Pull it straight back in as a Task too, so it shows up locally immediately rather
+    # than waiting for the next scheduled/manual sync -- best-effort, the event is
+    # already really on the calendar even if this second step fails.
+    try:
+        sync_icloud(session, st)
+        st.icloud_last_sync = datetime.now()
+        session.add(st); session.commit()
+    except Exception:
+        pass
+
+    return {"created": True, "uid": uid, "summary": summary, "start": payload["start"]}
+
+
 @integrations_router.post("/syllabus/parse", summary="Extract candidate tasks from a syllabus (PDF or text, base64)")
 def syllabus_parse(payload: dict, session: Session = Depends(get_session)):
     import base64

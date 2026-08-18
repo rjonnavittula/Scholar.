@@ -72,3 +72,27 @@ def fetch_events(username: str, password: str, calendar_url: str = "",
                 "calendar": cal_name,
             })
     return events
+
+
+def create_event(username: str, password: str, calendar_url: str,
+                  summary: str, start: datetime, end: datetime | None = None) -> str:
+    """Creates a real VEVENT on the user's actual iCloud calendar -- this is the write
+    half fetch_events (read-only) doesn't cover. Needs calendar_url specifically, unlike
+    fetch_events' "search every calendar": writing needs one unambiguous target, and
+    icloud_status/settings already capture it once a sync has run at least once.
+
+    Not verified against a live iCloud account (this project's own rule against testing
+    against real personal data extends here -- there's no throwaway iCloud calendar to
+    test with). Grounded in caldav>=1.3's documented save_event() kwargs API, same
+    library version already pinned in requirements.txt for fetch_events."""
+    import caldav
+
+    if not calendar_url:
+        raise ValueError("calendar_url required -- run an iCloud sync at least once so it's known")
+    if end is None:
+        end = start + timedelta(hours=1)
+
+    client = caldav.DAVClient(url=ICLOUD_CALDAV_URL, username=username, password=password)
+    cal = caldav.Calendar(client=client, url=calendar_url)
+    event = cal.save_event(dtstart=start, dtend=end, summary=summary)
+    return str(event.icalendar_component.get("uid", ""))
